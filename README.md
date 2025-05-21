@@ -31,6 +31,7 @@
 - 🐳  Lightweight Docker & distroless support
 - 🔒  Secure, minimal, and easy to deploy
 - 🧪  Automated tests and CI/CD
+- 🧩  Modular client system (add more clients in `internal/dc`)
 
 ## Quick Start
 
@@ -38,8 +39,8 @@
 docker run --rm \
   -e DELUGE_BASE_URL=<url> \
   -e DELUGE_API_URL_PATH=<path> \
-  -e USERNAME=<username> \
-  -e PASSWORD=<password> \
+  -e DELUGE_USERNAME=<username> \
+  -e DELUGE_PASSWORD=<password> \
   -e TARGET_LABEL=<label> \
   -e DELUGE_COMPLETED_DIR=<completed_dir> \
   -e TARGET_DIR=<target_dir> \
@@ -79,6 +80,9 @@ You can also use a `.env` file to manage environment variables. See the [Docker 
 
 Contributions are welcome! Please open issues or pull requests for improvements, bug fixes, or new features. For major changes, please open an issue first to discuss what you would like to change.
 
+- **Linting:** This project uses [golangci-lint](https://golangci-lint.run/) with configuration in `.golangci.yml`. Run `golangci-lint run` locally to check your code before submitting a PR.
+- **Go version:** The project uses Go 1.22. Please use this version for development and CI.
+
 ## Community
 
 - [GitHub Issues](https://github.com/italolelis/seedbox_downloader/issues): Ask questions, report bugs, or suggest features.
@@ -94,16 +98,28 @@ seedbox_downloader
 │       └── main.go          # Entry point of the application
 ├── internal
 │   ├── config
-│   │   └── config.go       # Configuration loading and struct
-│   ├── deluge
-│   │   └── client.go       # Deluge API client for interacting with files
+│   │   └── config.go        # Configuration loading and struct
+│   ├── dc
+│   │   ├── client.go        # DownloadClient interface and TorrentInfo struct
+│   │   └── deluge
+│   │       ├── client.go    # Deluge API client for interacting with files
+│   │       └── client_test.go
 │   ├── downloader
 │   │   └── downloader.go    # Logic for downloading files and tracking in DB
-│   └── db
-│       └── db.go           # Database initialization and interaction
+│   ├── storage
+│   │   ├── storage.go       # Storage interfaces
+│   │   └── sqlite
+│   │       ├── init.go
+│   │       ├── read_repository.go
+│   │       └── write_repository.go
+│   ├── cleanup
+│   │   └── cleanup.go       # Cleanup logic for old downloads
+│   ├── logctx
+│   │   └── logctx.go        # Logging context helpers
 ├── Dockerfile               # Instructions for building the Docker image
 ├── go.mod                   # Go module definition
 ├── go.sum                   # Module dependency checksums
+├── .golangci.yml            # Linter configuration
 └── README.md                # Project documentation
 ```
 
@@ -151,7 +167,7 @@ To build a Docker image for the application, use the provided `Dockerfile`. The 
 
 2. **Run the Docker container:**
    ```
-   docker run -e DELUGE_BASE_URL=<url> -e DELUGE_API_URL_PATH=<path> -e USERNAME=<username> -e PASSWORD=<password> -e TARGET_LABEL=<label> -e DELUGE_COMPLETED_DIR=<completed_dir> -e TARGET_DIR=<target_dir> -e KEEP_DOWNLOADED_FILES_FOR=<duration> seedbox_downloader
+   docker run -e DELUGE_BASE_URL=<url> -e DELUGE_API_URL_PATH=<path> -e DELUGE_USERNAME=<username> -e DELUGE_PASSWORD=<password> -e TARGET_LABEL=<label> -e DELUGE_COMPLETED_DIR=<completed_dir> -e TARGET_DIR=<target_dir> -e KEEP_DOWNLOADED_FILES_FOR=<duration> seedbox_downloader
    ```
 
 ## License
