@@ -4,34 +4,6 @@ run:
 
 linters:
   default: fast
-  enable:
-    - govet
-    - staticcheck
-    - gosimple
-    - unused
-    - structcheck
-    - deadcode
-    - typecheck
-    - ineffassign
-    - varcheck
-    - revive
-    - gofmt
-    - goimports
-    - misspell
-    - depguard
-    - gocritic
-    - dupl
-    - unparam
-    - nakedret
-    - dogsled
-    - exportloopref
-    - gocyclo
-    - interfacer
-    - lll
-    - prealloc
-    - scopelint
-    - stylecheck
-    - whitespace
   disable:
     - errcheck
 
