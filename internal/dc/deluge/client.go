@@ -299,7 +299,7 @@ func (c *Client) getTaggedTorrentsRaw(ctx context.Context, tag string) ([]Torren
 				}
 			}
 		} else if !filesOk {
-			logger.Warn("No files array", "torrent_id", id)
+			logger.Warn("No files array", "download_id", id)
 		}
 	}
 

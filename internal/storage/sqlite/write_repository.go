@@ -17,7 +17,7 @@ func NewDownloadWriteRepository(db *sql.DB) *DownloadWriteRepository {
 
 func (r *DownloadWriteRepository) TrackDownload(torrentID, filePath string) error {
 	_, err := r.db.Exec(
-		`INSERT INTO downloads (torrent_id, file_path, downloaded_at, status) VALUES (?, ?, ?, 'pending')`,
+		`INSERT INTO downloads (download_id, file_path, downloaded_at, status) VALUES (?, ?, ?, 'pending')`,
 		torrentID, filePath, time.Now().Format(time.RFC3339),
 	)
 
@@ -27,7 +27,7 @@ func (r *DownloadWriteRepository) TrackDownload(torrentID, filePath string) erro
 // ClaimDownload atomically sets status to 'downloading' and locked_by to instanceID if status is 'pending'.
 func (r *DownloadWriteRepository) ClaimDownload(torrentID, instanceID string) (bool, error) {
 	res, err := r.db.Exec(
-		`UPDATE downloads SET status = 'downloading', locked_by = ? WHERE torrent_id = ? AND status = 'pending' AND (locked_by IS NULL OR locked_by = '')`,
+		`UPDATE downloads SET status = 'downloading', locked_by = ? WHERE download_id = ? AND status = 'pending' AND (locked_by IS NULL OR locked_by = '')`,
 		instanceID, torrentID,
 	)
 	if err != nil {
@@ -44,7 +44,7 @@ func (r *DownloadWriteRepository) ClaimDownload(torrentID, instanceID string) (b
 
 // UpdateDownloadStatus sets the status for a torrent.
 func (r *DownloadWriteRepository) UpdateDownloadStatus(torrentID, status string) error {
-	_, err := r.db.Exec(`UPDATE downloads SET status = ? WHERE torrent_id = ?`, status, torrentID)
+	_, err := r.db.Exec(`UPDATE downloads SET status = ? WHERE download_id = ?`, status, torrentID)
 
 	return err
 }

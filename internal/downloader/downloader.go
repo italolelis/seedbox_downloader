@@ -54,28 +54,28 @@ func (d *Downloader) DownloadTaggedTorrents(ctx context.Context) error {
 		// Ensure the torrent is tracked in the DB before claiming
 		err := d.repo.TrackDownload(id, torrent.FileName)
 		if err != nil {
-			logger.Error("failed to track torrent in DB", "torrent_id", id, "err", err)
+			logger.Error("failed to track torrent in DB", "download_id", id, "err", err)
 		}
 
 		// Try to claim the download atomically, but only if not already downloading or downloaded
 		claimed, err := d.repo.ClaimDownload(id, d.instanceID)
 		if err != nil {
-			logger.Error("failed to claim download", "torrent_id", id, "err", err)
+			logger.Error("failed to claim download", "download_id", id, "err", err)
 
 			continue
 		}
 
 		if !claimed {
-			logger.Debug("torrent already claimed, downloading, or not pending", "torrent_id", id)
+			logger.Debug("torrent already claimed, downloading, or not pending", "download_id", id)
 
 			continue
 		}
 
-		logger.Info("downloading new torrent", "torrent_id", id)
+		logger.Info("downloading new torrent", "download_id", id)
 
 		targetPath := filepath.Join(d.targetDir, torrent.FileName)
 		if err := d.dlClient.DownloadFile(ctx, torrent, targetPath); err != nil {
-			logger.Error("failed to download torrent", "torrent_id", id, "err", err)
+			logger.Error("failed to download file", "download_id", id, "err", err)
 			_ = d.repo.UpdateDownloadStatus(id, "failed")
 
 			continue

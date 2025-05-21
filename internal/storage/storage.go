@@ -2,7 +2,7 @@ package storage
 
 // DownloadRecord represents a record of a downloaded file.
 type DownloadRecord struct {
-	TorrentID    string
+	DownloadID   string
 	FilePath     string
 	DownloadedAt string
 	Status       string
@@ -16,7 +16,7 @@ type DownloadReadRepository interface {
 }
 
 type DownloadWriteRepository interface {
-	TrackDownload(torrentID, filePath string) error
-	ClaimDownload(torrentID, instanceID string) (bool, error) // atomically claim a download
-	UpdateDownloadStatus(torrentID, status string) error      // update status after download
+	TrackDownload(downloadID, filePath string) error
+	ClaimDownload(downloadID, instanceID string) (bool, error) // atomically claim a download
+	UpdateDownloadStatus(downloadID, status string) error      // update status after download
 }

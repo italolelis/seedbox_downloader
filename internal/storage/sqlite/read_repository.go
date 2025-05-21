@@ -15,7 +15,7 @@ func NewDownloadReadRepository(dbConn *sql.DB) *DownloadReadRepository {
 }
 
 func (r *DownloadReadRepository) GetDownloads() ([]storage.DownloadRecord, error) {
-	rows, err := r.db.Query(`SELECT torrent_id, file_path, downloaded_at, status, locked_by FROM downloads`)
+	rows, err := r.db.Query(`SELECT download_id, file_path, downloaded_at, status, locked_by FROM downloads`)
 	if err != nil {
 		return nil, err
 	}
@@ -25,7 +25,7 @@ func (r *DownloadReadRepository) GetDownloads() ([]storage.DownloadRecord, error
 
 	for rows.Next() {
 		var record storage.DownloadRecord
-		if err := rows.Scan(&record.TorrentID, &record.FilePath, &record.DownloadedAt, &record.Status, &record.LockedBy); err != nil {
+		if err := rows.Scan(&record.DownloadID, &record.FilePath, &record.DownloadedAt, &record.Status, &record.LockedBy); err != nil {
 			return nil, err
 		}
 
@@ -39,7 +39,7 @@ func (r *DownloadReadRepository) GetDownloads() ([]storage.DownloadRecord, error
 func (r *DownloadReadRepository) GetPendingDownloads(limit int) ([]storage.DownloadRecord, error) {
 	rows, err := r.db.Query(
 		`SELECT 
-			torrent_id, 
+			download_id, 
 			file_path, 
 			downloaded_at, 
 			status, 
@@ -59,7 +59,7 @@ func (r *DownloadReadRepository) GetPendingDownloads(limit int) ([]storage.Downl
 
 	for rows.Next() {
 		var record storage.DownloadRecord
-		if err := rows.Scan(&record.TorrentID, &record.FilePath, &record.DownloadedAt, &record.Status, &record.LockedBy); err != nil {
+		if err := rows.Scan(&record.DownloadID, &record.FilePath, &record.DownloadedAt, &record.Status, &record.LockedBy); err != nil {
 			return nil, err
 		}
 
