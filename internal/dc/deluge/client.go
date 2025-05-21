@@ -13,12 +13,12 @@ import (
 
 	"context"
 
-	"github.com/italolelis/seedbox_downloader/internal/download_client"
+	"github.com/italolelis/seedbox_downloader/internal/dc"
 	"github.com/italolelis/seedbox_downloader/internal/downloader/progress"
 	"github.com/italolelis/seedbox_downloader/internal/logctx"
 )
 
-type DelugeClient struct {
+type Client struct {
 	BaseURL    string
 	APIPath    string
 	Username   string
@@ -36,8 +36,8 @@ type Torrent struct {
 	SavePath string `json:"save_path"`
 }
 
-func NewClient(baseURL, apiPath, username string, password string, insecure ...bool) *DelugeClient {
-	client := &DelugeClient{
+func NewClient(baseURL, apiPath, username string, password string, insecure ...bool) *Client {
+	client := &Client{
 		BaseURL:    baseURL,
 		APIPath:    apiPath,
 		Username:   username,
@@ -54,7 +54,7 @@ func NewClient(baseURL, apiPath, username string, password string, insecure ...b
 	return client
 }
 
-func (c *DelugeClient) Authenticate(ctx context.Context) error {
+func (c *Client) Authenticate(ctx context.Context) error {
 	logger := logctx.LoggerFromContext(ctx).With("method", "auth.login")
 
 	url := fmt.Sprintf("%s%s", c.BaseURL, c.APIPath)
@@ -109,12 +109,12 @@ func (c *DelugeClient) Authenticate(ctx context.Context) error {
 	return nil
 }
 
-// Ensure DelugeClient implements DownloadClient
-var _ download_client.DownloadClient = (*DelugeClient)(nil)
+// Ensure Client implements DownloadClient
+var _ dc.DownloadClient = (*Client)(nil)
 
 // Add a conversion method to DownloadClient.TorrentInfo
-func (t Torrent) ToTorrentInfo() download_client.TorrentInfo {
-	return download_client.TorrentInfo{
+func (t Torrent) ToTorrentInfo() dc.TorrentInfo {
+	return dc.TorrentInfo{
 		ID:       t.ID,
 		FileName: t.FileName,
 		Label:    t.Label,
@@ -123,12 +123,12 @@ func (t Torrent) ToTorrentInfo() download_client.TorrentInfo {
 }
 
 // Update GetTaggedTorrents to match DownloadClient interface
-func (c *DelugeClient) GetTaggedTorrents(ctx context.Context, tag string) ([]download_client.TorrentInfo, error) {
+func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]dc.TorrentInfo, error) {
 	delugeTorrents, err := c.getTaggedTorrentsRaw(ctx, tag)
 	if err != nil {
 		return nil, err
 	}
-	var infos []download_client.TorrentInfo
+	var infos []dc.TorrentInfo
 	for _, t := range delugeTorrents {
 		infos = append(infos, t.ToTorrentInfo())
 	}
@@ -136,7 +136,7 @@ func (c *DelugeClient) GetTaggedTorrents(ctx context.Context, tag string) ([]dow
 }
 
 // Move the original logic to a helper
-func (c *DelugeClient) getTaggedTorrentsRaw(ctx context.Context, tag string) ([]Torrent, error) {
+func (c *Client) getTaggedTorrentsRaw(ctx context.Context, tag string) ([]Torrent, error) {
 	logger := logctx.LoggerFromContext(ctx).With("tag", tag, "method", "core.get_torrents_status")
 
 	url := fmt.Sprintf("%s%s", c.BaseURL, c.APIPath)
@@ -224,7 +224,7 @@ func (c *DelugeClient) getTaggedTorrentsRaw(ctx context.Context, tag string) ([]
 }
 
 // DownloadFile implements DownloadClient.DownloadFile for Deluge
-func (c *DelugeClient) DownloadFile(ctx context.Context, torrent download_client.TorrentInfo, targetPath string) error {
+func (c *Client) DownloadFile(ctx context.Context, torrent dc.TorrentInfo, targetPath string) error {
 	logger := logctx.LoggerFromContext(ctx)
 	filePathEscaped := torrent.SavePath
 	if !strings.HasSuffix(filePathEscaped, "/") && filePathEscaped != "" {
@@ -266,7 +266,7 @@ func (c *DelugeClient) DownloadFile(ctx context.Context, torrent download_client
 		return fmt.Errorf("failed to download file: %s", resp.Status)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+	if err = os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
 		logger.Error("failed to create target directory", "dir", filepath.Dir(targetPath), "err", err)
 		return fmt.Errorf("failed to create target directory: %w", err)
 	}

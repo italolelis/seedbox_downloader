@@ -1,0 +1,42 @@
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - govet
+    - staticcheck
+    - gosimple
+    - unused
+    - structcheck
+    - deadcode
+    - typecheck
+    - ineffassign
+    - varcheck
+    - revive
+    - gofmt
+    - goimports
+    - misspell
+    - depguard
+    - gocritic
+    - dupl
+    - unparam
+    - nakedret
+    - dogsled
+    - exportloopref
+    - gocyclo
+    - interfacer
+    - lll
+    - prealloc
+    - scopelint
+    - stylecheck
+    - whitespace
+  disable:
+    - errcheck
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+output:
+  format: colored-line-number 

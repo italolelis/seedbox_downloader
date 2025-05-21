@@ -4,7 +4,7 @@ import (
 	"context"
 	"path/filepath"
 
-	"github.com/italolelis/seedbox_downloader/internal/download_client"
+	"github.com/italolelis/seedbox_downloader/internal/dc"
 	"github.com/italolelis/seedbox_downloader/internal/logctx"
 	"github.com/italolelis/seedbox_downloader/internal/storage"
 )
@@ -13,15 +13,15 @@ type Downloader struct {
 	repo        storage.DownloadWriteRepository
 	readRepo    storage.DownloadReadRepository
 	targetDir   string
-	dlClient    download_client.DownloadClient
+	dlClient    dc.DownloadClient
 	targetLabel string
 
 	instanceID string // unique for this process
 }
 
-type Torrent = download_client.TorrentInfo
+type Torrent = dc.TorrentInfo
 
-func NewDownloader(writeRepo storage.DownloadWriteRepository, readRepo storage.DownloadReadRepository, targetDir string, dlClient download_client.DownloadClient, targetLabel string) *Downloader {
+func NewDownloader(writeRepo storage.DownloadWriteRepository, readRepo storage.DownloadReadRepository, targetDir string, dlClient dc.DownloadClient, targetLabel string) *Downloader {
 	return &Downloader{
 		repo:        writeRepo,
 		readRepo:    readRepo,

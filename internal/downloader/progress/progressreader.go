@@ -2,8 +2,8 @@ package progress
 
 import "io"
 
-// ProgressReader wraps an io.Reader and reports progress via a callback.
-type ProgressReader struct {
+// Reader wraps an io.Reader and reports progress via a callback.
+type Reader struct {
 	Reader         io.Reader
 	Total          int64
 	OnProgress     func(written int64, total int64)
@@ -12,8 +12,8 @@ type ProgressReader struct {
 	reportInterval int64 // bytes
 }
 
-func NewReader(r io.Reader, total int64, interval int64, cb func(written int64, total int64)) *ProgressReader {
-	return &ProgressReader{
+func NewReader(r io.Reader, total int64, interval int64, cb func(written int64, total int64)) *Reader {
+	return &Reader{
 		Reader:         r,
 		Total:          total,
 		OnProgress:     cb,
@@ -21,7 +21,7 @@ func NewReader(r io.Reader, total int64, interval int64, cb func(written int64, 
 	}
 }
 
-func (pr *ProgressReader) Read(p []byte) (int, error) {
+func (pr *Reader) Read(p []byte) (int, error) {
 	n, err := pr.Reader.Read(p)
 	if n > 0 {
 		pr.totalRead += int64(n)

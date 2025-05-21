@@ -1,4 +1,4 @@
-package download_client
+package dc
 
 import (
 	"context"
