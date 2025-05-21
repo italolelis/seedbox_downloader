@@ -31,6 +31,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VALIDATE_GO: true
           VALIDATE_GO_MODULES: true
+          GOLANGCI_LINT_EXTRA_ARGS: run ./...
 
   test:
     name: Run Go Tests
