@@ -1,6 +1,6 @@
 # Seedbox Downloader
 
-![Build](https://github.com/italolelis/seedbox_downloader/actions/workflows/ci.yml/badge.svg)
+![Build](https://github.com/italolelis/seedbox_downloader/actions/workflows/main.yml/badge.svg)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 ![Go Version](https://img.shields.io/badge/Go-1.22-blue)
 
