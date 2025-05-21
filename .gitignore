@@ -1,0 +1,60 @@
+# Binaries
+seedbox_downloader
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+
+# Output and build directories
+/build/
+/bin/
+/dist/
+
+# Go modules
+vendor/
+
+# Dependency directories (remove the comment below if you use Go modules)
+Gopkg.lock
+Gopkg.toml
+
+# Go coverage files
+*.out
+coverage*
+
+# Logs
+*.log
+
+# IDE/editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docker
+*.tar
+.docker/
+
+# Environment files
+.env
+.env.*
+
+# SQLite database
+*.db
+
+# Test output
+*.coverprofile
+*.testresult
+
+# Node/npm (if ever used for UI)
+node_modules/
+
+# Misc
+*.bak 
+downloads/
