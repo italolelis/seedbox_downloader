@@ -21,13 +21,13 @@ type Downloader struct {
 
 type Torrent = dc.TorrentInfo
 
-func NewDownloader(writeRepo storage.DownloadWriteRepository, readRepo storage.DownloadReadRepository, targetDir string, dlClient dc.DownloadClient, targetLabel string) *Downloader {
+func NewDownloader(wr storage.DownloadWriteRepository, rr storage.DownloadReadRepository, dir string, c dc.DownloadClient, lbl string) *Downloader {
 	return &Downloader{
-		repo:        writeRepo,
-		readRepo:    readRepo,
-		targetDir:   targetDir,
-		dlClient:    dlClient,
-		targetLabel: targetLabel,
+		repo:        wr,
+		readRepo:    rr,
+		targetDir:   dir,
+		dlClient:    c,
+		targetLabel: lbl,
 		instanceID:  GenerateInstanceID(),
 	}
 }
@@ -38,6 +38,7 @@ func (d *Downloader) DownloadTaggedTorrents(ctx context.Context) error {
 	torrents, err := d.dlClient.GetTaggedTorrents(ctx, d.targetLabel)
 	if err != nil {
 		logger.Error("failed to fetch torrents from download client", "err", err)
+
 		return err
 	}
 
@@ -60,22 +61,30 @@ func (d *Downloader) DownloadTaggedTorrents(ctx context.Context) error {
 		claimed, err := d.repo.ClaimDownload(id, d.instanceID)
 		if err != nil {
 			logger.Error("failed to claim download", "torrent_id", id, "err", err)
+
 			continue
 		}
+
 		if !claimed {
 			logger.Debug("torrent already claimed, downloading, or not pending", "torrent_id", id)
+
 			continue
 		}
+
 		logger.Info("downloading new torrent", "torrent_id", id)
+
 		targetPath := filepath.Join(d.targetDir, torrent.FileName)
 		if err := d.dlClient.DownloadFile(ctx, torrent, targetPath); err != nil {
 			logger.Error("failed to download torrent", "torrent_id", id, "err", err)
 			_ = d.repo.UpdateDownloadStatus(id, "failed")
+
 			continue
 		}
+
 		_ = d.repo.UpdateDownloadStatus(id, "downloaded")
 	}
 
 	logger.Debug("downloadTaggedTorrents completed")
+
 	return nil
 }

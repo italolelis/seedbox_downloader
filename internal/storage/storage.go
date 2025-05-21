@@ -9,7 +9,7 @@ type DownloadRecord struct {
 	LockedBy     string
 }
 
-// DownloadReadRepository interface remains here
+// DownloadReadRepository interface remains here.
 type DownloadReadRepository interface {
 	GetDownloads() ([]DownloadRecord, error)
 	GetPendingDownloads(limit int) ([]DownloadRecord, error) // new method for pending/available downloads

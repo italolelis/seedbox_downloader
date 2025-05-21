@@ -22,31 +22,49 @@ func (r *DownloadReadRepository) GetDownloads() ([]storage.DownloadRecord, error
 	defer rows.Close()
 
 	var downloads []storage.DownloadRecord
+
 	for rows.Next() {
 		var record storage.DownloadRecord
 		if err := rows.Scan(&record.TorrentID, &record.FilePath, &record.DownloadedAt, &record.Status, &record.LockedBy); err != nil {
 			return nil, err
 		}
+
 		downloads = append(downloads, record)
 	}
+
 	return downloads, nil
 }
 
-// GetPendingDownloads returns downloads that are pending and not locked, up to a limit
+// GetPendingDownloads returns downloads that are pending and not locked, up to a limit.
 func (r *DownloadReadRepository) GetPendingDownloads(limit int) ([]storage.DownloadRecord, error) {
-	rows, err := r.db.Query(`SELECT torrent_id, file_path, downloaded_at, status, locked_by FROM downloads WHERE status = 'pending' AND (locked_by IS NULL OR locked_by = '') LIMIT ?`, limit)
+	rows, err := r.db.Query(
+		`SELECT 
+			torrent_id, 
+			file_path, 
+			downloaded_at, 
+			status, 
+			locked_by 
+		FROM downloads
+		WHERE status = 'pending' 
+		AND (locked_by IS NULL OR locked_by = '') 
+		LIMIT ?`, limit)
+
 	if err != nil {
 		return nil, err
 	}
+
 	defer rows.Close()
 
 	var downloads []storage.DownloadRecord
+
 	for rows.Next() {
 		var record storage.DownloadRecord
 		if err := rows.Scan(&record.TorrentID, &record.FilePath, &record.DownloadedAt, &record.Status, &record.LockedBy); err != nil {
 			return nil, err
 		}
+
 		downloads = append(downloads, record)
 	}
+
 	return downloads, nil
 }

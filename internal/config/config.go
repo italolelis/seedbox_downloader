@@ -9,7 +9,7 @@ import (
 	"github.com/kelseyhightower/envconfig"
 )
 
-// Config struct for environment variables
+// Config struct for environment variables.
 type Config struct {
 	DelugeBaseURL      string        `envconfig:"DELUGE_BASE_URL" required:"true"`
 	DelugeAPIURLPath   string        `envconfig:"DELUGE_API_URL_PATH" required:"true"`
@@ -24,12 +24,13 @@ type Config struct {
 	LogLevel           string        `envconfig:"LOG_LEVEL" default:"INFO"`
 }
 
-// LoadConfig reads environment variables and populates the Config struct
+// LoadConfig reads environment variables and populates the Config struct.
 func LoadConfig() (*Config, error) {
 	var cfg Config
 	if err := envconfig.Process("", &cfg); err != nil {
 		return nil, fmt.Errorf("error processing env: %w", err)
 	}
+
 	return &cfg, nil
 }
 

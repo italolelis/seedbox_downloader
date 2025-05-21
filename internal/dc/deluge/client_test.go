@@ -1,4 +1,4 @@
-package deluge
+package deluge_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/italolelis/seedbox_downloader/internal/dc/deluge"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -24,12 +25,11 @@ func TestNewClient(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := NewClient(tt.baseURL, tt.apiPath, tt.username, tt.password)
+			client := deluge.NewClient(tt.baseURL, tt.apiPath, tt.username, tt.password)
 			assert.Equal(t, tt.baseURL, client.BaseURL)
 			assert.Equal(t, tt.apiPath, client.APIPath)
 			assert.Equal(t, tt.username, client.Username)
 			assert.Equal(t, tt.password, client.Password)
-			assert.NotNil(t, client.httpClient)
 		})
 	}
 }
@@ -52,7 +52,7 @@ func TestAuthenticate_Error(t *testing.T) {
 			}))
 			defer ts.Close()
 
-			client := NewClient(ts.URL, "", "user", "pass")
+			client := deluge.NewClient(ts.URL, "", "user", "pass")
 			err := client.Authenticate(context.Background())
 			assert.Error(t, err)
 			assert.Contains(t, err.Error(), tt.expectErrorMsg)
@@ -63,22 +63,22 @@ func TestAuthenticate_Error(t *testing.T) {
 func TestGetTaggedTorrents(t *testing.T) {
 	tests := []struct {
 		name         string
-		jsonResp     map[string]interface{}
+		jsonResp     map[string]any
 		tag          string
 		expectCount  int
 		expectFields map[string]string
 	}{
 		{
 			"single match",
-			map[string]interface{}{
-				"result": map[string]interface{}{
-					"abc123": map[string]interface{}{
+			map[string]any{
+				"result": map[string]any{
+					"abc123": map[string]any{
 						"label":     "mytag",
 						"progress":  100.0,
 						"name":      "file1",
 						"save_path": "/downloads",
-						"files": []interface{}{
-							map[string]interface{}{"path": "file1.mkv"},
+						"files": []any{
+							map[string]any{"path": "file1.mkv"},
 						},
 					},
 				},
@@ -91,8 +91,8 @@ func TestGetTaggedTorrents(t *testing.T) {
 		},
 		{
 			"no match",
-			map[string]interface{}{
-				"result": map[string]interface{}{},
+			map[string]any{
+				"result": map[string]any{},
 				"error":  nil,
 				"id":     2,
 			},
@@ -110,8 +110,7 @@ func TestGetTaggedTorrents(t *testing.T) {
 			}))
 			defer ts.Close()
 
-			client := NewClient(ts.URL, "", "user", "pass")
-			client.cookie = "testcookie" // simulate authenticated
+			client := deluge.NewClient(ts.URL, "", "user", "pass")
 
 			torrents, err := client.GetTaggedTorrents(context.Background(), tt.tag)
 			assert.NoError(t, err)

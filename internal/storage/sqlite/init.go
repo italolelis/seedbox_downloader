@@ -3,7 +3,7 @@ package sqlite
 import (
 	"database/sql"
 
-	// Import the SQLite driver
+	// Import the SQLite driver.
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -15,6 +15,7 @@ func InitDB() (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS downloads (
 		id INTEGER PRIMARY KEY,
 		torrent_id TEXT UNIQUE,
@@ -23,8 +24,10 @@ func InitDB() (*sql.DB, error) {
 		status TEXT DEFAULT 'pending',
 		locked_by TEXT
 	)`)
+
 	if err != nil {
 		return nil, err
 	}
+
 	return db, nil
 }

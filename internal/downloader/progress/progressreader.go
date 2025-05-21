@@ -26,10 +26,12 @@ func (pr *Reader) Read(p []byte) (int, error) {
 	if n > 0 {
 		pr.totalRead += int64(n)
 		pr.lastReport += int64(n)
+
 		if pr.lastReport >= pr.reportInterval || (pr.Total > 0 && pr.totalRead*100/pr.Total >= 5 && (pr.totalRead-int64(n))*100/pr.Total < 5) {
 			pr.OnProgress(pr.totalRead, pr.Total)
 			pr.lastReport = 0
 		}
 	}
+
 	return n, err
 }
