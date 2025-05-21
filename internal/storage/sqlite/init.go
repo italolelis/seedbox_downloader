@@ -3,6 +3,7 @@ package sqlite
 import (
 	"database/sql"
 
+	// Import the SQLite driver
 	_ "github.com/mattn/go-sqlite3"
 )
 
