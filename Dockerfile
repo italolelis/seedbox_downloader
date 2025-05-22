@@ -14,6 +14,8 @@ FROM gcr.io/distroless/cc:nonroot
 
 WORKDIR /app
 
+RUN mkdir -p /config && chmod 755 /config
+
 COPY --from=builder /app/seedbox_downloader .
 
 ENTRYPOINT ["/app/seedbox_downloader"]
