@@ -11,14 +11,14 @@ COPY ./internal ./internal
 RUN CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags="-s -w" -o seedbox_downloader ./cmd/seedbox_downloader/main.go
 
 # Create /config and set correct permissions for non-root user
-RUN mkdir -p /config && chown 65532:65532 /config
+RUN mkdir -p /config
 
 FROM gcr.io/distroless/cc:nonroot
 
 WORKDIR /app
 
 # Copy /config from builder stage
-COPY --from=builder /config /config
+COPY --from=builder --chown=65532:65532 /config /config
 
 COPY --from=builder /app/seedbox_downloader .
 
