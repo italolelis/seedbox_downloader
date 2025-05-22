@@ -18,6 +18,7 @@ func InitDB() (*sql.DB, error) {
 
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS downloads (
 		download_id TEXT UNIQUE,
+		torrent_id TEXT,
 		file_path TEXT,
 		downloaded_at DATETIME,
 		status TEXT DEFAULT 'pending',
