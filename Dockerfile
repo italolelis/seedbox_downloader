@@ -8,9 +8,9 @@ RUN go mod download
 COPY ./cmd/seedbox_downloader ./cmd/seedbox_downloader
 COPY ./internal ./internal
 
-RUN GOOS=linux go build -trimpath -ldflags="-s -w" -o seedbox_downloader ./cmd/seedbox_downloader/main.go
+RUN CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags="-s -w" -o seedbox_downloader ./cmd/seedbox_downloader/main.go
 
-FROM gcr.io/distroless/base:nonroot
+FROM gcr.io/distroless/cc:nonroot
 
 WORKDIR /app
 
