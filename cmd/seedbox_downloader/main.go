@@ -40,7 +40,7 @@ func main() {
 func run(ctx context.Context, cfg *config.Config) error {
 	logger := logctx.LoggerFromContext(ctx)
 
-	database, err := sqlite.InitDB()
+	database, err := sqlite.InitDB(cfg.DBPath)
 	if err != nil {
 		logger.Error("DB error", "err", err)
 

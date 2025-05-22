@@ -7,11 +7,9 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const dbFile = "downloads.db"
-
 // InitDB initializes the SQLite database and creates the downloads table if it doesn't exist.
-func InitDB() (*sql.DB, error) {
-	db, err := sql.Open("sqlite3", dbFile)
+func InitDB(dbPath string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
 		return nil, err
 	}
