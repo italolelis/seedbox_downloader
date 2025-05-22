@@ -8,7 +8,6 @@ type Torrent struct {
 	ID       string
 	Label    string
 	Name     string
-	FileName string
 	SavePath string
 	Progress float64
 	Files    []*File

@@ -118,7 +118,6 @@ func TestGetTaggedTorrents(t *testing.T) {
 			assert.Len(t, torrents, tt.expectCount)
 			if tt.expectCount > 0 && tt.expectFields != nil {
 				assert.Equal(t, tt.expectFields["ID"], torrents[0].ID)
-				assert.Equal(t, tt.expectFields["FileName"], torrents[0].FileName)
 				assert.Equal(t, tt.expectFields["Label"], torrents[0].Label)
 				assert.Equal(t, tt.expectFields["SavePath"], torrents[0].SavePath)
 			}

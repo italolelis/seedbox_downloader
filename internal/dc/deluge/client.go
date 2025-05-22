@@ -46,7 +46,6 @@ type Torrent struct {
 	ID       string  `json:"id"`
 	Label    string  `json:"label"`
 	Name     string  `json:"name"`
-	FileName string  `json:"file_name"`
 	SavePath string  `json:"save_path"`
 	Progress float64 `json:"progress"`
 	Files    []File  `json:"files"`
@@ -158,7 +157,6 @@ func (t *Torrent) ToTorrent() *dc.Torrent {
 
 	return &dc.Torrent{
 		ID:       t.ID,
-		FileName: t.FileName,
 		Label:    t.Label,
 		SavePath: t.SavePath,
 		Files:    files,

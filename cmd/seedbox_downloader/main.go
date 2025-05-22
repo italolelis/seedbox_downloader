@@ -136,10 +136,10 @@ func setupNotificationForDownloader(ctx context.Context, downloader *downloader.
 
 	go func() {
 		for event := range downloader.OnTorrentDownloadFinished {
-			logger.Info("torrent download finished", "torrent_id", event.ID, "torrent_name", event.FileName)
+			logger.Info("torrent download finished", "torrent_id", event.ID, "torrent_name", event.Name)
 
 			if notifyErr := notif.Notify(
-				"✅ Download finished for torrent: " + event.FileName + " (" + event.ID + ")",
+				"✅ Download finished for torrent: " + event.Name + " (" + event.ID + ")",
 			); notifyErr != nil {
 				logger.Error("failed to send notification", "download_id", event.ID, "err", notifyErr)
 			}
