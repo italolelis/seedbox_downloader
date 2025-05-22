@@ -14,11 +14,6 @@ WORKDIR /workspace
 ENV GOPATH=/go
 ENV PATH=/go/bin:$PATH
 
-# Create the vscode user
-RUN groupadd --gid 1000 vscode \
-    && useradd --uid 1000 --gid 1000 --shell /bin/bash --create-home vscode \
-    && chown -R vscode:vscode /workspace /go
-
 # Set up SSH
 RUN mkdir -p /home/vscode/.ssh
 RUN chown vscode:vscode /home/vscode/.ssh
