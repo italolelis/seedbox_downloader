@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"time"
@@ -11,13 +12,14 @@ import (
 	"github.com/italolelis/seedbox_downloader/internal/dc/deluge"
 	"github.com/italolelis/seedbox_downloader/internal/downloader"
 	"github.com/italolelis/seedbox_downloader/internal/logctx"
+	"github.com/italolelis/seedbox_downloader/internal/notifier"
 	"github.com/italolelis/seedbox_downloader/internal/storage/sqlite"
 )
 
 func main() {
 	cfg, err := config.LoadConfig()
 	if err != nil {
-		slog.Error("Config error", "err", err)
+		slog.Error("config error", "err", err)
 		os.Exit(1)
 	}
 
@@ -29,40 +31,38 @@ func main() {
 
 	slog.Info("seedbox downloader starting...", "log_level", cfg.LogLevel)
 
-	if err := run(ctx, cfg, logger); err != nil {
-		slog.Error("Fatal error", "err", err)
+	if err := run(logctx.WithLogger(ctx, logger), cfg); err != nil {
+		slog.Error("fatal error", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
+func run(ctx context.Context, cfg *config.Config) error {
+	logger := logctx.LoggerFromContext(ctx)
+
 	database, err := sqlite.InitDB()
 	if err != nil {
-		slog.Error("DB error", "err", err)
+		logger.Error("DB error", "err", err)
 
 		return err
 	}
 	defer database.Close()
 
-	writeRepo := sqlite.NewDownloadWriteRepository(database)
-	readRepo := sqlite.NewDownloadReadRepository(database)
+	dr := sqlite.NewDownloadRepository(database)
 
-	dlClient := deluge.NewClient(cfg.DelugeBaseURL, cfg.DelugeAPIURLPath, cfg.DelugeUsername, cfg.DelugePassword, true)
+	dlClient := deluge.NewClient(cfg.DelugeBaseURL, cfg.DelugeAPIURLPath, cfg.DelugeCompletedDir, cfg.DelugeUsername, cfg.DelugePassword, true)
 	if err := dlClient.Authenticate(ctx); err != nil {
-		slog.Error("Deluge authentication error", "err", err)
-
-		return err
+		return fmt.Errorf("Deluge authentication error: %w", err)
 	}
 
 	downloader := downloader.NewDownloader(
-		writeRepo,
-		readRepo,
+		dr,
 		cfg.TargetDir,
-		dlClient,
 		cfg.TargetLabel,
+		dlClient,
 	)
 
-	ctx = logctx.WithLogger(ctx, logger)
+	setupNotificationForDownloader(ctx, downloader, cfg)
 
 	logger.Info("waiting for downloads...",
 		"target_label", cfg.TargetLabel,
@@ -71,12 +71,9 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
 		"retention", cfg.KeepDownloadedFor.String(),
 	)
 
-	ticker := time.NewTicker(cfg.UpdateInterval)
-	defer ticker.Stop()
-
 	// Start independent cleanup goroutine
-	cleanupInterval := cfg.CleanupInterval
-	cleanupTicker := time.NewTicker(cleanupInterval)
+	cleanupTicker := time.NewTicker(cfg.CleanupInterval)
+	defer cleanupTicker.Stop()
 
 	go func() {
 		for {
@@ -86,23 +83,22 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
 
 				return
 			case <-cleanupTicker.C:
-				log := logctx.LoggerFromContext(ctx)
-
-				tracked, err := readRepo.GetDownloads()
+				tracked, err := dr.GetDownloads()
 				if err != nil {
-					log.Error("Failed to get tracked downloads for cleanup", "err", err)
+					logger.Error("failed to get tracked downloads for cleanup", "err", err)
 
 					continue
 				}
 
 				if err := cleanup.DeleteExpiredFiles(ctx, tracked, cfg.TargetDir, cfg.KeepDownloadedFor); err != nil {
-					log.Error("Failed to delete expired tracked files", "err", err)
+					logger.Error("failed to delete expired tracked files", "err", err)
 				}
 			}
 		}
 	}()
 
-	iteration := 0
+	ticker := time.NewTicker(cfg.UpdateInterval)
+	defer ticker.Stop()
 
 	for {
 		select {
@@ -111,17 +107,42 @@ func run(ctx context.Context, cfg *config.Config, logger *slog.Logger) error {
 
 			return ctx.Err()
 		case <-ticker.C:
-			iteration++
-			log := logctx.LoggerFromContext(ctx)
-			log.Info("Tick: polling Deluge for tagged torrents", "iteration", iteration, "interval", cfg.UpdateInterval.String())
-
-			start := time.Now()
-
 			if err := downloader.DownloadTaggedTorrents(ctx); err != nil {
-				log.Error("Error downloading tagged torrents", "err", err, "iteration", iteration)
-			} else {
-				log.Info("DownloadTaggedTorrents completed", "duration_ms", time.Since(start).Milliseconds(), "iteration", iteration)
+				logger.Error("error downloading tagged torrents", "err", err)
 			}
 		}
 	}
+}
+
+func setupNotificationForDownloader(ctx context.Context, downloader *downloader.Downloader, cfg *config.Config) {
+	logger := logctx.LoggerFromContext(ctx)
+
+	var notif notifier.Notifier
+	if cfg.DiscordWebhookURL != "" {
+		notif = &notifier.DiscordNotifier{WebhookURL: cfg.DiscordWebhookURL}
+	}
+
+	go func() {
+		for event := range downloader.OnFileDownloadError {
+			logger.Error("file download file", "err", event.Path)
+
+			if notifyErr := notif.Notify(
+				"❌ Download failed for torrent: " + event.Path,
+			); notifyErr != nil {
+				logger.Error("failed to send notification", "err", notifyErr)
+			}
+		}
+	}()
+
+	go func() {
+		for event := range downloader.OnTorrentDownloadFinished {
+			logger.Info("torrent download finished", "torrent_id", event.ID, "torrent_name", event.FileName)
+
+			if notifyErr := notif.Notify(
+				"✅ Download finished for torrent: " + event.FileName + " (" + event.ID + ")",
+			); notifyErr != nil {
+				logger.Error("failed to send notification", "download_id", event.ID, "err", notifyErr)
+			}
+		}
+	}()
 }
