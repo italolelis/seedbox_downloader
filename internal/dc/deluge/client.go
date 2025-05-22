@@ -293,7 +293,6 @@ func (c *Client) getTaggedTorrentsRaw(ctx context.Context, tag string) ([]*Torre
 	var torrents []*Torrent
 
 	for id, torrent := range delugeResp.Result {
-
 		torrent.ID = id
 
 		if torrent.Label == tag && torrent.Progress == 100 && len(torrent.Files) > 0 {
