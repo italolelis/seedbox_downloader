@@ -22,6 +22,7 @@ type Config struct {
 	UpdateInterval     time.Duration `envconfig:"UPDATE_INTERVAL" default:"10m"`
 	CleanupInterval    time.Duration `envconfig:"CLEANUP_INTERVAL" default:"10m"`
 	LogLevel           string        `envconfig:"LOG_LEVEL" default:"INFO"`
+	DiscordWebhookURL  string        `envconfig:"DISCORD_WEBHOOK_URL"`
 }
 
 // LoadConfig reads environment variables and populates the Config struct.
