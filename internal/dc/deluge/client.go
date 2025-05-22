@@ -26,30 +26,45 @@ const (
 )
 
 type Client struct {
-	BaseURL    string
-	APIPath    string
-	Username   string
-	Password   string
-	httpClient *http.Client
-	Insecure   bool   // skip TLS verification if true
-	cookie     string // session cookie
+	BaseURL      string
+	APIPath      string
+	CompletedDir string
+	Username     string
+	Password     string
+	httpClient   *http.Client
+	Insecure     bool   // skip TLS verification if true
+	cookie       string // session cookie
+}
+
+type DelugeResponse struct {
+	Result map[string]*Torrent `json:"result"`
+	Error  any                 `json:"error"`
+	ID     int                 `json:"id"`
 }
 
 type Torrent struct {
-	ID       string `json:"id"`
-	Label    string `json:"label"`
-	Name     string `json:"name"`
-	FileName string `json:"file_name"`
-	SavePath string `json:"save_path"`
+	ID       string  `json:"id"`
+	Label    string  `json:"label"`
+	Name     string  `json:"name"`
+	FileName string  `json:"file_name"`
+	SavePath string  `json:"save_path"`
+	Progress float64 `json:"progress"`
+	Files    []File  `json:"files"`
 }
 
-func NewClient(baseURL, apiPath, username string, password string, insecure ...bool) *Client {
+type File struct {
+	Path string `json:"path"`
+	Size int64  `json:"size"`
+}
+
+func NewClient(baseURL, apiPath, completedDir, username string, password string, insecure ...bool) *Client {
 	client := &Client{
-		BaseURL:    baseURL,
-		APIPath:    apiPath,
-		Username:   username,
-		Password:   password,
-		httpClient: &http.Client{Timeout: defaultTimeout},
+		BaseURL:      baseURL,
+		APIPath:      apiPath,
+		CompletedDir: completedDir,
+		Username:     username,
+		Password:     password,
+		httpClient:   &http.Client{Timeout: defaultTimeout},
 	}
 
 	if len(insecure) > 0 && insecure[0] {
@@ -131,40 +146,46 @@ func (c *Client) Authenticate(ctx context.Context) error {
 	return nil
 }
 
-// Ensure Client implements DownloadClient.
-var _ dc.DownloadClient = (*Client)(nil)
+// Add a conversion method to DownloadClient.Torrent.
+func (t *Torrent) ToTorrent() *dc.Torrent {
+	files := make([]*dc.File, 0, len(t.Files))
+	for _, f := range t.Files {
+		files = append(files, &dc.File{
+			Path: f.Path,
+			Size: f.Size,
+		})
+	}
 
-// Add a conversion method to DownloadClient.TorrentInfo.
-func (t Torrent) ToTorrentInfo() dc.TorrentInfo {
-	return dc.TorrentInfo{
+	return &dc.Torrent{
 		ID:       t.ID,
 		FileName: t.FileName,
 		Label:    t.Label,
 		SavePath: t.SavePath,
+		Files:    files,
 	}
 }
 
 // Update GetTaggedTorrents to match DownloadClient interface.
-func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]dc.TorrentInfo, error) {
+func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*dc.Torrent, error) {
 	delugeTorrents, err := c.getTaggedTorrentsRaw(ctx, tag)
 	if err != nil {
 		return nil, err
 	}
 
-	infos := make([]dc.TorrentInfo, 0, len(delugeTorrents))
+	infos := make([]*dc.Torrent, 0, len(delugeTorrents))
 
 	for _, t := range delugeTorrents {
-		infos = append(infos, t.ToTorrentInfo())
+		infos = append(infos, t.ToTorrent())
 	}
 
 	return infos, nil
 }
 
 // DownloadFile implements DownloadClient.DownloadFile for Deluge.
-func (c *Client) DownloadFile(ctx context.Context, torrent dc.TorrentInfo, targetPath string) error {
+func (c *Client) DownloadFile(ctx context.Context, file *dc.File, targetPath string) error {
 	logger := logctx.LoggerFromContext(ctx)
 
-	req, url, err := c.buildDownloadRequest(ctx, torrent)
+	req, url, err := c.buildDownloadRequest(ctx, file)
 	if err != nil {
 		logger.Error("failed to create HTTP request", "url", url, "err", err)
 
@@ -218,7 +239,7 @@ func (c *Client) DownloadFile(ctx context.Context, torrent dc.TorrentInfo, targe
 }
 
 // Helper function for original logic.
-func (c *Client) getTaggedTorrentsRaw(ctx context.Context, tag string) ([]Torrent, error) {
+func (c *Client) getTaggedTorrentsRaw(ctx context.Context, tag string) ([]*Torrent, error) {
 	logger := logctx.LoggerFromContext(ctx).With("tag", tag, "method", "core.get_torrents_status")
 
 	url := fmt.Sprintf("%s%s", c.BaseURL, c.APIPath)
@@ -257,66 +278,38 @@ func (c *Client) getTaggedTorrentsRaw(ctx context.Context, tag string) ([]Torren
 		return nil, fmt.Errorf("request failed: %s", string(b))
 	}
 
-	var rpcResp struct {
-		Result map[string]map[string]any `json:"result"`
-		Error  any                       `json:"error"`
-		ID     int                       `json:"id"`
-	}
+	var delugeResp DelugeResponse
 
-	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&delugeResp); err != nil {
 		logger.Error("decode error", "err", err)
 
 		return nil, err
 	}
 
-	if rpcResp.Error != nil {
-		logger.Error("API error", "error", rpcResp.Error)
+	if delugeResp.Error != nil {
+		logger.Error("API error", "error", delugeResp.Error)
 
-		return nil, fmt.Errorf("API error: %v", rpcResp.Error)
+		return nil, fmt.Errorf("API error: %v", delugeResp.Error)
 	}
 
-	var torrents []Torrent
+	var torrents []*Torrent
 
-	for id, fields := range rpcResp.Result {
-		label, _ := fields["label"].(string)
-		progress, _ := fields["progress"].(float64)
-		files, filesOk := fields["files"].([]any)
-		savePath, _ := fields["save_path"].(string)
-		name, _ := fields["name"].(string)
+	for id, torrent := range delugeResp.Result {
 
-		if label == tag && progress == 100.0 && filesOk {
-			for _, f := range files {
-				if fileInfo, ok := f.(map[string]any); ok {
-					if filePath, _ := fileInfo["path"].(string); filePath != "" {
-						torrents = append(torrents, Torrent{
-							ID:       id,
-							Label:    label,
-							Name:     name,
-							FileName: filePath,
-							SavePath: savePath,
-						})
-					}
-				}
-			}
-		} else if !filesOk {
-			logger.Warn("No files array", "download_id", id)
+		torrent.ID = id
+
+		if torrent.Label == tag && torrent.Progress == 100 && len(torrent.Files) > 0 {
+			torrents = append(torrents, torrent)
 		}
 	}
 
-	logger.Debug("found files to download", "count", len(torrents))
+	logger.Debug("found torrents to download", "torrent_count", len(torrents))
 
 	return torrents, nil
 }
 
-func (c *Client) buildDownloadRequest(ctx context.Context, torrent dc.TorrentInfo) (*http.Request, string, error) {
-	filePathEscaped := torrent.SavePath
-	if !strings.HasSuffix(filePathEscaped, "/") && filePathEscaped != "" {
-		filePathEscaped += "/"
-	}
-
-	filePathEscaped += torrent.FileName
-	filePathEscaped = strings.TrimPrefix(filePathEscaped, "/")
-	url := fmt.Sprintf("%s/%s", strings.TrimRight(c.BaseURL, "/"), filePathEscaped)
+func (c *Client) buildDownloadRequest(ctx context.Context, file *dc.File) (*http.Request, string, error) {
+	url := fmt.Sprintf("%s%s/%s", strings.TrimRight(c.BaseURL, "/"), strings.TrimRight(c.CompletedDir, "/"), file.Path)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
