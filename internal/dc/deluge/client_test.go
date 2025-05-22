@@ -14,18 +14,19 @@ import (
 
 func TestNewClient(t *testing.T) {
 	tests := []struct {
-		name     string
-		baseURL  string
-		apiPath  string
-		username string
-		password string
+		name         string
+		baseURL      string
+		apiPath      string
+		completedDir string
+		username     string
+		password     string
 	}{
-		{"basic", "http://localhost", "/api", "user", "pass"},
-		{"empty", "", "", "", ""},
+		{"basic", "http://localhost", "/api", "/downloads", "user", "pass"},
+		{"empty", "", "", "", "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := deluge.NewClient(tt.baseURL, tt.apiPath, tt.username, tt.password)
+			client := deluge.NewClient(tt.baseURL, tt.apiPath, tt.completedDir, tt.username, tt.password)
 			assert.Equal(t, tt.baseURL, client.BaseURL)
 			assert.Equal(t, tt.apiPath, client.APIPath)
 			assert.Equal(t, tt.username, client.Username)
@@ -52,7 +53,7 @@ func TestAuthenticate_Error(t *testing.T) {
 			}))
 			defer ts.Close()
 
-			client := deluge.NewClient(ts.URL, "", "user", "pass")
+			client := deluge.NewClient(ts.URL, "", "", "user", "pass")
 			err := client.Authenticate(context.Background())
 			assert.Error(t, err)
 			assert.Contains(t, err.Error(), tt.expectErrorMsg)
@@ -110,7 +111,7 @@ func TestGetTaggedTorrents(t *testing.T) {
 			}))
 			defer ts.Close()
 
-			client := deluge.NewClient(ts.URL, "", "user", "pass")
+			client := deluge.NewClient(ts.URL, "", "", "user", "pass")
 
 			torrents, err := client.GetTaggedTorrents(context.Background(), tt.tag)
 			assert.NoError(t, err)

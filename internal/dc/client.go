@@ -4,14 +4,22 @@ import (
 	"context"
 )
 
-type TorrentInfo struct {
+type Torrent struct {
 	ID       string
-	FileName string
 	Label    string
+	Name     string
+	FileName string
 	SavePath string
+	Progress float64
+	Files    []*File
+}
+
+type File struct {
+	Path string
+	Size int64
 }
 
 type DownloadClient interface {
-	GetTaggedTorrents(ctx context.Context, label string) ([]TorrentInfo, error)
-	DownloadFile(ctx context.Context, torrent TorrentInfo, targetPath string) error
+	GetTaggedTorrents(ctx context.Context, label string) ([]*Torrent, error)
+	DownloadFile(ctx context.Context, file *File, targetPath string) error
 }
