@@ -2,6 +2,8 @@ package downloader
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"path/filepath"
 
 	"github.com/italolelis/seedbox_downloader/internal/dc"
@@ -10,25 +12,31 @@ import (
 )
 
 type Downloader struct {
-	repo        storage.DownloadWriteRepository
-	readRepo    storage.DownloadReadRepository
+	repo        storage.DownloadRepository
 	targetDir   string
-	dlClient    dc.DownloadClient
 	targetLabel string
+	instanceID  string // unique for this process
+	dlClient    dc.DownloadClient
 
-	instanceID string // unique for this process
+	OnFileDownloadError       chan *dc.File
+	OnTorrentDownloadFinished chan *dc.Torrent
 }
 
-type Torrent = dc.TorrentInfo
-
-func NewDownloader(wr storage.DownloadWriteRepository, rr storage.DownloadReadRepository, dir string, c dc.DownloadClient, lbl string) *Downloader {
+func NewDownloader(
+	dr storage.DownloadRepository,
+	dir string,
+	lbl string,
+	c dc.DownloadClient,
+) *Downloader {
 	return &Downloader{
-		repo:        wr,
-		readRepo:    rr,
+		repo:        dr,
 		targetDir:   dir,
 		dlClient:    c,
 		targetLabel: lbl,
 		instanceID:  GenerateInstanceID(),
+
+		OnFileDownloadError:       make(chan *dc.File),
+		OnTorrentDownloadFinished: make(chan *dc.Torrent),
 	}
 }
 
@@ -42,49 +50,61 @@ func (d *Downloader) DownloadTaggedTorrents(ctx context.Context) error {
 		return err
 	}
 
-	// Group by torrent ID
-	torrentByID := make(map[string]Torrent)
 	for _, torrent := range torrents {
-		if _, exists := torrentByID[torrent.ID]; !exists {
-			torrentByID[torrent.ID] = torrent
+		torrentID := torrent.ID
+
+		var downloadedFiles int
+
+		for _, file := range torrent.Files {
+			targetPath := filepath.Join(d.targetDir, file.Path)
+			hash := sha256.Sum256([]byte(targetPath))
+			downloadID := hex.EncodeToString(hash[:])
+
+			// Try to claim the download atomically, but only if not already downloading or downloaded
+			claimed, err := d.repo.ClaimDownload(downloadID, torrentID, targetPath, d.instanceID)
+			if err != nil {
+				if err == storage.ErrDownloaded {
+					logger.Debug("files already downloaded", "download_id", torrentID, "file_path", targetPath)
+				} else {
+					logger.Error("error claiming download", "download_id", torrentID, "err", err)
+				}
+
+				continue
+			}
+
+			if !claimed {
+				logger.Debug("download already claimed or downloaded", "download_id", downloadID)
+
+				continue
+			}
+
+			logger.Info("downloading new files", "download_id", downloadID)
+
+			err = d.dlClient.DownloadFile(ctx, file, targetPath)
+			if err != nil {
+				logger.Error("failed to download file", "download_id", downloadID, "err", err)
+
+				if err := d.repo.UpdateDownloadStatus(downloadID, "failed"); err != nil {
+					logger.Error("failed to update download status", "download_id", downloadID, "err", err)
+				}
+
+				d.OnFileDownloadError <- file
+
+				continue
+			}
+
+			if err := d.repo.UpdateDownloadStatus(downloadID, "downloaded"); err != nil {
+				logger.Error("failed to update download status", "download_id", downloadID, "err", err)
+			}
+
+			downloadedFiles++
+		}
+
+		if downloadedFiles > 0 {
+			logger.Debug("downloads completed")
+			d.OnTorrentDownloadFinished <- torrent
 		}
 	}
-
-	for id, torrent := range torrentByID {
-		// Ensure the torrent is tracked in the DB before claiming
-		err := d.repo.TrackDownload(id, torrent.FileName)
-		if err != nil {
-			logger.Error("failed to track torrent in DB", "download_id", id, "err", err)
-		}
-
-		// Try to claim the download atomically, but only if not already downloading or downloaded
-		claimed, err := d.repo.ClaimDownload(id, d.instanceID)
-		if err != nil {
-			logger.Error("failed to claim download", "download_id", id, "err", err)
-
-			continue
-		}
-
-		if !claimed {
-			logger.Debug("torrent already claimed, downloading, or not pending", "download_id", id)
-
-			continue
-		}
-
-		logger.Info("downloading new torrent", "download_id", id)
-
-		targetPath := filepath.Join(d.targetDir, torrent.FileName)
-		if err := d.dlClient.DownloadFile(ctx, torrent, targetPath); err != nil {
-			logger.Error("failed to download file", "download_id", id, "err", err)
-			_ = d.repo.UpdateDownloadStatus(id, "failed")
-
-			continue
-		}
-
-		_ = d.repo.UpdateDownloadStatus(id, "downloaded")
-	}
-
-	logger.Debug("downloadTaggedTorrents completed")
 
 	return nil
 }
