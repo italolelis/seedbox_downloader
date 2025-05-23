@@ -2,6 +2,7 @@ package dc
 
 import (
 	"context"
+	"io"
 )
 
 type Torrent struct {
@@ -20,5 +21,5 @@ type File struct {
 
 type DownloadClient interface {
 	GetTaggedTorrents(ctx context.Context, label string) ([]*Torrent, error)
-	DownloadFile(ctx context.Context, file *File, targetPath string) error
+	GrabFile(ctx context.Context, file *File) (io.ReadCloser, error)
 }

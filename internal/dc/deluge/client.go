@@ -6,23 +6,17 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"context"
 
-	"log/slog"
-
 	"github.com/italolelis/seedbox_downloader/internal/dc"
-	"github.com/italolelis/seedbox_downloader/internal/downloader/progress"
 	"github.com/italolelis/seedbox_downloader/internal/logctx"
 )
 
 const (
 	defaultTimeout = 10 * time.Second
-	dirPerm        = 0755
 )
 
 type Client struct {
@@ -181,15 +175,15 @@ func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*dc.Torre
 	return infos, nil
 }
 
-// DownloadFile implements DownloadClient.DownloadFile for Deluge.
-func (c *Client) DownloadFile(ctx context.Context, file *dc.File, targetPath string) error {
+// GrabFile implements DownloadClient.GrabFile for Deluge.
+func (c *Client) GrabFile(ctx context.Context, file *dc.File) (io.ReadCloser, error) {
 	logger := logctx.LoggerFromContext(ctx)
 
 	req, url, err := c.buildDownloadRequest(ctx, file)
 	if err != nil {
 		logger.Error("failed to create HTTP request", "url", url, "err", err)
 
-		return fmt.Errorf("failed to create HTTP request: %w", err)
+		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
 	}
 
 	client := c.httpClient
@@ -205,37 +199,20 @@ func (c *Client) DownloadFile(ctx context.Context, file *dc.File, targetPath str
 	if err != nil {
 		logger.Error("failed to download file", "url", url, "err", err)
 
-		return fmt.Errorf("failed to download file: %w", err)
+		resp.Body.Close()
+
+		return nil, fmt.Errorf("failed to download file: %w", err)
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		logger.Error("failed to download file, bad status", "url", url, "status", resp.Status)
 
-		return fmt.Errorf("failed to download file: %s", resp.Status)
+		resp.Body.Close()
+
+		return nil, fmt.Errorf("failed to download file: %s", resp.Status)
 	}
 
-	if err = c.ensureTargetDir(targetPath, logger); err != nil {
-		return err
-	}
-
-	out, err := os.Create(targetPath)
-	if err != nil {
-		logger.Error("failed to create target file", "target", targetPath, "err", err)
-
-		return fmt.Errorf("failed to create target file: %w", err)
-	}
-
-	defer out.Close()
-
-	err = c.writeFile(out, resp.Body, logger, url, targetPath, resp.ContentLength)
-	if err != nil {
-		return err
-	}
-
-	logger.Info("downloaded and saved file", "url", url, "target", targetPath)
-
-	return nil
+	return resp.Body, nil
 }
 
 // Helper function for original logic.
@@ -324,41 +301,4 @@ func (c *Client) buildDownloadRequest(ctx context.Context, file *dc.File) (*http
 	}
 
 	return req, url, nil
-}
-
-func (c *Client) ensureTargetDir(targetPath string, logger *slog.Logger) error {
-	dir := filepath.Dir(targetPath)
-	if err := os.MkdirAll(dir, dirPerm); err != nil {
-		logger.Error("failed to create target directory", "dir", dir, "err", err)
-
-		return fmt.Errorf("failed to create target directory: %w", err)
-	}
-
-	return nil
-}
-
-func (c *Client) writeFile(out *os.File, respBody io.Reader, logger *slog.Logger, url, targetPath string, totalBytes int64) error {
-	progressInterval := int64(5 * 1024 * 1024) // 5MB
-	progressCb := func(written int64, total int64) {
-		if total > 0 {
-			logger.Info("Download progress",
-				"url", url,
-				"target", targetPath,
-				"downloaded", written,
-				"total", total,
-				"percent",
-				float64(written)*100/float64(total))
-		} else {
-			logger.Info("Download progress", "url", url, "target", targetPath, "downloaded", written)
-		}
-	}
-	pr := progress.NewReader(respBody, totalBytes, progressInterval, progressCb)
-
-	if _, err := io.Copy(out, pr); err != nil {
-		logger.Error("failed to copy file contents", "url", url, "target", targetPath, "err", err)
-
-		return fmt.Errorf("failed to copy file: %w", err)
-	}
-
-	return nil
 }

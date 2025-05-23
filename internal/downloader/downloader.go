@@ -5,11 +5,19 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
+	"log/slog"
+	"os"
 	"path/filepath"
 
 	"github.com/italolelis/seedbox_downloader/internal/dc"
+	"github.com/italolelis/seedbox_downloader/internal/downloader/progress"
 	"github.com/italolelis/seedbox_downloader/internal/logctx"
 	"github.com/italolelis/seedbox_downloader/internal/storage"
+)
+
+const (
+	dirPerm = 0755
 )
 
 type Downloader struct {
@@ -117,8 +125,25 @@ func (d *Downloader) DownloadFile(ctx context.Context, torrentID string, file *d
 
 	logger.Info("downloading new files", "download_id", downloadID)
 
-	err = d.dlClient.DownloadFile(ctx, file, targetPath)
+	fileReader, err := d.dlClient.GrabFile(ctx, file)
 	if err != nil {
+		return fmt.Errorf("failed to grab file: %w", err)
+	}
+
+	defer fileReader.Close()
+
+	if err := d.ensureTargetDir(targetPath, logger); err != nil {
+		return fmt.Errorf("failed to create target directory: %w", err)
+	}
+
+	out, err := os.Create(targetPath)
+	if err != nil {
+		return fmt.Errorf("failed to create target file: %w", err)
+	}
+
+	defer out.Close()
+
+	if err := d.writeFile(out, fileReader, logger, file.Path, targetPath, file.Size); err != nil {
 		if err := d.repo.UpdateDownloadStatus(downloadID, "failed"); err != nil {
 			return fmt.Errorf("failed to update download status: %w", err)
 		}
@@ -130,6 +155,45 @@ func (d *Downloader) DownloadFile(ctx context.Context, torrentID string, file *d
 
 	if err := d.repo.UpdateDownloadStatus(downloadID, "downloaded"); err != nil {
 		return fmt.Errorf("failed to update download status: %w", err)
+	}
+
+	logger.Info("downloaded and saved file", "target", targetPath)
+
+	return nil
+}
+
+func (d *Downloader) ensureTargetDir(targetPath string, logger *slog.Logger) error {
+	dir := filepath.Dir(targetPath)
+	if err := os.MkdirAll(dir, dirPerm); err != nil {
+		logger.Error("failed to create target directory", "dir", dir, "err", err)
+
+		return fmt.Errorf("failed to create target directory: %w", err)
+	}
+
+	return nil
+}
+
+func (d *Downloader) writeFile(out *os.File, reader io.Reader, logger *slog.Logger, url, targetPath string, totalBytes int64) error {
+	progressInterval := int64(5 * 1024 * 1024) // 5MB
+	progressCb := func(written int64, total int64) {
+		if total > 0 {
+			logger.Debug("download progress",
+				"url", url,
+				"target", targetPath,
+				"downloaded", written,
+				"total", total,
+				"percent",
+				float64(written)*100/float64(total))
+		} else {
+			logger.Debug("download progress", "url", url, "target", targetPath, "downloaded", written)
+		}
+	}
+	pr := progress.NewReader(reader, totalBytes, progressInterval, progressCb)
+
+	if _, err := io.Copy(out, pr); err != nil {
+		logger.Error("failed to copy file contents", "url", url, "target", targetPath, "err", err)
+
+		return fmt.Errorf("failed to copy file: %w", err)
 	}
 
 	return nil
