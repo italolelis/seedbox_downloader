@@ -23,6 +23,7 @@
 - [Usage](#usage)
 - [Docker](#docker)
 - [License](#license)
+- [Environment Variables](#environment-variables)
 
 ## Features
 
@@ -44,7 +45,7 @@ docker run --rm \
   -e TARGET_LABEL=<label> \
   -e DELUGE_COMPLETED_DIR=<completed_dir> \
   -e TARGET_DIR=<target_dir> \
-  -e KEEP_DOWNLOADED_FILES_FOR=7d \
+  -e KEEP_DOWNLOADED_FOR=7d \
   ghcr.io/italolelis/seedbox_downloader:latest
 ```
 
@@ -65,7 +66,7 @@ services:
       TARGET_LABEL: "your-label"
       DELUGE_COMPLETED_DIR: "/deluge/completed"
       TARGET_DIR: "/downloads"
-      KEEP_DOWNLOADED_FILES_FOR: "7d"
+      KEEP_DOWNLOADED_FOR: "7d"
     volumes:
       - downloads:/downloads
     restart: unless-stopped
@@ -140,7 +141,7 @@ seedbox_downloader
    - `TARGET_LABEL`: Label for filtering downloaded files.
    - `DELUGE_COMPLETED_DIR`: Directory for completed downloads in Deluge.
    - `TARGET_DIR`: Directory where files will be downloaded.
-   - `KEEP_DOWNLOADED_FILES_FOR`: Duration to keep downloaded files (e.g., "7d").
+   - `KEEP_DOWNLOADED_FOR`: Duration to keep downloaded files (e.g., "7d").
 
 3. **Build the application:**
    ```
@@ -167,9 +168,32 @@ To build a Docker image for the application, use the provided `Dockerfile`. The 
 
 2. **Run the Docker container:**
    ```
-   docker run -e DELUGE_BASE_URL=<url> -e DELUGE_API_URL_PATH=<path> -e DELUGE_USERNAME=<username> -e DELUGE_PASSWORD=<password> -e TARGET_LABEL=<label> -e DELUGE_COMPLETED_DIR=<completed_dir> -e TARGET_DIR=<target_dir> -e KEEP_DOWNLOADED_FILES_FOR=<duration> seedbox_downloader
+   docker run -e DELUGE_BASE_URL=<url> -e DELUGE_API_URL_PATH=<path> -e DELUGE_USERNAME=<username> -e DELUGE_PASSWORD=<password> -e TARGET_LABEL=<label> -e DELUGE_COMPLETED_DIR=<completed_dir> -e TARGET_DIR=<target_dir> -e KEEP_DOWNLOADED_FOR=<duration> seedbox_downloader
    ```
 
 ## License
 
 This project is licensed under the MIT License. See the LICENSE file for details.
+
+## Environment Variables
+
+The application is configured via environment variables. Below is a list of all supported variables:
+
+| Variable                  | Required | Default         | Description                                                                 |
+|---------------------------|----------|-----------------|-----------------------------------------------------------------------------|
+| DELUGE_BASE_URL           | Yes      |                 | Base URL for the Deluge API.                                                |
+| DELUGE_API_URL_PATH       | Yes      |                 | API URL path for Deluge (e.g., `/deluge/json`).                             |
+| DELUGE_USERNAME           | Yes      |                 | Username for Deluge authentication.                                         |
+| DELUGE_PASSWORD           | Yes      |                 | Password for Deluge authentication.                                         |
+| TARGET_LABEL              | Yes      |                 | Label for filtering downloaded files.                                       |
+| DELUGE_COMPLETED_DIR      | Yes      |                 | Directory for completed downloads in Deluge.                                |
+| TARGET_DIR                | Yes      |                 | Directory where files will be downloaded.                                   |
+| KEEP_DOWNLOADED_FOR       | No       | 24h             | Duration to keep downloaded files (e.g., `7d`, `24h`).                      |
+| UPDATE_INTERVAL           | No       | 10m             | How often to poll Deluge for new downloads.                                 |
+| CLEANUP_INTERVAL          | No       | 10m             | How often to run cleanup of old downloads.                                  |
+| LOG_LEVEL                 | No       | INFO            | Logging level: `DEBUG`, `INFO`, `WARN`, `ERROR`.                            |
+| DISCORD_WEBHOOK_URL       | No       |                 | If set, sends notifications to this Discord webhook.                        |
+| DB_PATH                   | No       | downloads.db    | Path to the SQLite database file.                                           |
+| MAX_PARALLEL              | No       | 5               | Maximum number of parallel downloads.                                       |
+
+> **Note:** The variable `KEEP_DOWNLOADED_FOR` is used in the code. If you previously used `KEEP_DOWNLOADED_FILES_FOR`, please update your configuration to use `KEEP_DOWNLOADED_FOR` for consistency.
