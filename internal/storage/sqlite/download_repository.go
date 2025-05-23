@@ -26,8 +26,17 @@ func (r *DownloadRepository) GetDownloads() ([]storage.DownloadRecord, error) {
 
 	for rows.Next() {
 		var record storage.DownloadRecord
-		if err := rows.Scan(&record.DownloadID, &record.FilePath, &record.DownloadedAt, &record.Status, &record.LockedBy); err != nil {
+
+		var lockedBy sql.NullString
+
+		err := rows.Scan(&record.DownloadID, &record.FilePath, &record.DownloadedAt, &record.Status, &lockedBy)
+		if err != nil {
 			return nil, err
+		}
+
+		record.LockedBy = ""
+		if lockedBy.Valid {
+			record.LockedBy = lockedBy.String
 		}
 
 		downloads = append(downloads, record)
