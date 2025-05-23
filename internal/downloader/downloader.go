@@ -101,7 +101,8 @@ func (d *Downloader) DownloadTaggedTorrents(ctx context.Context) error {
 		}
 
 		if downloadedFiles > 0 {
-			logger.Debug("downloads completed")
+			logger.Info("downloads completed", "download_id", torrentID, "torrent_name", torrent.Name)
+
 			d.OnTorrentDownloadFinished <- torrent
 		}
 	}
