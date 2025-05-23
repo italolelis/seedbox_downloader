@@ -24,6 +24,7 @@ type Config struct {
 	LogLevel           string        `envconfig:"LOG_LEVEL" default:"INFO"`
 	DiscordWebhookURL  string        `envconfig:"DISCORD_WEBHOOK_URL"`
 	DBPath             string        `envconfig:"DB_PATH" default:"downloads.db"`
+	MaxParallel        int           `envconfig:"MAX_PARALLEL" default:"5"`
 }
 
 // LoadConfig reads environment variables and populates the Config struct.

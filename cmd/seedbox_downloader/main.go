@@ -60,6 +60,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 		cfg.TargetDir,
 		cfg.TargetLabel,
 		dlClient,
+		cfg.MaxParallel,
 	)
 
 	setupNotificationForDownloader(ctx, downloader, cfg)

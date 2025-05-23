@@ -9,11 +9,13 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 
 	"github.com/italolelis/seedbox_downloader/internal/dc"
 	"github.com/italolelis/seedbox_downloader/internal/downloader/progress"
 	"github.com/italolelis/seedbox_downloader/internal/logctx"
 	"github.com/italolelis/seedbox_downloader/internal/storage"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -24,8 +26,10 @@ type Downloader struct {
 	repo        storage.DownloadRepository
 	targetDir   string
 	targetLabel string
-	instanceID  string // unique for this process
+	instanceID  string
 	dlClient    dc.DownloadClient
+
+	MaxParallel int
 
 	OnFileDownloadError       chan *dc.File
 	OnTorrentDownloadFinished chan *dc.Torrent
@@ -36,6 +40,7 @@ func NewDownloader(
 	dir string,
 	lbl string,
 	c dc.DownloadClient,
+	maxParallel int,
 ) *Downloader {
 	return &Downloader{
 		repo:        dr,
@@ -43,6 +48,7 @@ func NewDownloader(
 		dlClient:    c,
 		targetLabel: lbl,
 		instanceID:  GenerateInstanceID(),
+		MaxParallel: maxParallel,
 
 		OnFileDownloadError:       make(chan *dc.File),
 		OnTorrentDownloadFinished: make(chan *dc.Torrent),
@@ -79,28 +85,45 @@ func (d *Downloader) DownloadTaggedTorrents(ctx context.Context) error {
 	return nil
 }
 
+// DownloadTorrent downloads a torrent and returns the number of files downloaded.
 func (d *Downloader) DownloadTorrent(ctx context.Context, torrent *dc.Torrent) (int, error) {
-	var downloadedFiles int
+	var downloadedFiles int32
 
-	logger := logctx.LoggerFromContext(ctx)
+	wg, ctx := errgroup.WithContext(ctx)
 
 	if len(torrent.Files) == 0 {
 		return 0, fmt.Errorf("no files to download")
 	}
 
-	for _, file := range torrent.Files {
-		targetPath := filepath.Join(d.targetDir, file.Path)
+	logger := logctx.LoggerFromContext(ctx)
 
-		if err := d.DownloadFile(ctx, torrent.ID, file, targetPath); err != nil {
-			logger.Error("failed to download file", "download_id", torrent.ID, "file_path", file.Path, "err", err)
+	sem := make(chan struct{}, d.MaxParallel)
 
-			return 0, err
-		}
+	for i := range torrent.Files {
+		file := torrent.Files[i]
+		sem <- struct{}{}
 
-		downloadedFiles++
+		wg.Go(func() error {
+			defer func() { <-sem }() // release the slot
+
+			targetPath := filepath.Join(d.targetDir, file.Path)
+			if err := d.DownloadFile(ctx, torrent.ID, file, targetPath); err != nil {
+				logger.Error("failed to download file", "download_id", torrent.ID, "file_path", file.Path, "err", err)
+
+				return err
+			}
+
+			atomic.AddInt32(&downloadedFiles, 1)
+
+			return nil
+		})
 	}
 
-	return downloadedFiles, nil
+	if err := wg.Wait(); err != nil {
+		return 0, fmt.Errorf("failed to download files: %w", err)
+	}
+
+	return int(downloadedFiles), nil
 }
 
 func (d *Downloader) DownloadFile(ctx context.Context, torrentID string, file *dc.File, targetPath string) error {
