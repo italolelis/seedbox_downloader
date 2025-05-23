@@ -157,8 +157,10 @@ func (t *Torrent) ToTorrent() *dc.Torrent {
 
 	return &dc.Torrent{
 		ID:       t.ID,
+		Name:     t.Name,
 		Label:    t.Label,
 		SavePath: t.SavePath,
+		Progress: t.Progress,
 		Files:    files,
 	}
 }
