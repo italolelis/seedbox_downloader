@@ -80,9 +80,15 @@ func (c *Client) Authenticate(ctx context.Context) error {
 		"method": "auth.login",
 		"params": []any{c.Password},
 	}
-	body, _ := json.Marshal(payload)
 
-	logger.Debug("sending auth.login", "url", url)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		logger.Error("failed to marshal payload", "err", err)
+
+		return err
+	}
+
+	logger.Info("authenticating with deluge", "username", c.Username)
 
 	// Use http.NewRequest to set headers like requests does
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(body)))
@@ -134,7 +140,7 @@ func (c *Client) Authenticate(ctx context.Context) error {
 		return fmt.Errorf("deluge auth.login failed: %v", rpcResp.Error)
 	}
 
-	logger.Debug("success")
+	logger.Debug("authenticated with deluge")
 
 	return nil
 }
