@@ -61,6 +61,9 @@ docker run --rm \
   -e TARGET_LABEL=<label> \
   -e TARGET_DIR=/ \
   -e KEEP_DOWNLOADED_FOR=168h \
+  -e DOWNLOAD_CLIENT=putio \
+  -e TRANSMISSION_USERNAME=<username> \
+  -e TRANSMISSION_PASSWORD=<password> \
   -p 9091:9091 \
   ghcr.io/italolelis/seedbox_downloader:latest
 ```
@@ -100,6 +103,9 @@ services:
       TARGET_LABEL: "your-label"           # Required for organizing downloads
       TARGET_DIR: "/"                       # Usually root directory
       KEEP_DOWNLOADED_FOR: "168h"          # Keep files for 7 days (in hours)
+      DOWNLOAD_CLIENT: "putio"             # Required to use Put.io client
+      TRANSMISSION_USERNAME: "username"     # Required for proxy authentication
+      TRANSMISSION_PASSWORD: "password"     # Required for proxy authentication
     ports:
       - "9091:9091"
     restart: unless-stopped
@@ -239,15 +245,18 @@ The application provides a proxy service that acts as a bridge between your *Arr
 
 To use Put.io as your download client, you'll need to set the following environment variables:
 
-| Variable           | Required | Description                                    |
-|--------------------|----------|------------------------------------------------|
-| PUTIO_TOKEN        | Yes      | Your Put.io API token                          |
-| PUTIO_INSECURE     | No       | Allow insecure connections (default: false)    |
-| PROXY_USERNAME     | Yes      | Username for *Arr authentication               |
-| PROXY_PASSWORD     | Yes      | Password for *Arr authentication               |
-| TARGET_LABEL       | Yes      | Label for organizing downloads in Put.io       |
-| TARGET_DIR         | Yes      | Base directory in Put.io (usually "/")         |
-| KEEP_DOWNLOADED_FOR| Yes      | How long to keep downloaded files (in hours)   |
+| Variable              | Required | Description                                    |
+|-----------------------|----------|------------------------------------------------|
+| PUTIO_TOKEN           | Yes      | Your Put.io API token                          |
+| PUTIO_INSECURE        | No       | Allow insecure connections (default: false)    |
+| PROXY_USERNAME        | Yes      | Username for *Arr authentication               |
+| PROXY_PASSWORD        | Yes      | Password for *Arr authentication               |
+| TARGET_LABEL          | Yes      | Label for organizing downloads in Put.io       |
+| TARGET_DIR            | Yes      | Base directory in Put.io (usually "/")         |
+| KEEP_DOWNLOADED_FOR   | Yes      | How long to keep downloaded files (in hours)   |
+| DOWNLOAD_CLIENT       | Yes      | Must be set to "putio" to use Put.io client    |
+| TRANSMISSION_USERNAME | Yes      | Username for proxy authentication              |
+| TRANSMISSION_PASSWORD | Yes      | Password for proxy authentication              |
 
 ### *Arr Integration
 
@@ -265,6 +274,9 @@ To use Put.io as your download client, you'll need to set the following environm
          TARGET_LABEL: "your-label"           # Required for organizing downloads
          TARGET_DIR: "/"                       # Usually root directory
          KEEP_DOWNLOADED_FOR: "168h"          # Keep files for 7 days (in hours)
+         DOWNLOAD_CLIENT: "putio"             # Required to use Put.io client
+         TRANSMISSION_USERNAME: "username"     # Required for proxy authentication
+         TRANSMISSION_PASSWORD: "password"     # Required for proxy authentication
        ports:
          - "9091:9091"
        restart: unless-stopped
