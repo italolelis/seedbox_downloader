@@ -24,6 +24,7 @@
 - [Docker](#docker)
 - [License](#license)
 - [Environment Variables](#environment-variables)
+- [Put.io Integration](#putio-integration)
 
 ## Features
 
@@ -33,9 +34,11 @@
 - 🔒  Secure, minimal, and easy to deploy
 - 🧪  Automated tests and CI/CD
 - 🧩  Modular client system (add more clients in `internal/dc`)
+- 🔄  Put.io proxy for *Arr integration
 
 ## Quick Start
 
+### Deluge Integration
 ```sh
 docker run --rm \
   -e DELUGE_BASE_URL=<url> \
@@ -45,7 +48,20 @@ docker run --rm \
   -e TARGET_LABEL=<label> \
   -e DELUGE_COMPLETED_DIR=<completed_dir> \
   -e TARGET_DIR=<target_dir> \
-  -e KEEP_DOWNLOADED_FOR=7d \
+  -e KEEP_DOWNLOADED_FOR=168h \
+  ghcr.io/italolelis/seedbox_downloader:latest
+```
+
+### Put.io Integration
+```sh
+docker run --rm \
+  -e PUTIO_TOKEN=<token> \
+  -e PROXY_USERNAME=<username> \
+  -e PROXY_PASSWORD=<password> \
+  -e TARGET_LABEL=<label> \
+  -e TARGET_DIR=/ \
+  -e KEEP_DOWNLOADED_FOR=168h \
+  -p 9091:9091 \
   ghcr.io/italolelis/seedbox_downloader:latest
 ```
 
@@ -55,6 +71,7 @@ You can use Docker Compose for easier configuration and management:
 
 ```yaml
 services:
+  # Deluge integration for syncing downloads
   seedbox_downloader:
     image: ghcr.io/italolelis/seedbox_downloader:latest
     container_name: seedbox_downloader
@@ -66,9 +83,26 @@ services:
       TARGET_LABEL: "your-label"
       DELUGE_COMPLETED_DIR: "/deluge/completed"
       TARGET_DIR: "/downloads"
-      KEEP_DOWNLOADED_FOR: "7d"
+      KEEP_DOWNLOADED_FOR: "168h"
     volumes:
       - downloads:/downloads
+    restart: unless-stopped
+
+  # Put.io proxy for *Arr integration
+  putioarr:
+    image: ghcr.io/italolelis/seedbox_downloader:latest
+    container_name: putioarr
+    environment:
+      PUTIO_TOKEN: "your-putio-token"
+      PUTIO_BASE_URL: "https://api.put.io"  # Optional
+      PUTIO_INSECURE: "false"               # Optional
+      PROXY_USERNAME: "your-username"       # Required for *Arr
+      PROXY_PASSWORD: "your-password"       # Required for *Arr
+      TARGET_LABEL: "your-label"           # Required for organizing downloads
+      TARGET_DIR: "/"                       # Usually root directory
+      KEEP_DOWNLOADED_FOR: "168h"          # Keep files for 7 days (in hours)
+    ports:
+      - "9091:9091"
     restart: unless-stopped
 
 volumes:
@@ -197,3 +231,80 @@ The application is configured via environment variables. Below is a list of all 
 | MAX_PARALLEL              | No       | 5               | Maximum number of parallel downloads.                                       |
 
 > **Note:** The variable `KEEP_DOWNLOADED_FOR` is used in the code. If you previously used `KEEP_DOWNLOADED_FILES_FOR`, please update your configuration to use `KEEP_DOWNLOADED_FOR` for consistency.
+
+## Put.io Integration
+
+The application provides a proxy service that acts as a bridge between your *Arr applications (Sonarr, Radarr, Whisparr, etc.) and Put.io. This proxy handles the communication between *Arr and Put.io, manages downloads, and ensures proper file organization. *Arr applications will automatically import the downloaded files once they're ready.
+
+### Configuration
+
+To use Put.io as your download client, you'll need to set the following environment variables:
+
+| Variable           | Required | Description                                    |
+|--------------------|----------|------------------------------------------------|
+| PUTIO_TOKEN        | Yes      | Your Put.io API token                          |
+| PUTIO_BASE_URL     | No       | Base URL for Put.io API (defaults to official) |
+| PUTIO_INSECURE     | No       | Allow insecure connections (default: false)    |
+| PROXY_USERNAME     | Yes      | Username for *Arr authentication               |
+| PROXY_PASSWORD     | Yes      | Password for *Arr authentication               |
+| TARGET_LABEL       | Yes      | Label for organizing downloads in Put.io       |
+| TARGET_DIR         | Yes      | Base directory in Put.io (usually "/")         |
+| KEEP_DOWNLOADED_FOR| Yes      | How long to keep downloaded files (in hours)   |
+
+### *Arr Integration
+
+1. **Configure the Proxy:**
+   ```yaml
+   services:
+     putioarr:
+       image: ghcr.io/italolelis/seedbox_downloader:latest
+       container_name: putioarr
+       environment:
+         PUTIO_TOKEN: "your-putio-token"
+         PUTIO_BASE_URL: "https://api.put.io"  # Optional
+         PUTIO_INSECURE: "false"               # Optional
+         PROXY_USERNAME: "your-username"       # Required for *Arr
+         PROXY_PASSWORD: "your-password"       # Required for *Arr
+         TARGET_LABEL: "your-label"           # Required for organizing downloads
+         TARGET_DIR: "/"                       # Usually root directory
+         KEEP_DOWNLOADED_FOR: "168h"          # Keep files for 7 days (in hours)
+       ports:
+         - "9091:9091"
+       restart: unless-stopped
+   ```
+
+2. **Configure *Arr Applications:**
+   In your *Arr application (Sonarr, Radarr, Whisparr, etc.), add a new download client with these settings:
+
+   - **Type:** Transmission
+   - **Name:** Put.io
+   - **Host:** `http://your-server:9091`
+   - **Port:** `9091`
+   - **URL Base:** `/transmission`
+   - **Username:** `<your configured PROXY_USERNAME>`
+   - **Password:** `<your configured PROXY_PASSWORD>`
+   - **Category:** `your-putio-folder` (must be an existing folder in your Put.io account)
+
+3. **Important Notes:**
+   - The proxy emulates a Transmission client, so *Arr applications will treat it as such
+   - The category you specify must be an existing folder in your Put.io account
+   - The proxy will automatically handle file downloads and organization
+   - *Arr will automatically import the downloaded files once they're ready
+   - The proxy handles authentication and file management automatically
+
+4. **Security Considerations:**
+   - Always use HTTPS in production
+   - Use strong passwords for the proxy
+   - Consider using a reverse proxy with SSL termination
+   - Keep your Put.io token secure and never share it
+
+5. **Troubleshooting:**
+   - If downloads fail, check the Put.io API token
+   - Ensure the specified category folder exists in your Put.io account
+   - Check the proxy logs for detailed error messages
+   - Verify network connectivity between *Arr and the proxy
+   - Make sure the proxy has proper permissions to access Put.io
+
+## Deluge Integration
+
+The Deluge integration is focused on syncing downloads from your Deluge server. Unlike the Put.io integration, it doesn't require a proxy as *Arr applications have native support for Deluge. This integration is useful for users who want to keep their downloads in sync with their Deluge server.
