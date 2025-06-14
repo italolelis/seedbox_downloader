@@ -59,7 +59,8 @@ docker run --rm \
   -e PROXY_USERNAME=<username> \
   -e PROXY_PASSWORD=<password> \
   -e TARGET_LABEL=<label> \
-  -e TARGET_DIR=/ \
+  -e TARGET_DIR=/downloads \
+  -e PUTIO_BASE_DIR=/downloads \
   -e KEEP_DOWNLOADED_FOR=168h \
   -e DOWNLOAD_CLIENT=putio \
   -e TRANSMISSION_USERNAME=<username> \
@@ -101,7 +102,8 @@ services:
       PROXY_USERNAME: "your-username"       # Required for *Arr
       PROXY_PASSWORD: "your-password"       # Required for *Arr
       TARGET_LABEL: "your-label"           # Required for organizing downloads
-      TARGET_DIR: "/"                       # Usually root directory
+      TARGET_DIR: "/downloads"             # Local directory where files will be downloaded. Make sure it matches with your docker volume.
+      PUTIO_BASE_DIR: "/"                  # Base directory in Put.io where files will be stored (usually "/")
       KEEP_DOWNLOADED_FOR: "168h"          # Keep files for 7 days (in hours)
       DOWNLOAD_CLIENT: "putio"             # Required to use Put.io client
       TRANSMISSION_USERNAME: "username"     # Required for proxy authentication
@@ -252,11 +254,27 @@ To use Put.io as your download client, you'll need to set the following environm
 | PROXY_USERNAME        | Yes      | Username for *Arr authentication               |
 | PROXY_PASSWORD        | Yes      | Password for *Arr authentication               |
 | TARGET_LABEL          | Yes      | Label for organizing downloads in Put.io       |
-| TARGET_DIR            | Yes      | Base directory in Put.io (usually "/")         |
+| TARGET_DIR            | Yes      | Local directory where files will be downloaded |
+| PUTIO_BASE_DIR        | Yes      | Base directory in Put.io where files will be stored |
 | KEEP_DOWNLOADED_FOR   | Yes      | How long to keep downloaded files (in hours)   |
 | DOWNLOAD_CLIENT       | Yes      | Must be set to "putio" to use Put.io client    |
 | TRANSMISSION_USERNAME | Yes      | Username for proxy authentication              |
 | TRANSMISSION_PASSWORD | Yes      | Password for proxy authentication              |
+
+### Directory Structure
+
+The Put.io integration uses two directory settings:
+- `PUTIO_BASE_DIR`: This is the directory in your Put.io account where files will be stored. For example, if set to `/downloads`, all files will be stored in this directory in your Put.io account.
+- `TARGET_DIR`: This is the local directory on your system where downloaded files will be stored. This is where *Arr applications will look for completed downloads.
+
+For example, if you set:
+- `PUTIO_BASE_DIR=/downloads`
+- `TARGET_DIR=/downloads`
+
+Files will be:
+1. Downloaded to `/downloads` in your Put.io account
+2. Then downloaded to `/downloads` on your local system
+3. *Arr will look for them in the local `/downloads` directory
 
 ### *Arr Integration
 
@@ -272,7 +290,8 @@ To use Put.io as your download client, you'll need to set the following environm
          PROXY_USERNAME: "your-username"       # Required for *Arr
          PROXY_PASSWORD: "your-password"       # Required for *Arr
          TARGET_LABEL: "your-label"           # Required for organizing downloads
-         TARGET_DIR: "/"                       # Usually root directory
+         TARGET_DIR: "/downloads"             # Local directory where files will be downloaded
+         PUTIO_BASE_DIR: "/downloads"         # Base directory in Put.io where files will be stored
          KEEP_DOWNLOADED_FOR: "168h"          # Keep files for 7 days (in hours)
          DOWNLOAD_CLIENT: "putio"             # Required to use Put.io client
          TRANSMISSION_USERNAME: "username"     # Required for proxy authentication

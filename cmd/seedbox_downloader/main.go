@@ -194,7 +194,7 @@ func setupServer(ctx context.Context, dc dc.DownloadClient, cfg *config.Config) 
 	var tHandler *rest.TransmissionHandler
 
 	if dc, ok := dc.(*putio.Client); ok {
-		tHandler = rest.NewTransmissionHandler(cfg.Transmission.Username, cfg.Transmission.Password, dc, cfg.TargetLabel, cfg.TargetDir)
+		tHandler = rest.NewTransmissionHandler(cfg.Transmission.Username, cfg.Transmission.Password, dc, cfg.TargetLabel, cfg.PutioBaseDir)
 	} else {
 		return nil, fmt.Errorf("download client is not a putio client: %s", cfg.DownloadClient)
 	}
