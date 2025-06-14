@@ -108,6 +108,12 @@ func (d *Downloader) DownloadTorrent(ctx context.Context, torrent *dc.Torrent) (
 
 			targetPath := filepath.Join(d.targetDir, file.Path)
 			if err := d.DownloadFile(ctx, torrent.ID, file, targetPath); err != nil {
+				if err == storage.ErrDownloaded {
+					logger.Debug("file already downloaded", "download_id", torrent.ID, "file_path", file.Path)
+
+					return err
+				}
+
 				logger.Error("failed to download file", "download_id", torrent.ID, "file_path", file.Path, "err", err)
 
 				return err
