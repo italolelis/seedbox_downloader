@@ -19,8 +19,7 @@ type Config struct {
 	DelugePassword     string `envconfig:"DELUGE_PASSWORD"`
 	DelugeCompletedDir string `envconfig:"DELUGE_COMPLETED_DIR"`
 
-	PutioBaseURL string `envconfig:"PUTIO_BASE_URL"`
-	PutioToken   string `envconfig:"PUTIO_TOKEN"`
+	PutioToken string `envconfig:"PUTIO_TOKEN"`
 
 	TargetLabel       string        `envconfig:"TARGET_LABEL"`
 	TargetDir         string        `envconfig:"TARGET_DIR" required:"true"`

@@ -94,7 +94,6 @@ services:
     container_name: putioarr
     environment:
       PUTIO_TOKEN: "your-putio-token"
-      PUTIO_BASE_URL: "https://api.put.io"  # Optional
       PUTIO_INSECURE: "false"               # Optional
       PROXY_USERNAME: "your-username"       # Required for *Arr
       PROXY_PASSWORD: "your-password"       # Required for *Arr
@@ -243,7 +242,6 @@ To use Put.io as your download client, you'll need to set the following environm
 | Variable           | Required | Description                                    |
 |--------------------|----------|------------------------------------------------|
 | PUTIO_TOKEN        | Yes      | Your Put.io API token                          |
-| PUTIO_BASE_URL     | No       | Base URL for Put.io API (defaults to official) |
 | PUTIO_INSECURE     | No       | Allow insecure connections (default: false)    |
 | PROXY_USERNAME     | Yes      | Username for *Arr authentication               |
 | PROXY_PASSWORD     | Yes      | Password for *Arr authentication               |
@@ -261,7 +259,6 @@ To use Put.io as your download client, you'll need to set the following environm
        container_name: putioarr
        environment:
          PUTIO_TOKEN: "your-putio-token"
-         PUTIO_BASE_URL: "https://api.put.io"  # Optional
          PUTIO_INSECURE: "false"               # Optional
          PROXY_USERNAME: "your-username"       # Required for *Arr
          PROXY_PASSWORD: "your-password"       # Required for *Arr

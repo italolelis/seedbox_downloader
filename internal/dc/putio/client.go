@@ -21,7 +21,7 @@ type Client struct {
 	putioClient *putio.Client
 }
 
-func NewClient(baseURL, token string, insecure ...bool) *Client {
+func NewClient(token string, insecure ...bool) *Client {
 	client := &Client{}
 
 	// Initialize Put.io client

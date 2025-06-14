@@ -183,7 +183,7 @@ func buildDownloadClient(cfg *config.Config) (dc.DownloadClient, error) {
 	case "deluge":
 		return deluge.NewClient(cfg.DelugeBaseURL, cfg.DelugeAPIURLPath, cfg.DelugeCompletedDir, cfg.DelugeUsername, cfg.DelugePassword, true), nil
 	case "putio":
-		return putio.NewClient(cfg.PutioBaseURL, cfg.PutioToken, true), nil
+		return putio.NewClient(cfg.PutioToken, true), nil
 	}
 
 	return nil, fmt.Errorf("invalid download client: %s", cfg.DownloadClient)
