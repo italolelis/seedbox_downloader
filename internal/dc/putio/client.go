@@ -89,30 +89,12 @@ func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*dc.Torre
 			Downloaded:         int64(transfer.Downloaded),
 		}
 
-		switch strings.ToLower(file.FileType) {
-		case "file", "video":
-			torrent.Files = append(torrent.Files, &dc.File{
-				ID:   file.ID,
-				Path: file.Name, // Use Name instead of Path
-				Size: file.Size,
-			})
-		case "folder":
-			// Get files for this transfer
-			files, _, err := c.putioClient.Files.List(ctx, transfer.FileID)
-			if err != nil {
-				logger.Error("failed to get files for transfer", "transfer_id", transfer.ID, "err", err)
-
-				continue
-			}
-
-			for _, f := range files {
-				torrent.Files = append(torrent.Files, &dc.File{
-					ID:   f.ID,
-					Path: filepath.Join(file.Name, f.Name),
-					Size: f.Size,
-				})
-			}
+		files, err := c.getFilesRecursively(ctx, file.ID, file.Name)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get files for transfer: %w", err)
 		}
+
+		torrent.Files = append(torrent.Files, files...)
 
 		torrents = append(torrents, torrent)
 	}
@@ -265,4 +247,37 @@ func (c *Client) findDirectoryID(ctx context.Context, downloadDir string) (int64
 	}
 
 	return search.Files[0].ID, nil
+}
+
+func (c *Client) getFilesRecursively(ctx context.Context, parentID int64, basePath string) ([]*dc.File, error) {
+	logger := logctx.LoggerFromContext(ctx).With("parent_id", parentID, "base_path", basePath)
+
+	files, _, err := c.putioClient.Files.List(ctx, parentID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list files: %w", err)
+	}
+
+	var result []*dc.File
+
+	for _, f := range files {
+		switch strings.ToLower(f.FileType) {
+		case "file", "text", "video", "audio":
+			result = append(result, &dc.File{
+				ID:   f.ID,
+				Path: filepath.Join(basePath, f.Name),
+				Size: f.Size,
+			})
+		case "folder":
+			nestedFiles, err := c.getFilesRecursively(ctx, f.ID, filepath.Join(basePath, f.Name))
+			if err != nil {
+				logger.Error("failed to get nested files", "err", err)
+
+				continue
+			}
+
+			result = append(result, nestedFiles...)
+		}
+	}
+
+	return result, nil
 }
