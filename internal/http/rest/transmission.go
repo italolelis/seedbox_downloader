@@ -74,16 +74,6 @@ type TransmissionRequest struct {
 	} `json:"arguments"`
 }
 
-// GetDownloadDir returns the download directory path with any leading forward slash removed.
-func (a *TransmissionRequest) GetDownloadDir() string {
-	downloadDir := a.Arguments.DownloadDir
-	if len(downloadDir) > 0 && downloadDir[0] == '/' {
-		return downloadDir[1:]
-	}
-
-	return downloadDir
-}
-
 type TransmissionConfig struct {
 	RPCVersion              string  `json:"rpc-version"`
 	Version                 string  `json:"version"`
@@ -110,17 +100,17 @@ type TransmissionHandler struct {
 	username    string
 	password    string
 	dc          *putio.Client
-	tag         string
+	label       string
 	downloadDir string
 }
 
 // NewTransmissionHandler creates a new content handler.
-func NewTransmissionHandler(username, password string, dc *putio.Client, tag string, downloadDir string) *TransmissionHandler {
+func NewTransmissionHandler(username, password string, dc *putio.Client, label string, downloadDir string) *TransmissionHandler {
 	return &TransmissionHandler{
 		username:    username,
 		password:    password,
 		dc:          dc,
-		tag:         tag,
+		label:       label,
 		downloadDir: downloadDir,
 	}
 }
@@ -250,7 +240,8 @@ func (h *TransmissionHandler) handleTorrentAdd(ctx context.Context, req *Transmi
 
 		var err error
 
-		torrent, err = h.dc.AddTransfer(ctx, magnetLink, req.GetDownloadDir())
+		// we use the label as the download directory. When using put.io as a shared download client, we can't use the download directory from the request.
+		torrent, err = h.dc.AddTransfer(ctx, magnetLink, h.label)
 		if err != nil {
 			return nil, fmt.Errorf("failed to add transfer: %w", err)
 		}
@@ -287,7 +278,7 @@ func (h *TransmissionHandler) handleTorrentGet(ctx context.Context) (*Transmissi
 
 	logger.Debug("fetching torrents from download client")
 
-	transfers, err := h.dc.GetTaggedTorrents(ctx, h.tag)
+	transfers, err := h.dc.GetTaggedTorrents(ctx, h.label)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get torrents: %w", err)
 	}

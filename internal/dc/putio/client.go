@@ -161,24 +161,20 @@ func (c *Client) Authenticate(ctx context.Context) error {
 }
 
 func (c *Client) AddTransfer(ctx context.Context, url string, downloadDir string) (*dc.Torrent, error) {
-	logger := logctx.LoggerFromContext(ctx)
+	logger := logctx.LoggerFromContext(ctx).With("download_dir", downloadDir)
 
-	search, err := c.putioClient.Files.Search(ctx, downloadDir, 1)
-	if err != nil {
-		return nil, fmt.Errorf("failed to search for directory: %w", err)
+	var dirID int64
+
+	if downloadDir != "" {
+		var err error
+
+		dirID, err = c.findDirectoryID(ctx, downloadDir)
+		if err != nil {
+			return nil, fmt.Errorf("failed to find directory: %w", err)
+		}
 	}
 
-	if len(search.Files) == 0 {
-		return nil, fmt.Errorf("directory not found: %s", downloadDir)
-	}
-
-	if !search.Files[0].IsDir() {
-		return nil, fmt.Errorf("search result is not a directory: %s", downloadDir)
-	}
-
-	dirID := search.Files[0].ID
-
-	logger.Info("adding transfer to Put.io", "transfer_url", url, "download_dir", downloadDir)
+	logger.Info("adding transfer to Put.io", "transfer_url", url)
 
 	t, err := c.putioClient.Transfers.Add(ctx, url, dirID, "")
 	if err != nil {
@@ -252,4 +248,21 @@ func (c *Client) filterMatchingTransferIds(transfers []putio.Transfer, transferI
 	}
 
 	return matchingTransfers
+}
+
+func (c *Client) findDirectoryID(ctx context.Context, downloadDir string) (int64, error) {
+	search, err := c.putioClient.Files.Search(ctx, downloadDir, 1)
+	if err != nil {
+		return 0, fmt.Errorf("error searching for directory: %w", err)
+	}
+
+	if len(search.Files) == 0 {
+		return 0, fmt.Errorf("directory not found: %s", downloadDir)
+	}
+
+	if !search.Files[0].IsDir() {
+		return 0, fmt.Errorf("search result is not a directory: %s", downloadDir)
+	}
+
+	return search.Files[0].ID, nil
 }
