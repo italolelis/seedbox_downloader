@@ -154,24 +154,32 @@ func (o *TransferOrchestrator) watchTransfers(ctx context.Context) error {
 	logger.Info("active transfers", "transfer_count", len(transfers))
 
 	for _, transfer := range transfers {
+		transferLogger := logger.With("transfer_id", transfer.ID, "status", transfer.Status)
+
 		if !transfer.IsAvailable() || !transfer.IsDownloadable() {
-			logger.Debug("skipping transfer because it's not available or not downloadable", "transfer_id", transfer.ID, "status", transfer.Status)
+			transferLogger.Debug("skipping transfer because it's not available or not downloadable")
 
 			continue
 		}
 
 		claimed, err := o.repo.ClaimTransfer(transfer.ID)
 		if err != nil {
+			if err == storage.ErrDownloaded {
+				transferLogger.Debug("skipping transfer because it's already downloaded")
+
+				continue
+			}
+
 			return fmt.Errorf("failed to claim transfer: %w", err)
 		}
 
 		if !claimed {
-			logger.Debug("transfer already claimed", "transfer_id", transfer.ID)
+			transferLogger.Debug("skipping transfer because it's already claimed")
 
 			continue
 		}
 
-		logger.Info("transfer ready for download", "transfer_id", transfer.ID)
+		transferLogger.Info("transfer ready for download")
 
 		o.OnDownloadQueued <- transfer
 	}
