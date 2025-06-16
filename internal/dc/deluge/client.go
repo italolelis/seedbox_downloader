@@ -11,8 +11,8 @@ import (
 
 	"context"
 
-	"github.com/italolelis/seedbox_downloader/internal/dc"
 	"github.com/italolelis/seedbox_downloader/internal/logctx"
+	"github.com/italolelis/seedbox_downloader/internal/transfer"
 )
 
 const (
@@ -146,16 +146,16 @@ func (c *Client) Authenticate(ctx context.Context) error {
 }
 
 // Add a conversion method to DownloadClient.Torrent.
-func (t *Torrent) ToTorrent() *dc.Torrent {
-	files := make([]*dc.File, 0, len(t.Files))
+func (t *Torrent) ToTorrent() *transfer.Transfer {
+	files := make([]*transfer.File, 0, len(t.Files))
 	for _, f := range t.Files {
-		files = append(files, &dc.File{
+		files = append(files, &transfer.File{
 			Path: f.Path,
 			Size: f.Size,
 		})
 	}
 
-	return &dc.Torrent{
+	return &transfer.Transfer{
 		ID:       t.ID,
 		Name:     t.Name,
 		Label:    t.Label,
@@ -166,13 +166,13 @@ func (t *Torrent) ToTorrent() *dc.Torrent {
 }
 
 // Update GetTaggedTorrents to match DownloadClient interface.
-func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*dc.Torrent, error) {
+func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*transfer.Transfer, error) {
 	delugeTorrents, err := c.getTaggedTorrentsRaw(ctx, tag)
 	if err != nil {
 		return nil, err
 	}
 
-	infos := make([]*dc.Torrent, 0, len(delugeTorrents))
+	infos := make([]*transfer.Transfer, 0, len(delugeTorrents))
 
 	for _, t := range delugeTorrents {
 		infos = append(infos, t.ToTorrent())
@@ -182,7 +182,7 @@ func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*dc.Torre
 }
 
 // GrabFile implements DownloadClient.GrabFile for Deluge.
-func (c *Client) GrabFile(ctx context.Context, file *dc.File) (io.ReadCloser, error) {
+func (c *Client) GrabFile(ctx context.Context, file *transfer.File) (io.ReadCloser, error) {
 	logger := logctx.LoggerFromContext(ctx)
 
 	req, url, err := c.buildDownloadRequest(ctx, file)
@@ -290,7 +290,7 @@ func (c *Client) getTaggedTorrentsRaw(ctx context.Context, tag string) ([]*Torre
 	return torrents, nil
 }
 
-func (c *Client) buildDownloadRequest(ctx context.Context, file *dc.File) (*http.Request, string, error) {
+func (c *Client) buildDownloadRequest(ctx context.Context, file *transfer.File) (*http.Request, string, error) {
 	url := fmt.Sprintf("%s%s/%s", strings.TrimRight(c.BaseURL, "/"), strings.TrimRight(c.CompletedDir, "/"), file.Path)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)

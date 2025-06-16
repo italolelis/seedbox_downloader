@@ -11,8 +11,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/italolelis/seedbox_downloader/internal/dc"
 	"github.com/italolelis/seedbox_downloader/internal/logctx"
+	"github.com/italolelis/seedbox_downloader/internal/transfer"
 	"github.com/putdotio/go-putio"
 	"golang.org/x/oauth2"
 )
@@ -33,7 +33,7 @@ func NewClient(token string, insecure ...bool) *Client {
 }
 
 // Update GetTaggedTorrents to match DownloadClient interface.
-func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*dc.Torrent, error) {
+func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*transfer.Transfer, error) {
 	logger := logctx.LoggerFromContext(ctx).With("tag", tag)
 
 	transfers, err := c.putioClient.Transfers.List(ctx)
@@ -43,17 +43,18 @@ func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*dc.Torre
 		return nil, fmt.Errorf("failed to get transfers: %w", err)
 	}
 
-	torrents := make([]*dc.Torrent, 0, len(transfers))
+	torrents := make([]*transfer.Transfer, 0, len(transfers))
 
-	for _, transfer := range transfers {
-		status := strings.ToLower(transfer.Status)
-		if status != "completed" && status != "seeding" && status != "seedingwait" && status != "finished" {
+	for _, t := range transfers {
+		if t.FileID == 0 {
+			logger.Debug("skipping transfer because it's not a downloadable transfer", "transfer_id", t.ID, "status", t.Status)
+
 			continue
 		}
 
-		file, err := c.putioClient.Files.Get(ctx, transfer.FileID)
+		file, err := c.putioClient.Files.Get(ctx, t.FileID)
 		if err != nil {
-			logger.Error("failed to get file", "transfer_id", transfer.ID, "err", err)
+			logger.Error("failed to get file", "transfer_id", t.ID, "err", err)
 
 			continue
 		}
@@ -72,21 +73,21 @@ func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*dc.Torre
 		}
 
 		// Convert Put.io transfer to our Torrent type
-		torrent := &dc.Torrent{
-			ID:                 fmt.Sprintf("%d", transfer.ID),
-			Name:               transfer.Name,
+		torrent := &transfer.Transfer{
+			ID:                 fmt.Sprintf("%d", t.ID),
+			Name:               t.Name,
 			Label:              tag,
-			Progress:           float64(transfer.PercentDone),
-			Files:              make([]*dc.File, 0),
-			Size:               int64(transfer.Size),
-			Source:             transfer.Source,
-			Status:             transfer.Status,
-			EstimatedTime:      transfer.EstimatedTime,
+			Progress:           float64(t.PercentDone),
+			Files:              make([]*transfer.File, 0),
+			Size:               int64(t.Size),
+			Source:             t.Source,
+			Status:             t.Status,
+			EstimatedTime:      t.EstimatedTime,
 			SavePath:           "/" + tag,
-			PeersConnected:     int64(transfer.PeersConnected),
-			PeersGettingFromUs: int64(transfer.PeersGettingFromUs),
-			PeersSendingToUs:   int64(transfer.PeersSendingToUs),
-			Downloaded:         int64(transfer.Downloaded),
+			PeersConnected:     int64(t.PeersConnected),
+			PeersGettingFromUs: int64(t.PeersGettingFromUs),
+			PeersSendingToUs:   int64(t.PeersSendingToUs),
+			Downloaded:         int64(t.Downloaded),
 		}
 
 		files, err := c.getFilesRecursively(ctx, file.ID, file.Name)
@@ -105,7 +106,7 @@ func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*dc.Torre
 }
 
 // GrabFile implements DownloadClient.GrabFile for Put.io.
-func (c *Client) GrabFile(ctx context.Context, file *dc.File) (io.ReadCloser, error) {
+func (c *Client) GrabFile(ctx context.Context, file *transfer.File) (io.ReadCloser, error) {
 	logger := logctx.LoggerFromContext(ctx)
 
 	url, err := c.putioClient.Files.URL(ctx, file.ID, false)
@@ -142,7 +143,7 @@ func (c *Client) Authenticate(ctx context.Context) error {
 	return nil
 }
 
-func (c *Client) AddTransfer(ctx context.Context, url string, downloadDir string) (*dc.Torrent, error) {
+func (c *Client) AddTransfer(ctx context.Context, url string, downloadDir string) (*transfer.Transfer, error) {
 	logger := logctx.LoggerFromContext(ctx).With("download_dir", downloadDir)
 
 	var dirID int64
@@ -165,7 +166,7 @@ func (c *Client) AddTransfer(ctx context.Context, url string, downloadDir string
 
 	logger.Info("transfer added to Put.io", "transfer_id", t.ID)
 
-	return &dc.Torrent{
+	return &transfer.Transfer{
 		ID:                 fmt.Sprintf("%d", t.ID),
 		Name:               t.Name,
 		Downloaded:         t.Downloaded,
@@ -173,14 +174,15 @@ func (c *Client) AddTransfer(ctx context.Context, url string, downloadDir string
 		EstimatedTime:      t.EstimatedTime,
 		Status:             t.Status,
 		Progress:           float64(t.PercentDone),
-		Files:              make([]*dc.File, 0),
+		Files:              make([]*transfer.File, 0),
 		Source:             t.Source,
 		PeersConnected:     int64(t.PeersConnected),
 		PeersGettingFromUs: int64(t.PeersGettingFromUs),
 	}, nil
 }
 
-func (c *Client) RemoveTransfers(ctx context.Context, transferIDs []string, deleteLocalData bool) error {
+// RemoveTransfers implements DownloadClient.RemoveTransfers for Put.io. The transferIDs are the hashes of the transfers.
+func (c *Client) RemoveTransfers(ctx context.Context, transferIDs []string, deleteFiles bool) error {
 	logger := logctx.LoggerFromContext(ctx)
 
 	logger.Info("removing transfer from Put.io", "transfer_ids", transferIDs)
@@ -197,21 +199,20 @@ func (c *Client) RemoveTransfers(ctx context.Context, transferIDs []string, dele
 	}
 
 	for _, transfer := range putioTransfers {
-		// Cancel the transfer
 		if err := c.putioClient.Transfers.Cancel(ctx, transfer.ID); err != nil {
 			return fmt.Errorf("failed to remove transfer: %w", err)
 		}
 
 		// If deleteLocalData is true and the file exists, delete it
-		if deleteLocalData && transfer.FileID != 0 {
+		if deleteFiles && transfer.FileID != 0 {
 			logger.Info("deleting local file data", "file_id", transfer.FileID)
 
 			if err := c.putioClient.Files.Delete(ctx, transfer.FileID); err != nil {
 				return fmt.Errorf("failed to delete local file data: %w", err)
 			}
-		}
 
-		logger.Info("transfer removed from Put.io", "transfer_id", transfer.ID)
+			logger.Info("local file data deleted", "file_id", transfer.FileID)
+		}
 	}
 
 	return nil
@@ -249,20 +250,35 @@ func (c *Client) findDirectoryID(ctx context.Context, downloadDir string) (int64
 	return search.Files[0].ID, nil
 }
 
-func (c *Client) getFilesRecursively(ctx context.Context, parentID int64, basePath string) ([]*dc.File, error) {
+func (c *Client) getFilesRecursively(ctx context.Context, parentID int64, basePath string) ([]*transfer.File, error) {
 	logger := logctx.LoggerFromContext(ctx).With("parent_id", parentID, "base_path", basePath)
+
+	var result []*transfer.File
+
+	file, err := c.putioClient.Files.Get(ctx, parentID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get file: %w", err)
+	}
+
+	if !file.IsDir() {
+		result = append(result, &transfer.File{
+			ID:   file.ID,
+			Path: filepath.Join(basePath, file.Name),
+			Size: file.Size,
+		})
+
+		return result, nil
+	}
 
 	files, _, err := c.putioClient.Files.List(ctx, parentID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list files: %w", err)
 	}
 
-	var result []*dc.File
-
 	for _, f := range files {
 		switch strings.ToLower(f.FileType) {
-		case "file", "text", "video", "audio":
-			result = append(result, &dc.File{
+		case "file", "text", "video", "audio", "archive":
+			result = append(result, &transfer.File{
 				ID:   f.ID,
 				Path: filepath.Join(basePath, f.Name),
 				Size: f.Size,
