@@ -2,7 +2,10 @@ name: Build & Publish
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
+    tags:
+      - "v*"
   pull_request:
     branches: [ main ]
 
@@ -37,12 +40,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.23'
+
       - name: Cache Go modules
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cache/go-build
@@ -50,10 +55,12 @@ jobs:
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-
+
       - name: Install dependencies
         run: go mod download
+
       - name: Run tests
-        run: go test ./...
+        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
 
   docker:
     name: Build and Push Docker Image
@@ -64,6 +71,7 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -76,13 +84,33 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
-
+          flavor: |
+            latest=auto
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha,event=branch
+            
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          tags: |
-            ghcr.io/${{ github.repository }}:${{ github.sha }}
-            ghcr.io/${{ github.repository }}:latest
-          labels: ${{ steps.meta.outputs.labels }} 
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new
+        env:
+          VERSION: ${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.version'] }}
+          
+      # Temp fix
+      # https://github.com/docker/build-push-action/issues/252
+      # https://github.com/moby/buildkit/issues/1896
+      #############
+      # Fix Cache #
+      #############
+      - name: Move cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
