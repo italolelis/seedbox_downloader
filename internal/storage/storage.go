@@ -16,7 +16,7 @@ type DownloadRecord struct {
 }
 
 type DownloadRepository interface {
-	GetDownloads() ([]DownloadRecord, error)                                          // get all downloads
-	ClaimDownload(downloadID, torrentID, targetPath, instanceID string) (bool, error) // atomically claim a download
-	UpdateDownloadStatus(downloadID, status string) error                             // update status after download
+	GetDownloads() ([]DownloadRecord, error)              // get all downloads
+	ClaimTransfer(transferID string) (bool, error)        // atomically claim a transfer
+	UpdateTransferStatus(transferID, status string) error // update status after download
 }
