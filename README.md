@@ -46,9 +46,9 @@ docker run --rm \
   -e DELUGE_USERNAME=<username> \
   -e DELUGE_PASSWORD=<password> \
   -e TARGET_LABEL=<label> \
-  -e DELUGE_COMPLETED_DIR=<completed_dir> \
-  -e TARGET_DIR=<target_dir> \
+  -e DOWNLOAD_DIR=<download_dir> \
   -e KEEP_DOWNLOADED_FOR=168h \
+  -e DOWNLOAD_CLIENT=deluge \
   ghcr.io/italolelis/seedbox_downloader:latest
 ```
 
@@ -56,15 +56,14 @@ docker run --rm \
 ```sh
 docker run --rm \
   -e PUTIO_TOKEN=<token> \
-  -e PROXY_USERNAME=<username> \
-  -e PROXY_PASSWORD=<password> \
   -e TARGET_LABEL=<label> \
-  -e TARGET_DIR=/downloads \
+  -e DOWNLOAD_DIR=/downloads \
   -e PUTIO_BASE_DIR=/downloads \
   -e KEEP_DOWNLOADED_FOR=168h \
   -e DOWNLOAD_CLIENT=putio \
   -e TRANSMISSION_USERNAME=<username> \
   -e TRANSMISSION_PASSWORD=<password> \
+  -e WEB_BIND_ADDRESS=0.0.0.0:9091 \
   -p 9091:9091 \
   ghcr.io/italolelis/seedbox_downloader:latest
 ```
@@ -85,9 +84,9 @@ services:
       DELUGE_USERNAME: "your-username"
       DELUGE_PASSWORD: "your-password"
       TARGET_LABEL: "your-label"
-      DELUGE_COMPLETED_DIR: "/deluge/completed"
-      TARGET_DIR: "/downloads"
+      DOWNLOAD_DIR: "/downloads"
       KEEP_DOWNLOADED_FOR: "168h"
+      DOWNLOAD_CLIENT: "deluge"
     volumes:
       - downloads:/downloads
     restart: unless-stopped
@@ -99,15 +98,22 @@ services:
     environment:
       PUTIO_TOKEN: "your-putio-token"
       PUTIO_INSECURE: "false"               # Optional
-      PROXY_USERNAME: "your-username"       # Required for *Arr
-      PROXY_PASSWORD: "your-password"       # Required for *Arr
       TARGET_LABEL: "your-label"           # Required for organizing downloads
-      TARGET_DIR: "/downloads"             # Local directory where files will be downloaded. Make sure it matches with your docker volume.
-      PUTIO_BASE_DIR: "/"                  # Base directory in Put.io where files will be stored (usually "/")
+      DOWNLOAD_DIR: "/downloads"           # Local directory where files will be downloaded
+      PUTIO_BASE_DIR: "/downloads"         # Base directory in Put.io where files will be stored
       KEEP_DOWNLOADED_FOR: "168h"          # Keep files for 7 days (in hours)
       DOWNLOAD_CLIENT: "putio"             # Required to use Put.io client
       TRANSMISSION_USERNAME: "username"     # Required for proxy authentication
       TRANSMISSION_PASSWORD: "password"     # Required for proxy authentication
+      WEB_BIND_ADDRESS: "0.0.0.0:9091"     # Web server bind address
+      WEB_READ_TIMEOUT: "30s"              # Web server read timeout
+      WEB_WRITE_TIMEOUT: "30s"             # Web server write timeout
+      WEB_IDLE_TIMEOUT: "5s"               # Web server idle timeout
+      WEB_SHUTDOWN_TIMEOUT: "30s"          # Web server shutdown timeout
+      SONARR_API_KEY: "your-sonarr-api-key" # Optional: Sonarr integration
+      SONARR_BASE_URL: "http://sonarr:8989" # Optional: Sonarr API URL
+      RADARR_API_KEY: "your-radarr-api-key" # Optional: Radarr integration
+      RADARR_BASE_URL: "http://radarr:7878" # Optional: Radarr API URL
     ports:
       - "9091:9091"
     restart: unless-stopped
@@ -222,22 +228,36 @@ The application is configured via environment variables. Below is a list of all 
 
 | Variable                  | Required | Default         | Description                                                                 |
 |---------------------------|----------|-----------------|-----------------------------------------------------------------------------|
-| DELUGE_BASE_URL           | Yes      |                 | Base URL for the Deluge API.                                                |
-| DELUGE_API_URL_PATH       | Yes      |                 | API URL path for Deluge (e.g., `/deluge/json`).                             |
-| DELUGE_USERNAME           | Yes      |                 | Username for Deluge authentication.                                         |
-| DELUGE_PASSWORD           | Yes      |                 | Password for Deluge authentication.                                         |
+| DELUGE_BASE_URL           | Yes*     |                 | Base URL for the Deluge API. Required for Deluge client.                    |
+| DELUGE_API_URL_PATH       | Yes*     |                 | API URL path for Deluge (e.g., `/deluge/json`). Required for Deluge client. |
+| DELUGE_USERNAME           | Yes*     |                 | Username for Deluge authentication. Required for Deluge client.             |
+| DELUGE_PASSWORD           | Yes*     |                 | Password for Deluge authentication. Required for Deluge client.             |
 | TARGET_LABEL              | Yes      |                 | Label for filtering downloaded files.                                       |
-| DELUGE_COMPLETED_DIR      | Yes      |                 | Directory for completed downloads in Deluge.                                |
-| TARGET_DIR                | Yes      |                 | Directory where files will be downloaded.                                   |
+| DOWNLOAD_DIR              | Yes      |                 | Directory where files will be downloaded.                                   |
 | KEEP_DOWNLOADED_FOR       | No       | 24h             | Duration to keep downloaded files (e.g., `7d`, `24h`).                      |
-| UPDATE_INTERVAL           | No       | 10m             | How often to poll Deluge for new downloads.                                 |
+| POLLING_INTERVAL          | No       | 10m             | How often to poll for new downloads.                                        |
 | CLEANUP_INTERVAL          | No       | 10m             | How often to run cleanup of old downloads.                                  |
 | LOG_LEVEL                 | No       | INFO            | Logging level: `DEBUG`, `INFO`, `WARN`, `ERROR`.                            |
 | DISCORD_WEBHOOK_URL       | No       |                 | If set, sends notifications to this Discord webhook.                        |
 | DB_PATH                   | No       | downloads.db    | Path to the SQLite database file.                                           |
 | MAX_PARALLEL              | No       | 5               | Maximum number of parallel downloads.                                       |
+| DOWNLOAD_CLIENT           | No       | deluge          | Download client to use: `deluge` or `putio`.                                |
+| PUTIO_TOKEN               | Yes*     |                 | Your Put.io API token. Required for Put.io client.                          |
+| PUTIO_BASE_DIR           | Yes*     |                 | Base directory in Put.io where files will be stored. Required for Put.io client. |
+| PUTIO_INSECURE           | No       | false           | Allow insecure connections for Put.io client.                               |
+| TRANSMISSION_USERNAME     | Yes*     |                 | Username for proxy authentication. Required for Put.io client.              |
+| TRANSMISSION_PASSWORD     | Yes*     |                 | Password for proxy authentication. Required for Put.io client.              |
+| WEB_BIND_ADDRESS         | No       | 0.0.0.0:9091    | Address to bind the web server to.                                          |
+| WEB_READ_TIMEOUT         | No       | 30s             | Read timeout for the web server.                                            |
+| WEB_WRITE_TIMEOUT        | No       | 30s             | Write timeout for the web server.                                           |
+| WEB_IDLE_TIMEOUT         | No       | 5s              | Idle timeout for the web server.                                            |
+| WEB_SHUTDOWN_TIMEOUT     | No       | 30s             | Shutdown timeout for the web server.                                        |
+| SONARR_API_KEY           | No       |                 | API key for Sonarr integration.                                             |
+| SONARR_BASE_URL          | No       |                 | Base URL for Sonarr API.                                                    |
+| RADARR_API_KEY           | No       |                 | API key for Radarr integration.                                             |
+| RADARR_BASE_URL          | No       |                 | Base URL for Radarr API.                                                    |
 
-> **Note:** The variable `KEEP_DOWNLOADED_FOR` is used in the code. If you previously used `KEEP_DOWNLOADED_FILES_FOR`, please update your configuration to use `KEEP_DOWNLOADED_FOR` for consistency.
+> **Note:** Variables marked with * are required depending on which download client you're using (Deluge or Put.io).
 
 ## Put.io Integration
 
