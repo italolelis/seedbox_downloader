@@ -255,7 +255,9 @@ func (d *Downloader) checkForImported(ctx context.Context, transfer *transfer.Tr
 
 	for _, file := range transfer.Files {
 		for _, arrService := range d.arrServices {
-			imported, err := arrService.CheckImported(filepath.Join(d.downloadDir, file.Path))
+			filePath := filepath.Join(d.downloadDir, file.Path)
+
+			imported, err := arrService.CheckImported(filePath)
 			if err != nil {
 				return false, fmt.Errorf("failed to check if transfer has been imported: %w", err)
 			}
@@ -263,7 +265,7 @@ func (d *Downloader) checkForImported(ctx context.Context, transfer *transfer.Tr
 			if imported {
 				logger.Info("transfer has been imported", "transfer_id", transfer.ID, "transfer_name", transfer.Name)
 
-				if err := os.RemoveAll(filepath.Join(d.downloadDir, file.Path)); err != nil {
+				if err := os.RemoveAll(filePath); err != nil {
 					return false, fmt.Errorf("failed to remove file: %w", err)
 				}
 
