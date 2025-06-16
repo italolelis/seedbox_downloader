@@ -16,7 +16,7 @@ func NewDownloadRepository(dbConn *sql.DB) *DownloadRepository {
 }
 
 func (r *DownloadRepository) GetDownloads() ([]storage.DownloadRecord, error) {
-	rows, err := r.db.Query(`SELECT download_id, file_path, downloaded_at, status, locked_by FROM downloads`)
+	rows, err := r.db.Query(`SELECT transfer_id, downloaded_at, status, locked_by FROM downloads`)
 	if err != nil {
 		return nil, err
 	}
@@ -46,10 +46,10 @@ func (r *DownloadRepository) GetDownloads() ([]storage.DownloadRecord, error) {
 }
 
 // ClaimDownload atomically sets status to 'downloading' and locked_by to instanceID if status is 'pending' or 'failed'.
-func (r *DownloadRepository) ClaimDownload(downloadID, torrentID, targetPath, instanceID string) (bool, error) {
+func (r *DownloadRepository) ClaimTransfer(transferID string) (bool, error) {
 	var status string
 
-	err := r.db.QueryRow(`SELECT status FROM downloads WHERE download_id = ?`, downloadID).Scan(&status)
+	err := r.db.QueryRow(`SELECT status FROM downloads WHERE transfer_id = ?`, transferID).Scan(&status)
 	if err != nil && err != sql.ErrNoRows {
 		return false, err
 	}
@@ -60,13 +60,13 @@ func (r *DownloadRepository) ClaimDownload(downloadID, torrentID, targetPath, in
 
 	// Now do the upsert/claim
 	rows, err := r.db.Exec(`
-		INSERT INTO downloads (download_id, torrent_id, file_path, downloaded_at, status, locked_by)
-		VALUES (?, ?, ?, ?, 'downloading', ?)
-		ON CONFLICT(download_id) DO UPDATE SET
+		INSERT INTO downloads (transfer_id, downloaded_at, status, locked_by)
+		VALUES (?, ?, 'downloading', ?)
+		ON CONFLICT(transfer_id) DO UPDATE SET
 			status = 'downloading',
 			locked_by = excluded.locked_by
 		WHERE downloads.status IN ('pending', 'failed') AND (downloads.locked_by IS NULL OR downloads.locked_by = '')
-	`, downloadID, torrentID, targetPath, time.Now().Format(time.RFC3339), instanceID)
+	`, transferID, time.Now().Format(time.RFC3339), storage.GenerateInstanceID())
 	if err != nil {
 		return false, err
 	}
@@ -77,8 +77,8 @@ func (r *DownloadRepository) ClaimDownload(downloadID, torrentID, targetPath, in
 }
 
 // UpdateDownloadStatus sets the status for a download.
-func (r *DownloadRepository) UpdateDownloadStatus(downloadID, status string) error {
-	_, err := r.db.Exec(`UPDATE downloads SET status = ?, locked_by = NULL WHERE download_id = ?`, status, downloadID)
+func (r *DownloadRepository) UpdateTransferStatus(transferID, status string) error {
+	_, err := r.db.Exec(`UPDATE downloads SET status = ?, locked_by = NULL WHERE transfer_id = ?`, status, transferID)
 
 	return err
 }

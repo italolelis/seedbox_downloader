@@ -11,9 +11,9 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/italolelis/seedbox_downloader/internal/dc"
 	"github.com/italolelis/seedbox_downloader/internal/dc/putio"
 	"github.com/italolelis/seedbox_downloader/internal/logctx"
+	"github.com/italolelis/seedbox_downloader/internal/transfer"
 )
 
 const sessionID = "useless-session-id"
@@ -230,7 +230,7 @@ func (h *TransmissionHandler) basicAuthMiddleware(next http.Handler) http.Handle
 func (h *TransmissionHandler) handleTorrentAdd(ctx context.Context, req *TransmissionRequest) (*TransmissionResponse, error) {
 	logger := logctx.LoggerFromContext(ctx).With("method", "handle_torrent_add")
 
-	var torrent *dc.Torrent
+	var torrent *transfer.Transfer
 
 	if req.Arguments.MetaInfo == "" {
 		// Magnet links
@@ -248,7 +248,7 @@ func (h *TransmissionHandler) handleTorrentAdd(ctx context.Context, req *Transmi
 	}
 
 	jsonTorrent, err := json.Marshal(map[string]interface{}{
-		"torrents": []*dc.Torrent{torrent},
+		"torrents": []*transfer.Transfer{torrent},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal torrent: %w", err)
