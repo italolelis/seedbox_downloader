@@ -13,6 +13,8 @@ import (
 	"go.opentelemetry.io/otel/exporters/prometheus"
 	"go.opentelemetry.io/otel/metric"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/resource"
+	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -63,15 +65,27 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 		return &Telemetry{}, nil
 	}
 
+	// Create resource with service attributes
+	res, err := resource.New(ctx,
+		resource.WithAttributes(
+			semconv.ServiceNameKey.String(cfg.ServiceName),
+			semconv.ServiceVersionKey.String(cfg.ServiceVersion),
+		),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create resource: %w", err)
+	}
+
 	// Create Prometheus exporter
 	exporter, err := prometheus.New()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create prometheus exporter: %w", err)
 	}
 
-	// Create meter provider
+	// Create meter provider with resource
 	meterProvider := sdkmetric.NewMeterProvider(
 		sdkmetric.WithReader(exporter),
+		sdkmetric.WithResource(res),
 	)
 
 	// Set global meter provider
@@ -296,30 +310,30 @@ func (t *Telemetry) initializeREDMetrics() error {
 	var err error
 
 	t.httpRequestsTotal, err = t.meter.Int64Counter(
-		"http_requests_total",
-		metric.WithDescription("Total number of HTTP requests"),
-		metric.WithUnit("1"),
+		"http.server.requests",
+		metric.WithDescription("Total number of HTTP server requests"),
+		metric.WithUnit("{request}"),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create http_requests_total counter: %w", err)
+		return fmt.Errorf("failed to create http.server.requests counter: %w", err)
 	}
 
 	t.httpRequestDuration, err = t.meter.Float64Histogram(
-		"http_request_duration_seconds",
-		metric.WithDescription("HTTP request duration in seconds"),
+		"http.server.request.duration",
+		metric.WithDescription("HTTP server request duration"),
 		metric.WithUnit("s"),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create http_request_duration histogram: %w", err)
+		return fmt.Errorf("failed to create http.server.request.duration histogram: %w", err)
 	}
 
 	t.httpRequestsInFlight, err = t.meter.Int64UpDownCounter(
-		"http_requests_in_flight",
-		metric.WithDescription("Number of HTTP requests currently being processed"),
-		metric.WithUnit("1"),
+		"http.server.active_requests",
+		metric.WithDescription("Number of active HTTP server requests"),
+		metric.WithUnit("{request}"),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create http_requests_in_flight counter: %w", err)
+		return fmt.Errorf("failed to create http.server.active_requests counter: %w", err)
 	}
 
 	return nil
@@ -329,39 +343,39 @@ func (t *Telemetry) initializeUSEMetrics() error {
 	var err error
 
 	t.cpuUsage, err = t.meter.Float64Gauge(
-		"cpu_usage_percent",
-		metric.WithDescription("CPU usage percentage"),
-		metric.WithUnit("%"),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create cpu_usage gauge: %w", err)
-	}
-
-	t.memoryUsage, err = t.meter.Int64Gauge(
-		"memory_usage_bytes",
-		metric.WithDescription("Memory usage in bytes"),
-		metric.WithUnit("bytes"),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create memory_usage gauge: %w", err)
-	}
-
-	t.goroutineCount, err = t.meter.Int64Gauge(
-		"goroutine_count",
-		metric.WithDescription("Number of goroutines"),
+		"process.cpu.utilization",
+		metric.WithDescription("Process CPU utilization"),
 		metric.WithUnit("1"),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create goroutine_count gauge: %w", err)
+		return fmt.Errorf("failed to create process.cpu.utilization gauge: %w", err)
+	}
+
+	t.memoryUsage, err = t.meter.Int64Gauge(
+		"process.memory.usage",
+		metric.WithDescription("Process memory usage"),
+		metric.WithUnit("By"),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create process.memory.usage gauge: %w", err)
+	}
+
+	t.goroutineCount, err = t.meter.Int64Gauge(
+		"process.runtime.go.goroutines",
+		metric.WithDescription("Number of goroutines"),
+		metric.WithUnit("{goroutine}"),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create process.runtime.go.goroutines gauge: %w", err)
 	}
 
 	t.diskUsage, err = t.meter.Int64Gauge(
-		"disk_usage_bytes",
-		metric.WithDescription("Disk usage in bytes"),
-		metric.WithUnit("bytes"),
+		"system.filesystem.usage",
+		metric.WithDescription("Filesystem usage"),
+		metric.WithUnit("By"),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create disk_usage gauge: %w", err)
+		return fmt.Errorf("failed to create system.filesystem.usage gauge: %w", err)
 	}
 
 	return nil
@@ -371,84 +385,84 @@ func (t *Telemetry) initializeBusinessMetrics() error {
 	var err error
 
 	t.downloadsTotal, err = t.meter.Int64Counter(
-		"downloads_total",
+		"downloads.total",
 		metric.WithDescription("Total number of downloads"),
-		metric.WithUnit("1"),
+		metric.WithUnit("{download}"),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create downloads_total counter: %w", err)
+		return fmt.Errorf("failed to create downloads.total counter: %w", err)
 	}
 
 	t.downloadsActive, err = t.meter.Int64UpDownCounter(
-		"downloads_active",
+		"downloads.active",
 		metric.WithDescription("Number of active downloads"),
-		metric.WithUnit("1"),
+		metric.WithUnit("{download}"),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create downloads_active counter: %w", err)
+		return fmt.Errorf("failed to create downloads.active counter: %w", err)
 	}
 
 	t.downloadDuration, err = t.meter.Float64Histogram(
-		"download_duration_seconds",
-		metric.WithDescription("Download duration in seconds"),
+		"downloads.duration",
+		metric.WithDescription("Download duration"),
 		metric.WithUnit("s"),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create download_duration histogram: %w", err)
+		return fmt.Errorf("failed to create downloads.duration histogram: %w", err)
 	}
 
 	t.transfersTotal, err = t.meter.Int64Counter(
-		"transfers_total",
+		"transfers.total",
 		metric.WithDescription("Total number of transfers"),
-		metric.WithUnit("1"),
+		metric.WithUnit("{transfer}"),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create transfers_total counter: %w", err)
+		return fmt.Errorf("failed to create transfers.total counter: %w", err)
 	}
 
 	t.transfersActive, err = t.meter.Int64UpDownCounter(
-		"transfers_active",
+		"transfers.active",
 		metric.WithDescription("Number of active transfers"),
-		metric.WithUnit("1"),
+		metric.WithUnit("{transfer}"),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create transfers_active counter: %w", err)
+		return fmt.Errorf("failed to create transfers.active counter: %w", err)
 	}
 
 	t.clientOperationsTotal, err = t.meter.Int64Counter(
-		"client_operations_total",
+		"client.operations.total",
 		metric.WithDescription("Total number of download client operations"),
-		metric.WithUnit("1"),
+		metric.WithUnit("{operation}"),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create client_operations_total counter: %w", err)
+		return fmt.Errorf("failed to create client.operations.total counter: %w", err)
 	}
 
 	t.clientErrors, err = t.meter.Int64Counter(
-		"client_errors_total",
+		"client.errors.total",
 		metric.WithDescription("Total number of download client errors"),
-		metric.WithUnit("1"),
+		metric.WithUnit("{error}"),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create client_errors counter: %w", err)
+		return fmt.Errorf("failed to create client.errors.total counter: %w", err)
 	}
 
 	t.dbOperationsTotal, err = t.meter.Int64Counter(
-		"db_operations_total",
+		"db.operations.total",
 		metric.WithDescription("Total number of database operations"),
-		metric.WithUnit("1"),
+		metric.WithUnit("{operation}"),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create db_operations_total counter: %w", err)
+		return fmt.Errorf("failed to create db.operations.total counter: %w", err)
 	}
 
 	t.dbOperationDuration, err = t.meter.Float64Histogram(
-		"db_operation_duration_seconds",
-		metric.WithDescription("Database operation duration in seconds"),
+		"db.operations.duration",
+		metric.WithDescription("Database operation duration"),
 		metric.WithUnit("s"),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create db_operation_duration histogram: %w", err)
+		return fmt.Errorf("failed to create db.operations.duration histogram: %w", err)
 	}
 
 	return nil
@@ -458,21 +472,21 @@ func (t *Telemetry) initializeSystemMetrics() error {
 	var err error
 
 	t.systemErrors, err = t.meter.Int64Counter(
-		"system_errors_total",
+		"system.errors.total",
 		metric.WithDescription("Total number of system errors"),
-		metric.WithUnit("1"),
+		metric.WithUnit("{error}"),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create system_errors counter: %w", err)
+		return fmt.Errorf("failed to create system.errors.total counter: %w", err)
 	}
 
 	t.systemUptime, err = t.meter.Float64Gauge(
-		"system_uptime_seconds",
-		metric.WithDescription("System uptime in seconds"),
+		"process.uptime",
+		metric.WithDescription("Process uptime"),
 		metric.WithUnit("s"),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create system_uptime gauge: %w", err)
+		return fmt.Errorf("failed to create process.uptime gauge: %w", err)
 	}
 
 	return nil
