@@ -12,19 +12,18 @@ services:
       - DOWNLOAD_DIR=/downloads
       - POLLING_INTERVAL=5m
       - LOG_LEVEL=INFO
-      
+
       # Telemetry config
       - TELEMETRY_ENABLED=true
       - TELEMETRY_METRICS_ADDRESS=0.0.0.0:2112
       - TELEMETRY_METRICS_PATH=/metrics
       - TELEMETRY_SERVICE_NAME=seedbox_downloader
-      - TELEMETRY_SERVICE_VERSION=1.0.0
-      
+
       # Web config
       - WEB_BIND_ADDRESS=0.0.0.0:9091
     ports:
-      - "9091:9091"  # Main API
-      - "2112:2112"  # Metrics endpoint
+      - "9091:9091" # Main API
+      - "2112:2112" # Metrics endpoint
     volumes:
       - ./downloads:/downloads
       - ./data:/data
@@ -68,6 +67,7 @@ services:
 volumes:
   prometheus_data:
   grafana_data:
+
 
 networks:
   monitoring:
