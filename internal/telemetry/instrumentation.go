@@ -8,6 +8,32 @@ import (
 	"go.opentelemetry.io/otel/codes"
 )
 
+// CARDINALITY BEST PRACTICES:
+//
+// High cardinality attributes (unique values per request) should NEVER be added to spans
+// that contribute to metrics, as they create unbounded metric series and can cause:
+// - Memory exhaustion
+// - Query performance degradation
+// - Storage cost explosion
+//
+// AVOID these as span attributes:
+// - User IDs, session IDs, request IDs
+// - File names, file paths, URLs with unique parameters
+// - Timestamps, random values, UUIDs
+// - Error messages with dynamic content
+// - Transfer names, torrent names, download paths
+//
+// SAFE attributes (bounded cardinality):
+// - Operation types (limited set: "download", "upload", "delete")
+// - Status values (limited set: "success", "error", "timeout")
+// - Client types (limited set: "deluge", "putio")
+// - Component names (limited set: "database", "download_client")
+//
+// For debugging, high-cardinality data should be:
+// - Added to span status/events (not attributes)
+// - Logged with correlation IDs
+// - Stored in trace context for propagation
+
 // InstrumentedFunc represents a function that can be instrumented.
 type InstrumentedFunc func(ctx context.Context) error
 
@@ -36,7 +62,8 @@ func (t *Telemetry) InstrumentOperation(ctx context.Context, operationName, comp
 
 		span.SetAttributes(
 			attribute.Bool("error", true),
-			attribute.String("error.message", err.Error()),
+			// Note: error.message is intentionally NOT added as attribute to prevent
+			// high cardinality from unique error messages. Full error is in span status.
 		)
 		span.SetStatus(codes.Error, err.Error())
 	}
@@ -112,9 +139,10 @@ func (t *Telemetry) InstrumentDownload(ctx context.Context, transferID, transfer
 		ctx, span := t.tracer.Start(ctx, "download")
 		defer span.End()
 
+		// Note: transfer.id and transfer.name are intentionally NOT added as attributes
+		// to prevent high cardinality issues. They are available in logs if needed.
 		span.SetAttributes(
-			attribute.String("transfer.id", transferID),
-			attribute.String("transfer.name", transferName),
+			attribute.String("download.type", "transfer"),
 		)
 
 		return fn(ctx)

@@ -382,10 +382,10 @@ func setupMetricsServer(tel *telemetry.Telemetry, cfg *config) *http.Server {
 func setupServer(ctx context.Context, tel *telemetry.Telemetry, cfg *config) (*http.Server, error) {
 	r := chi.NewRouter()
 
-	// Add telemetry middleware
+	// Add telemetry middleware using otelhttp
 	if tel != nil {
-		middleware := telemetry.NewHTTPMiddleware(tel)
-		r.Use(middleware.Middleware)
+		middleware := telemetry.NewHTTPMiddleware(cfg.Telemetry.ServiceName)
+		r.Use(middleware)
 	}
 
 	var tHandler *rest.TransmissionHandler

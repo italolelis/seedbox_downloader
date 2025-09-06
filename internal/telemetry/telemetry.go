@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/prometheus"
@@ -25,10 +26,7 @@ type Telemetry struct {
 	meter         metric.Meter
 	exporter      *prometheus.Exporter
 
-	// RED Metrics (Rate, Errors, Duration)
-	httpRequestsTotal    metric.Int64Counter
-	httpRequestDuration  metric.Float64Histogram
-	httpRequestsInFlight metric.Int64UpDownCounter
+	// RED Metrics are now handled by otelhttp automatically
 
 	// USE Metrics (Utilization, Saturation, Errors)
 	cpuUsage       metric.Float64Gauge
@@ -123,42 +121,7 @@ func (t *Telemetry) Meter() metric.Meter {
 	return t.meter
 }
 
-// RecordHTTPRequest records HTTP request metrics.
-func (t *Telemetry) RecordHTTPRequest(method, path, status string, duration time.Duration) {
-	if t.httpRequestsTotal != nil {
-		t.httpRequestsTotal.Add(context.Background(), 1,
-			metric.WithAttributes(
-				attribute.String("method", method),
-				attribute.String("path", path),
-				attribute.String("status", status),
-			),
-		)
-	}
-
-	if t.httpRequestDuration != nil {
-		t.httpRequestDuration.Record(context.Background(), duration.Seconds(),
-			metric.WithAttributes(
-				attribute.String("method", method),
-				attribute.String("path", path),
-				attribute.String("status", status),
-			),
-		)
-	}
-}
-
-// IncrementHTTPInFlight increments in-flight HTTP requests.
-func (t *Telemetry) IncrementHTTPInFlight() {
-	if t.httpRequestsInFlight != nil {
-		t.httpRequestsInFlight.Add(context.Background(), 1)
-	}
-}
-
-// DecrementHTTPInFlight decrements in-flight HTTP requests.
-func (t *Telemetry) DecrementHTTPInFlight() {
-	if t.httpRequestsInFlight != nil {
-		t.httpRequestsInFlight.Add(context.Background(), -1)
-	}
-}
+// HTTP metrics are now automatically handled by otelhttp middleware
 
 // RecordDownload records download metrics.
 func (t *Telemetry) RecordDownload(status string, duration time.Duration) {
@@ -270,14 +233,16 @@ func (t *Telemetry) RecordSystemError(component, errorType string) {
 	}
 }
 
-// Handler returns the HTTP handler for metrics endpoint.
+// Handler returns the HTTP handler for metrics endpoint with OpenTelemetry instrumentation.
 func (t *Telemetry) Handler() http.Handler {
 	if t.exporter == nil {
 		return http.NotFoundHandler()
 	}
 
-	// Return the standard Prometheus HTTP handler
-	return promhttp.Handler()
+	// Wrap the Prometheus handler with OpenTelemetry instrumentation
+	prometheusHandler := promhttp.Handler()
+
+	return otelhttp.NewHandler(prometheusHandler, "metrics")
 }
 
 // Shutdown gracefully shuts down the telemetry system.
@@ -291,10 +256,7 @@ func (t *Telemetry) Shutdown(ctx context.Context) error {
 
 // initializeMetrics creates all metric instruments.
 func (t *Telemetry) initializeMetrics() error {
-	if err := t.initializeREDMetrics(); err != nil {
-		return err
-	}
-
+	// HTTP metrics are handled by otelhttp automatically
 	if err := t.initializeUSEMetrics(); err != nil {
 		return err
 	}
@@ -304,39 +266,6 @@ func (t *Telemetry) initializeMetrics() error {
 	}
 
 	return t.initializeSystemMetrics()
-}
-
-func (t *Telemetry) initializeREDMetrics() error {
-	var err error
-
-	t.httpRequestsTotal, err = t.meter.Int64Counter(
-		"http.server.requests",
-		metric.WithDescription("Total number of HTTP server requests"),
-		metric.WithUnit("{request}"),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create http.server.requests counter: %w", err)
-	}
-
-	t.httpRequestDuration, err = t.meter.Float64Histogram(
-		"http.server.request.duration",
-		metric.WithDescription("HTTP server request duration"),
-		metric.WithUnit("s"),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create http.server.request.duration histogram: %w", err)
-	}
-
-	t.httpRequestsInFlight, err = t.meter.Int64UpDownCounter(
-		"http.server.active_requests",
-		metric.WithDescription("Number of active HTTP server requests"),
-		metric.WithUnit("{request}"),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create http.server.active_requests counter: %w", err)
-	}
-
-	return nil
 }
 
 func (t *Telemetry) initializeUSEMetrics() error {
@@ -504,30 +433,30 @@ func (t *Telemetry) collectSystemMetrics(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			t.updateSystemMetrics(startTime)
+			t.updateSystemMetrics(ctx, startTime)
 		}
 	}
 }
 
 // updateSystemMetrics updates system-level metrics.
-func (t *Telemetry) updateSystemMetrics(startTime time.Time) {
+func (t *Telemetry) updateSystemMetrics(ctx context.Context, startTime time.Time) {
 	var m runtime.MemStats
 
 	runtime.ReadMemStats(&m)
 
 	// Memory usage
 	if t.memoryUsage != nil {
-		t.memoryUsage.Record(context.Background(), int64(m.Alloc))
+		t.memoryUsage.Record(ctx, int64(m.Alloc))
 	}
 
 	// Goroutine count
 	if t.goroutineCount != nil {
-		t.goroutineCount.Record(context.Background(), int64(runtime.NumGoroutine()))
+		t.goroutineCount.Record(ctx, int64(runtime.NumGoroutine()))
 	}
 
 	// System uptime
 	if t.systemUptime != nil {
 		uptime := time.Since(startTime).Seconds()
-		t.systemUptime.Record(context.Background(), uptime)
+		t.systemUptime.Record(ctx, uptime)
 	}
 }

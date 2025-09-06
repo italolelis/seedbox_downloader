@@ -6,11 +6,11 @@ This document describes the comprehensive telemetry implementation for the Seedb
 
 The telemetry system provides:
 
-- **RED Metrics**: Request rate, error rate, and request duration for HTTP endpoints
+- **HTTP Metrics**: Automatic HTTP instrumentation using `otelhttp` following OpenTelemetry semantic conventions
 - **USE Metrics**: System resource utilization, saturation, and errors
 - **Business Metrics**: Application-specific metrics for downloads, transfers, and client operations
-- **Distributed Tracing**: Request tracing across components
-- **Prometheus Integration**: Metrics exposed in Prometheus format
+- **Distributed Tracing**: Request tracing across components using OpenTelemetry
+- **Prometheus Integration**: Metrics exposed in Prometheus format with proper resource attributes
 
 ## Configuration
 
@@ -37,52 +37,77 @@ The metrics server runs on a separate address from the main API server, using ch
 
 ## Metrics Exposed
 
-### RED Metrics (HTTP)
+### HTTP Metrics (Automatic via otelhttp)
 
-- `http_requests_total` - Total number of HTTP requests by method, path, and status
-- `http_request_duration_seconds` - HTTP request duration histogram
-- `http_requests_in_flight` - Number of HTTP requests currently being processed
+The following metrics are automatically collected by `otelhttp` middleware following OpenTelemetry semantic conventions:
+
+- `http.server.request.duration` - HTTP server request duration histogram (seconds)
+- `http.server.request.body.size` - HTTP server request body size histogram (bytes)
+- `http.server.response.body.size` - HTTP server response body size histogram (bytes)
+
+**Attributes included:**
+- `http.request.method` - HTTP method (GET, POST, etc.)
+- `http.response.status_code` - HTTP status code
+- `server.address` - Server address
+- `server.port` - Server port
+- `url.scheme` - URL scheme (http/https)
 
 ### USE Metrics (System Resources)
 
-- `cpu_usage_percent` - CPU usage percentage
-- `memory_usage_bytes` - Memory usage in bytes
-- `goroutine_count` - Number of active goroutines
-- `disk_usage_bytes` - Disk usage in bytes
-- `system_uptime_seconds` - System uptime in seconds
+Following OpenTelemetry semantic conventions:
+
+- `process.cpu.utilization` - Process CPU utilization (0-1 scale)
+- `process.memory.usage` - Process memory usage in bytes
+- `process.runtime.go.goroutines` - Number of active goroutines
+- `system.filesystem.usage` - Filesystem usage in bytes
+- `process.uptime` - Process uptime in seconds
 
 ### Business Metrics
 
+Application-specific metrics following OpenTelemetry naming conventions:
+
 #### Downloads
-- `downloads_total` - Total number of downloads by status
-- `downloads_active` - Number of active downloads
-- `download_duration_seconds` - Download duration histogram
+- `downloads.total` - Total number of downloads by status
+- `downloads.active` - Number of active downloads
+- `downloads.duration` - Download duration histogram (seconds)
 
 #### Transfers
-- `transfers_total` - Total number of transfers by operation and status
-- `transfers_active` - Number of active transfers
+- `transfers.total` - Total number of transfers by operation and status
+- `transfers.active` - Number of active transfers
 
 #### Download Client Operations
-- `client_operations_total` - Total client operations by client type, operation, and status
-- `client_errors_total` - Total client errors by client type and operation
+- `client.operations.total` - Total client operations by client type, operation, and status
+- `client.errors.total` - Total client errors by client type and operation
 
 #### Database Operations
-- `db_operations_total` - Total database operations by operation and status
-- `db_operation_duration_seconds` - Database operation duration histogram
+- `db.operations.total` - Total database operations by operation and status
+- `db.operations.duration` - Database operation duration histogram (seconds)
 
 #### System Health
-- `system_errors_total` - Total system errors by component and error type
+- `system.errors.total` - Total system errors by component and error type
+
+**Note**: All business metrics are automatically associated with the service through OpenTelemetry resource attributes (`service.name`, `service.version`).
 
 ## Instrumentation
 
-### HTTP Middleware
+### HTTP Middleware (otelhttp)
 
-All HTTP requests are automatically instrumented with:
-- Request counting
-- Duration measurement
-- Error tracking
-- In-flight request tracking
-- Distributed tracing
+All HTTP requests are automatically instrumented using the standard `otelhttp` package:
+
+- **Automatic Metrics**: Request duration, body sizes following OpenTelemetry semantic conventions
+- **Distributed Tracing**: Automatic span creation with proper HTTP attributes
+- **Context Propagation**: Trace context propagated across service boundaries
+- **Standards Compliance**: Follows OpenTelemetry HTTP semantic conventions
+
+**Implementation**:
+```go
+// Server middleware
+middleware := telemetry.NewHTTPMiddleware(serviceName)
+router.Use(middleware)
+
+// Individual handler wrapping
+handler := telemetry.NewHTTPHandler(myHandler, "operation_name")
+```
 
 ### Database Operations
 
@@ -125,11 +150,19 @@ err := telemetry.InstrumentClientOperation(ctx, "deluge", "get_torrents", func(c
 
 ## Metrics Endpoint
 
-Metrics are exposed on a separate HTTP server to avoid interfering with the main application:
+Metrics are exposed on a separate HTTP server with OpenTelemetry instrumentation:
 
 - **URL**: `http://localhost:2112/metrics` (default)
 - **Format**: Prometheus exposition format
 - **Content-Type**: `text/plain`
+- **Instrumentation**: The metrics endpoint itself is instrumented with `otelhttp` for observability
+
+**Implementation**:
+```go
+// Metrics handler with otelhttp instrumentation
+prometheusHandler := promhttp.Handler()
+return otelhttp.NewHandler(prometheusHandler, "metrics")
+```
 
 ## Integration with Monitoring Stack
 
@@ -150,11 +183,13 @@ scrape_configs:
 
 Key metrics to monitor:
 
-1. **Request Rate**: `rate(http_requests_total[5m])`
-2. **Error Rate**: `rate(http_requests_total{status=~"4..|5.."}[5m])`
-3. **Request Duration**: `histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))`
+1. **Request Rate**: `rate(http_server_request_duration_sum[5m])`
+2. **Error Rate**: `rate(http_server_request_duration_count{http_response_status_code=~"5.."}[5m])`
+3. **Request Duration**: `histogram_quantile(0.95, rate(http_server_request_duration_bucket[5m]))`
 4. **Active Downloads**: `downloads_active`
-5. **System Resources**: `memory_usage_bytes`, `goroutine_count`
+5. **System Resources**: `process_memory_usage`, `process_runtime_go_goroutines`
+
+**Note**: Metric names in Prometheus may have underscores instead of dots due to Prometheus naming conventions.
 
 ### Alerting Rules
 
@@ -165,15 +200,15 @@ groups:
   - name: seedbox-downloader
     rules:
       - alert: HighErrorRate
-        expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.1
+        expr: rate(http_server_request_duration_count{http_response_status_code=~"5.."}[5m]) > 0.1
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "High error rate detected"
+          summary: "High HTTP error rate detected"
           
       - alert: HighMemoryUsage
-        expr: memory_usage_bytes > 1000000000  # 1GB
+        expr: process_memory_usage > 1000000000  # 1GB
         for: 5m
         labels:
           severity: warning
@@ -187,29 +222,60 @@ groups:
           severity: warning
         annotations:
           summary: "Download client errors detected"
+          
+      - alert: HighRequestDuration
+        expr: histogram_quantile(0.95, rate(http_server_request_duration_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High request duration detected (95th percentile > 2s)"
 ```
 
 ## Distributed Tracing
 
-The application creates traces for:
-- HTTP requests
-- Database operations
-- Download client operations
-- File downloads
+The application uses OpenTelemetry for distributed tracing with automatic instrumentation:
 
-Traces include:
-- Operation timing
-- Error information
-- Request/response attributes
-- Component identification
+### Automatic Tracing (via otelhttp)
+- **HTTP requests**: Automatic span creation with HTTP semantic conventions
+- **Context propagation**: Trace context automatically propagated across service boundaries
+- **Attributes**: Standard HTTP attributes (method, status code, URL, etc.)
+
+### Manual Tracing
+- **Database operations**: Custom spans for database queries
+- **Download client operations**: Spans for external service calls
+- **File downloads**: Operation-specific spans
+
+### Trace Attributes
+Following OpenTelemetry semantic conventions:
+- `http.request.method`, `http.response.status_code`
+- `service.name`, `service.version` (from resource attributes)
+- `db.operation`, `db.statement` (for database operations)
+- Custom business attributes for downloads and transfers
 
 ## Performance Impact
 
 The telemetry implementation is designed to have minimal performance impact:
-- Metrics collection is non-blocking
-- System metrics are collected every 15 seconds
-- Tracing uses sampling to reduce overhead
-- Metrics are stored in memory and exposed via HTTP
+
+### HTTP Instrumentation
+- **otelhttp**: Optimized for production use with minimal overhead
+- **Automatic sampling**: Configurable trace sampling to control overhead
+- **Efficient metrics**: Histogram buckets optimized for HTTP request patterns
+
+### System Metrics
+- **Collection interval**: System metrics collected every 15 seconds
+- **Memory efficient**: Metrics stored in memory with bounded cardinality
+- **Non-blocking**: Metrics collection doesn't block application threads
+
+### Resource Usage
+- **Memory**: Bounded metric cardinality prevents memory leaks
+- **CPU**: Minimal CPU overhead from instrumentation
+- **Network**: Metrics exposed via efficient HTTP endpoint
+
+### Cardinality Management
+- **Bounded Attributes**: All metric attributes use bounded value sets to prevent cardinality explosion
+- **High-Cardinality Data**: Transfer IDs, names, and error messages are excluded from metric attributes
+- **Safe Attributes**: Only operation types, status values, and client types are used as metric dimensions
 
 ## Troubleshooting
 
@@ -222,9 +288,22 @@ The telemetry implementation is designed to have minimal performance impact:
 ### High Memory Usage
 
 If you notice high memory usage from metrics:
-1. Reduce metric cardinality by limiting label values
-2. Adjust system metrics collection interval
-3. Consider implementing metric retention policies
+1. Check for cardinality explosion in custom metrics
+2. Verify that high-cardinality data (IDs, names, paths) are not used as metric attributes
+3. Adjust system metrics collection interval
+4. Consider implementing metric retention policies
+
+### Cardinality Issues
+
+Signs of high cardinality problems:
+- Exponential growth in memory usage
+- Slow Prometheus queries
+- Large metrics payload sizes
+
+**Prevention**:
+- Never use unique identifiers (transfer IDs, file names) as metric attributes
+- Limit attribute values to bounded sets (status: success/error, client: deluge/putio)
+- Use high-cardinality data in logs and traces, not metrics
 
 ### Missing Business Metrics
 
@@ -233,24 +312,49 @@ Ensure that:
 2. Telemetry instance is properly passed to components
 3. Context is properly propagated through the call chain
 
-## Architecture
+## OpenTelemetry Architecture
+
+### Resource Attributes
+
+The application uses OpenTelemetry resource attributes to identify the service:
+
+```go
+resource.New(ctx,
+    resource.WithAttributes(
+        semconv.ServiceNameKey.String("seedbox_downloader"),
+        semconv.ServiceVersionKey.String(version),
+    ),
+)
+```
+
+This ensures all metrics and traces are properly attributed to the service without hardcoding service names in metric names.
+
+### Component Architecture
 
 ```
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   HTTP Client   │───▶│  HTTP Middleware │───▶│   Application   │
+│   HTTP Client   │───▶│  otelhttp        │───▶│   Application   │
+│                 │    │  Middleware      │    │                 │
 └─────────────────┘    └──────────────────┘    └─────────────────┘
                                 │                        │
                                 ▼                        ▼
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Prometheus    │◀───│   Telemetry      │◀───│  Instrumented   │
-│    Server       │    │    Package       │    │   Components    │
+│   Prometheus    │◀───│  OTel Prometheus │◀───│  Instrumented   │
+│    Server       │    │    Exporter      │    │   Components    │
 └─────────────────┘    └──────────────────┘    └─────────────────┘
                                 │
                                 ▼
                        ┌──────────────────┐
                        │  Metrics Server  │
-                       │  (Chi Router)    │
+                       │ (otelhttp wrapped)│
                        └──────────────────┘
 ```
 
-The telemetry system is fully integrated into the application lifecycle and provides comprehensive observability for monitoring, alerting, and debugging. Both the main API server and metrics server use chi router for consistency and standardization.
+### Key Components
+
+1. **otelhttp**: Provides automatic HTTP instrumentation following OpenTelemetry semantic conventions
+2. **Resource Attributes**: Service identification without hardcoded prefixes
+3. **Prometheus Exporter**: Converts OpenTelemetry metrics to Prometheus format
+4. **Instrumented Metrics Endpoint**: Even the `/metrics` endpoint is instrumented for complete observability
+
+The telemetry system follows OpenTelemetry best practices and provides comprehensive observability for monitoring, alerting, and debugging.
