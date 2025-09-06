@@ -85,6 +85,7 @@ func (m *HTTPMiddleware) Middleware(next http.Handler) http.Handler {
 // responseWriter wraps http.ResponseWriter to capture status code and bytes written.
 type responseWriter struct {
 	http.ResponseWriter
+
 	statusCode   int
 	bytesWritten int64
 }
