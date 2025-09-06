@@ -1,0 +1,85 @@
+groups:
+  - name: seedbox-downloader.rules
+    rules:
+      # RED Metrics Alerts
+      - alert: HighHTTPErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          service: seedbox-downloader
+        annotations:
+          summary: "High HTTP error rate detected"
+          description: "HTTP 5xx error rate is {{ $value }} errors per second"
+
+      - alert: HighHTTPLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+          service: seedbox-downloader
+        annotations:
+          summary: "High HTTP latency detected"
+          description: "95th percentile latency is {{ $value }} seconds"
+
+      # USE Metrics Alerts
+      - alert: HighMemoryUsage
+        expr: memory_usage_bytes > 1000000000  # 1GB
+        for: 5m
+        labels:
+          severity: warning
+          service: seedbox-downloader
+        annotations:
+          summary: "High memory usage detected"
+          description: "Memory usage is {{ $value | humanizeBytes }}"
+
+      - alert: HighGoroutineCount
+        expr: goroutine_count > 1000
+        for: 5m
+        labels:
+          severity: warning
+          service: seedbox-downloader
+        annotations:
+          summary: "High goroutine count detected"
+          description: "Goroutine count is {{ $value }}"
+
+      # Business Logic Alerts
+      - alert: DownloadClientErrors
+        expr: rate(client_errors_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: seedbox-downloader
+        annotations:
+          summary: "Download client errors detected"
+          description: "Client error rate is {{ $value }} errors per second"
+
+      - alert: DatabaseErrors
+        expr: rate(db_operations_total{status="error"}[5m]) > 0.02
+        for: 5m
+        labels:
+          severity: warning
+          service: seedbox-downloader
+        annotations:
+          summary: "Database errors detected"
+          description: "Database error rate is {{ $value }} errors per second"
+
+      - alert: NoActiveDownloads
+        expr: downloads_active == 0 and transfers_active > 0
+        for: 30m
+        labels:
+          severity: info
+          service: seedbox-downloader
+        annotations:
+          summary: "No active downloads despite available transfers"
+          description: "There are {{ $labels.transfers_active }} active transfers but no downloads"
+
+      - alert: SystemErrors
+        expr: rate(system_errors_total[5m]) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+          service: seedbox-downloader
+        annotations:
+          summary: "System errors detected"
+          description: "System error rate is {{ $value }} errors per second"
