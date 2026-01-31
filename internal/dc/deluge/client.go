@@ -13,6 +13,8 @@ import (
 
 	"github.com/italolelis/seedbox_downloader/internal/logctx"
 	"github.com/italolelis/seedbox_downloader/internal/transfer"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 const (
@@ -99,6 +101,8 @@ func (c *Client) Authenticate(ctx context.Context) error {
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+
+	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -205,8 +209,6 @@ func (c *Client) GrabFile(ctx context.Context, file *transfer.File) (io.ReadClos
 	if err != nil {
 		logger.Error("failed to download file", "url", url, "err", err)
 
-		resp.Body.Close()
-
 		return nil, fmt.Errorf("failed to download file: %w", err)
 	}
 
@@ -305,6 +307,8 @@ func (c *Client) buildDownloadRequest(ctx context.Context, file *transfer.File) 
 	if c.cookie != "" {
 		req.AddCookie(&http.Cookie{Name: "_session_id", Value: c.cookie})
 	}
+
+	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 
 	return req, url, nil
 }
