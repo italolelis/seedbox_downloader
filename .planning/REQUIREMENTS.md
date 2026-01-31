@@ -21,16 +21,16 @@ Requirements for this maintenance milestone. Each maps to roadmap phases.
 
 ### Telemetry
 
-- [ ] **TEL-01**: Log warning at startup when telemetry is disabled (OTEL_ADDRESS not set)
+- [x] **TEL-01**: Log warning at startup when telemetry is disabled (OTEL_ADDRESS not set)
 
 ### Code Quality
 
-- [ ] **CODE-01**: Remove or implement commented-out startup recovery code in transfer.go (lines 96-122)
+- [x] **CODE-01**: Remove or implement commented-out startup recovery code in transfer.go (lines 96-122)
 
 ### Database
 
-- [ ] **DB-01**: Add db.Ping() after database initialization to verify connection
-- [ ] **DB-02**: Configure connection pool limits with SetMaxOpenConns() and SetMaxIdleConns()
+- [x] **DB-01**: Add db.Ping() after database initialization to verify connection
+- [x] **DB-02**: Configure connection pool limits with SetMaxOpenConns() and SetMaxIdleConns()
 
 ## v2 Requirements
 
@@ -80,10 +80,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | RES-02 | Phase 2 | Complete |
 | RES-03 | Phase 2 | Complete |
 | RES-04 | Phase 2 | Complete |
-| TEL-01 | Phase 3 | Pending |
-| CODE-01 | Phase 3 | Pending |
-| DB-01 | Phase 3 | Pending |
-| DB-02 | Phase 3 | Pending |
+| TEL-01 | Phase 3 | Complete |
+| CODE-01 | Phase 3 | Complete |
+| DB-01 | Phase 3 | Complete |
+| DB-02 | Phase 3 | Complete |
 
 **Coverage:**
 - v1 requirements: 10 total
