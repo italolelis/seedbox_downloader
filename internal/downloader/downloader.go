@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sync/atomic"
 	"time"
 
@@ -233,18 +234,34 @@ func (d *Downloader) WatchForSeeding(ctx context.Context, t *transfer.Transfer, 
 
 	logger.Info("watching for seeding transfers", "transfer_id", t.ID, "polling_interval", pollingInterval)
 
-	ticker := time.NewTicker(pollingInterval)
-
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("watch seeding panic",
+					"operation", "watch_seeding",
+					"transfer_id", t.ID,
+					"panic", r,
+					"stack", string(debug.Stack()))
+			}
+		}()
+
+		ticker := time.NewTicker(pollingInterval)
+		defer ticker.Stop()
+
 		for {
 			select {
 			case <-ctx.Done():
-				logger.Info("shutting down watch for seeding transfers")
-
+				logger.Info("watch seeding shutdown",
+					"operation", "watch_seeding",
+					"transfer_id", t.ID,
+					"reason", "context_cancelled")
 				return
 			case <-ticker.C:
 				if !t.IsSeeding() {
-					logger.Info("transfer stopped seeding", "transfer_id", t.ID)
+					logger.Info("transfer stopped seeding",
+						"operation", "watch_seeding",
+						"transfer_id", t.ID,
+						"reason", "seeding_complete")
 
 					hash := sha1.Sum([]byte(t.ID))
 
@@ -254,9 +271,7 @@ func (d *Downloader) WatchForSeeding(ctx context.Context, t *transfer.Transfer, 
 						}
 					}
 
-					ticker.Stop()
-
-					break
+					return
 				}
 			}
 		}

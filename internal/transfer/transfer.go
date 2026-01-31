@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -121,16 +122,35 @@ func (o *TransferOrchestrator) ProduceTransfers(ctx context.Context) {
 	// }
 	// logger.Info("done checking for unfinished transfers. Starting to monitor transfers.", "count", len(transfers))
 
-	ticker := time.NewTicker(o.pollingInterval)
-
 	go func() {
+		// Panic recovery (deferred last, executes first during unwind)
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("transfer orchestrator panic",
+					"operation", "produce_transfers",
+					"panic", r,
+					"stack", string(debug.Stack()))
+
+				// Restart with clean state if context not cancelled
+				if ctx.Err() == nil {
+					logger.Info("restarting transfer orchestrator after panic",
+						"operation", "produce_transfers")
+					time.Sleep(time.Second) // Brief backoff before restart
+					o.ProduceTransfers(ctx)
+				}
+			}
+		}()
+
+		// Ticker with cleanup (deferred second, executes second during unwind)
+		ticker := time.NewTicker(o.pollingInterval)
+		defer ticker.Stop()
+
 		for {
 			select {
 			case <-ctx.Done():
-				logger.Info("shutting down transfer orchestrator")
-
-				ticker.Stop()
-
+				logger.Info("transfer orchestrator shutdown",
+					"operation", "produce_transfers",
+					"reason", "context_cancelled")
 				return
 			case <-ticker.C:
 				if err := o.watchTransfers(ctx); err != nil {
