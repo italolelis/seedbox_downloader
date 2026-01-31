@@ -17,7 +17,7 @@ Requirements for this maintenance milestone. Each maps to roadmap phases.
 - [ ] **RES-01**: Ensure ticker.Stop() is called in all goroutine exit paths (success and context cancellation)
 - [ ] **RES-02**: Add defer ticker.Stop() in TransferOrchestrator watch loops
 - [ ] **RES-03**: Add defer ticker.Stop() in Downloader watch loops
-- [ ] **RES-04**: Add defer ticker.Stop() in main.go notification loop
+- [ ] **RES-04**: Add panic recovery to main.go notification loop
 
 ### Telemetry
 

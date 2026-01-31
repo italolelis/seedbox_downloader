@@ -39,7 +39,7 @@ Plans:
   1. All goroutines with tickers call defer ticker.Stop()
   2. Ticker cleanup occurs on both success paths and context cancellation
   3. Long-running service does not accumulate leaked goroutines over time
-  4. Resource cleanup is consistent across TransferOrchestrator, Downloader, and notification loops
+  4. Resource cleanup and panic recovery is consistent across TransferOrchestrator, Downloader, and notification loops
 **Plans**: 3 plans
 
 Plans:
