@@ -185,14 +185,27 @@ func (d *Downloader) WatchForImported(ctx context.Context, t *transfer.Transfer,
 
 	logger.Info("watching for imported transfers", "transfer_id", t.ID, "polling_interval", pollingInterval)
 
-	ticker := time.NewTicker(pollingInterval)
-
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("watch imported panic",
+					"operation", "watch_imported",
+					"transfer_id", t.ID,
+					"panic", r,
+					"stack", string(debug.Stack()))
+			}
+		}()
+
+		ticker := time.NewTicker(pollingInterval)
+		defer ticker.Stop()
+
 		for {
 			select {
 			case <-ctx.Done():
-				logger.Info("shutting down watch for imported transfers")
-
+				logger.Info("watch imported shutdown",
+					"operation", "watch_imported",
+					"transfer_id", t.ID,
+					"reason", "context_cancelled")
 				return
 			case <-ticker.C:
 				imported, err := d.checkForImported(ctx, t)
@@ -203,11 +216,12 @@ func (d *Downloader) WatchForImported(ctx context.Context, t *transfer.Transfer,
 				}
 
 				if imported {
+					logger.Info("transfer imported, stopping watch",
+						"operation", "watch_imported",
+						"transfer_id", t.ID,
+						"reason", "transfer_imported")
 					d.OnTransferImported <- t
-
-					ticker.Stop()
-
-					break
+					return
 				}
 			}
 		}
@@ -257,7 +271,7 @@ func (d *Downloader) checkForImported(ctx context.Context, transfer *transfer.Tr
 		for _, arrService := range d.arrServices {
 			filePath := filepath.Join(d.downloadDir, file.Path)
 
-			imported, err := arrService.CheckImported(filePath)
+			imported, err := arrService.CheckImported(ctx, filePath)
 			if err != nil {
 				return false, fmt.Errorf("failed to check if transfer has been imported: %w", err)
 			}
