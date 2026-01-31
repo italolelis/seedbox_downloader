@@ -14,10 +14,10 @@ Requirements for this maintenance milestone. Each maps to roadmap phases.
 
 ### Resource Management
 
-- [ ] **RES-01**: Ensure ticker.Stop() is called in all goroutine exit paths (success and context cancellation)
-- [ ] **RES-02**: Add defer ticker.Stop() in TransferOrchestrator watch loops
-- [ ] **RES-03**: Add defer ticker.Stop() in Downloader watch loops
-- [ ] **RES-04**: Add panic recovery to main.go notification loop
+- [x] **RES-01**: Ensure ticker.Stop() is called in all goroutine exit paths (success and context cancellation)
+- [x] **RES-02**: Add defer ticker.Stop() in TransferOrchestrator watch loops
+- [x] **RES-03**: Add defer ticker.Stop() in Downloader watch loops
+- [x] **RES-04**: Add panic recovery to main.go notification loop
 
 ### Telemetry
 
@@ -76,10 +76,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 |-------------|-------|--------|
 | BUG-01 | Phase 1 | Complete |
 | BUG-02 | Phase 1 | Complete |
-| RES-01 | Phase 2 | Pending |
-| RES-02 | Phase 2 | Pending |
-| RES-03 | Phase 2 | Pending |
-| RES-04 | Phase 2 | Pending |
+| RES-01 | Phase 2 | Complete |
+| RES-02 | Phase 2 | Complete |
+| RES-03 | Phase 2 | Complete |
+| RES-04 | Phase 2 | Complete |
 | TEL-01 | Phase 3 | Pending |
 | CODE-01 | Phase 3 | Pending |
 | DB-01 | Phase 3 | Pending |
@@ -92,4 +92,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-01-31*
-*Last updated: 2026-01-31 after Phase 1 completion*
+*Last updated: 2026-01-31 after Phase 2 completion*
