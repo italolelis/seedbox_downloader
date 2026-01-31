@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-01-31)
 
 **Core value:** The application must run reliably 24/7 without crashes, resource leaks, or silent failures.
-**Current focus:** Phase 2 - Resource Leak Prevention
+**Current focus:** Phase 3 - Operational Hygiene
 
 ## Current Position
 
-Phase: 2 of 3 (Resource Leak Prevention)
-Plan: 3 of 3 complete
-Status: Phase complete (ready for phase 3)
-Last activity: 2026-01-31 — Completed 02-01-PLAN.md (documentation)
+Phase: 3 of 3 (Operational Hygiene)
+Plan: 2 of 3 complete
+Status: In progress
+Last activity: 2026-01-31 — Completed 03-02-PLAN.md
 
-Progress: [████░░░░░░] 40%
+Progress: [█████░░░░░] 50%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 4
+- Total plans completed: 5
 - Average duration: 1.8 min
-- Total execution time: 0.11 hours
+- Total execution time: 0.13 hours
 
 **By Phase:**
 
@@ -29,9 +29,10 @@ Progress: [████░░░░░░] 40%
 |-------|-------|-------|----------|
 | 1. Critical Safety | 1 | 1.4 min | 1.4 min |
 | 2. Resource Leak Prevention | 3 | 7.3 min | 2.4 min |
+| 3. Operational Hygiene | 2 | 4.0 min | 2.0 min |
 
 **Recent Trend:**
-- Last 5 plans: 01-01 (1.4 min), 02-01 (3.0 min), 02-02 (2.1 min), 02-03 (2.2 min)
+- Last 5 plans: 02-01 (3.0 min), 02-02 (2.1 min), 02-03 (2.2 min), 03-02 (2.0 min)
 - Trend: Consistent velocity around 2 minutes per plan
 
 *Updated after each plan completion*
@@ -67,6 +68,11 @@ From plan 02-03:
 - Use 1-second backoff before restarting to avoid tight panic loops
 - Log structured exit with operation and reason fields
 
+From plan 03-02:
+- Log telemetry status at Info level (not Warning) - telemetry is optional, not critical
+- Silent when enabled (no log when OTEL_ADDRESS is set) - only inform when feature disabled
+- Remove commented-out recovery code rather than implement - polling loop is intentional design
+
 ### Pending Todos
 
 None yet.
@@ -78,7 +84,7 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-01-31
-Stopped at: Completed 02-03-PLAN.md (Phase 2 complete)
+Stopped at: Completed 03-02-PLAN.md
 Resume file: None
 
 ---
