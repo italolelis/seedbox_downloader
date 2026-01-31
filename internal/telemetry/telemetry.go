@@ -3,16 +3,17 @@ package telemetry
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"runtime"
+	"log/slog"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/prometheus"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/metric/noop"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
@@ -25,6 +26,7 @@ type Telemetry struct {
 	tracer        trace.Tracer
 	meter         metric.Meter
 	exporter      *prometheus.Exporter
+	logProvider   *sdklog.LoggerProvider
 
 	// RED Metrics are now handled by otelhttp automatically
 
@@ -52,39 +54,52 @@ type Telemetry struct {
 
 // Config holds telemetry configuration.
 type Config struct {
-	Enabled        bool
 	ServiceName    string
 	ServiceVersion string
+	OTELAddress    string
 }
 
 // New creates a new telemetry instance.
 func New(ctx context.Context, cfg Config) (*Telemetry, error) {
-	if !cfg.Enabled {
-		return &Telemetry{}, nil
-	}
-
 	// Create resource with service attributes
-	res, err := resource.New(ctx,
+	extraResources, _ := resource.New(ctx,
 		resource.WithAttributes(
-			semconv.ServiceNameKey.String(cfg.ServiceName),
-			semconv.ServiceVersionKey.String(cfg.ServiceVersion),
+			semconv.ServiceName(cfg.ServiceName),
+			semconv.ServiceVersion(cfg.ServiceVersion),
+			semconv.OTelScopeName(cfg.ServiceName),
 		),
+		resource.WithOS(),
+		resource.WithProcess(),
+		resource.WithContainer(),
+		resource.WithHost(),
+	)
+
+	res, err := resource.Merge(
+		resource.Default(),
+		extraResources,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create resource: %w", err)
 	}
 
-	// Create Prometheus exporter
-	exporter, err := prometheus.New()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create prometheus exporter: %w", err)
-	}
+	var meterProvider metric.MeterProvider
 
-	// Create meter provider with resource
-	meterProvider := sdkmetric.NewMeterProvider(
-		sdkmetric.WithReader(exporter),
-		sdkmetric.WithResource(res),
-	)
+	if cfg.OTELAddress == "" {
+		slog.Info("Telemetry disabled - metrics and traces will not be collected")
+		meterProvider = noop.NewMeterProvider()
+	} else {
+		// Create OTLP exporter
+		exporter, err := otlpmetricgrpc.New(ctx, otlpmetricgrpc.WithEndpoint(cfg.OTELAddress))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create prometheus exporter: %w", err)
+		}
+
+		// Create meter provider with resource
+		meterProvider = sdkmetric.NewMeterProvider(
+			sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exporter)),
+			sdkmetric.WithResource(res),
+		)
+	}
 
 	// Set global meter provider
 	otel.SetMeterProvider(meterProvider)
@@ -97,7 +112,6 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 		meterProvider: meterProvider,
 		tracer:        tracer,
 		meter:         meter,
-		exporter:      exporter,
 	}
 
 	// Initialize all metrics
@@ -105,57 +119,46 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 		return nil, fmt.Errorf("failed to initialize metrics: %w", err)
 	}
 
-	// Start system metrics collection
-	go t.collectSystemMetrics(ctx)
-
 	return t, nil
 }
 
-// Tracer returns the OpenTelemetry tracer.
-func (t *Telemetry) Tracer() trace.Tracer {
-	return t.tracer
+func (t *Telemetry) LoggerProvider() *sdklog.LoggerProvider {
+	return t.logProvider
 }
-
-// Meter returns the OpenTelemetry meter.
-func (t *Telemetry) Meter() metric.Meter {
-	return t.meter
-}
-
-// HTTP metrics are now automatically handled by otelhttp middleware
 
 // RecordDownload records download metrics.
-func (t *Telemetry) RecordDownload(status string, duration time.Duration) {
+func (t *Telemetry) RecordDownload(ctx context.Context, status string, duration time.Duration) {
 	if t.downloadsTotal != nil {
-		t.downloadsTotal.Add(context.Background(), 1,
+		t.downloadsTotal.Add(ctx, 1,
 			metric.WithAttributes(attribute.String("status", status)),
 		)
 	}
 
 	if t.downloadDuration != nil {
-		t.downloadDuration.Record(context.Background(), duration.Seconds(),
+		t.downloadDuration.Record(ctx, duration.Seconds(),
 			metric.WithAttributes(attribute.String("status", status)),
 		)
 	}
 }
 
 // IncrementActiveDownloads increments active downloads counter.
-func (t *Telemetry) IncrementActiveDownloads() {
+func (t *Telemetry) IncrementActiveDownloads(ctx context.Context) {
 	if t.downloadsActive != nil {
-		t.downloadsActive.Add(context.Background(), 1)
+		t.downloadsActive.Add(ctx, 1)
 	}
 }
 
 // DecrementActiveDownloads decrements active downloads counter.
-func (t *Telemetry) DecrementActiveDownloads() {
+func (t *Telemetry) DecrementActiveDownloads(ctx context.Context) {
 	if t.downloadsActive != nil {
-		t.downloadsActive.Add(context.Background(), -1)
+		t.downloadsActive.Add(ctx, -1)
 	}
 }
 
 // RecordTransfer records transfer metrics.
-func (t *Telemetry) RecordTransfer(operation, status string) {
+func (t *Telemetry) RecordTransfer(ctx context.Context, operation, status string) {
 	if t.transfersTotal != nil {
-		t.transfersTotal.Add(context.Background(), 1,
+		t.transfersTotal.Add(ctx, 1,
 			metric.WithAttributes(
 				attribute.String("operation", operation),
 				attribute.String("status", status),
@@ -165,23 +168,23 @@ func (t *Telemetry) RecordTransfer(operation, status string) {
 }
 
 // IncrementActiveTransfers increments active transfers counter.
-func (t *Telemetry) IncrementActiveTransfers() {
+func (t *Telemetry) IncrementActiveTransfers(ctx context.Context) {
 	if t.transfersActive != nil {
-		t.transfersActive.Add(context.Background(), 1)
+		t.transfersActive.Add(ctx, 1)
 	}
 }
 
 // DecrementActiveTransfers decrements active transfers counter.
-func (t *Telemetry) DecrementActiveTransfers() {
+func (t *Telemetry) DecrementActiveTransfers(ctx context.Context) {
 	if t.transfersActive != nil {
-		t.transfersActive.Add(context.Background(), -1)
+		t.transfersActive.Add(ctx, -1)
 	}
 }
 
 // RecordClientOperation records download client operation metrics.
-func (t *Telemetry) RecordClientOperation(client, operation, status string) {
+func (t *Telemetry) RecordClientOperation(ctx context.Context, client, operation, status string) {
 	if t.clientOperationsTotal != nil {
-		t.clientOperationsTotal.Add(context.Background(), 1,
+		t.clientOperationsTotal.Add(ctx, 1,
 			metric.WithAttributes(
 				attribute.String("client", client),
 				attribute.String("operation", operation),
@@ -191,7 +194,7 @@ func (t *Telemetry) RecordClientOperation(client, operation, status string) {
 	}
 
 	if status == "error" && t.clientErrors != nil {
-		t.clientErrors.Add(context.Background(), 1,
+		t.clientErrors.Add(ctx, 1,
 			metric.WithAttributes(
 				attribute.String("client", client),
 				attribute.String("operation", operation),
@@ -201,9 +204,9 @@ func (t *Telemetry) RecordClientOperation(client, operation, status string) {
 }
 
 // RecordDBOperation records database operation metrics.
-func (t *Telemetry) RecordDBOperation(operation, status string, duration time.Duration) {
+func (t *Telemetry) RecordDBOperation(ctx context.Context, operation, status string, duration time.Duration) {
 	if t.dbOperationsTotal != nil {
-		t.dbOperationsTotal.Add(context.Background(), 1,
+		t.dbOperationsTotal.Add(ctx, 1,
 			metric.WithAttributes(
 				attribute.String("operation", operation),
 				attribute.String("status", status),
@@ -212,7 +215,7 @@ func (t *Telemetry) RecordDBOperation(operation, status string, duration time.Du
 	}
 
 	if t.dbOperationDuration != nil {
-		t.dbOperationDuration.Record(context.Background(), duration.Seconds(),
+		t.dbOperationDuration.Record(ctx, duration.Seconds(),
 			metric.WithAttributes(
 				attribute.String("operation", operation),
 				attribute.String("status", status),
@@ -222,27 +225,15 @@ func (t *Telemetry) RecordDBOperation(operation, status string, duration time.Du
 }
 
 // RecordSystemError records system error metrics.
-func (t *Telemetry) RecordSystemError(component, errorType string) {
+func (t *Telemetry) RecordSystemError(ctx context.Context, component, errorType string) {
 	if t.systemErrors != nil {
-		t.systemErrors.Add(context.Background(), 1,
+		t.systemErrors.Add(ctx, 1,
 			metric.WithAttributes(
 				attribute.String("component", component),
 				attribute.String("error_type", errorType),
 			),
 		)
 	}
-}
-
-// Handler returns the HTTP handler for metrics endpoint with OpenTelemetry instrumentation.
-func (t *Telemetry) Handler() http.Handler {
-	if t.exporter == nil {
-		return http.NotFoundHandler()
-	}
-
-	// Wrap the Prometheus handler with OpenTelemetry instrumentation
-	prometheusHandler := promhttp.Handler()
-
-	return otelhttp.NewHandler(prometheusHandler, "metrics")
 }
 
 // Shutdown gracefully shuts down the telemetry system.
@@ -265,7 +256,7 @@ func (t *Telemetry) initializeMetrics() error {
 		return err
 	}
 
-	return t.initializeSystemMetrics()
+	return runtime.Start(runtime.WithMinimumReadMemStatsInterval(time.Second))
 }
 
 func (t *Telemetry) initializeUSEMetrics() error {
@@ -395,68 +386,4 @@ func (t *Telemetry) initializeBusinessMetrics() error {
 	}
 
 	return nil
-}
-
-func (t *Telemetry) initializeSystemMetrics() error {
-	var err error
-
-	t.systemErrors, err = t.meter.Int64Counter(
-		"system.errors.total",
-		metric.WithDescription("Total number of system errors"),
-		metric.WithUnit("{error}"),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create system.errors.total counter: %w", err)
-	}
-
-	t.systemUptime, err = t.meter.Float64Gauge(
-		"process.uptime",
-		metric.WithDescription("Process uptime"),
-		metric.WithUnit("s"),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create process.uptime gauge: %w", err)
-	}
-
-	return nil
-}
-
-// collectSystemMetrics collects system-level metrics periodically.
-func (t *Telemetry) collectSystemMetrics(ctx context.Context) {
-	ticker := time.NewTicker(15 * time.Second)
-	defer ticker.Stop()
-
-	startTime := time.Now()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			t.updateSystemMetrics(ctx, startTime)
-		}
-	}
-}
-
-// updateSystemMetrics updates system-level metrics.
-func (t *Telemetry) updateSystemMetrics(ctx context.Context, startTime time.Time) {
-	var m runtime.MemStats
-
-	runtime.ReadMemStats(&m)
-
-	// Memory usage
-	if t.memoryUsage != nil {
-		t.memoryUsage.Record(ctx, int64(m.Alloc))
-	}
-
-	// Goroutine count
-	if t.goroutineCount != nil {
-		t.goroutineCount.Record(ctx, int64(runtime.NumGoroutine()))
-	}
-
-	// System uptime
-	if t.systemUptime != nil {
-		uptime := time.Since(startTime).Seconds()
-		t.systemUptime.Record(ctx, uptime)
-	}
 }
