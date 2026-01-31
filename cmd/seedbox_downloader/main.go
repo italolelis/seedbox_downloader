@@ -48,6 +48,8 @@ type config struct {
 	LogLevel          *slog.LevelVar `envconfig:"LOG_LEVEL" default:"INFO"`
 	DiscordWebhookURL string         `envconfig:"DISCORD_WEBHOOK_URL"`
 	DBPath            string         `envconfig:"DB_PATH" default:"downloads.db"`
+	DBMaxOpenConns    int            `envconfig:"DB_MAX_OPEN_CONNS" default:"25"`
+	DBMaxIdleConns    int            `envconfig:"DB_MAX_IDLE_CONNS" default:"5"`
 	MaxParallel       int            `envconfig:"MAX_PARALLEL" default:"5"`
 
 	Transmission struct {
@@ -167,7 +169,7 @@ func initializeTelemetry(ctx context.Context, cfg *config) (*telemetry.Telemetry
 }
 
 func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemetry) (*services, error) {
-	database, err := sqlite.InitDB(cfg.DBPath)
+	database, err := sqlite.InitDB(ctx, cfg.DBPath, cfg.DBMaxOpenConns, cfg.DBMaxIdleConns)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize the database: %w", err)
 	}
