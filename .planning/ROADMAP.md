@@ -26,10 +26,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   1. Application handles HTTP request failures without nil pointer panics
   2. Failed Discord webhook notifications are logged with HTTP status codes
   3. Error paths in file transfer operations complete safely without crashes
-**Plans**: TBD
+**Plans**: 1 plan
 
 Plans:
-- [ ] 01-01: TBD (plan-phase will decompose)
+- [ ] 01-01-PLAN.md — Fix nil pointer in GrabFile and add Discord status validation
 
 ### Phase 2: Resource Leak Prevention
 **Goal**: Goroutines with tickers clean up resources on all exit paths
@@ -62,11 +62,11 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3
+Phases execute in numeric order: 1 -> 2 -> 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Critical Safety | 0/0 | Not started | - |
+| 1. Critical Safety | 0/1 | Planned | - |
 | 2. Resource Leak Prevention | 0/0 | Not started | - |
 | 3. Operational Hygiene | 0/0 | Not started | - |
 
