@@ -40,10 +40,12 @@ Plans:
   2. Ticker cleanup occurs on both success paths and context cancellation
   3. Long-running service does not accumulate leaked goroutines over time
   4. Resource cleanup is consistent across TransferOrchestrator, Downloader, and notification loops
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 02-01: TBD (plan-phase will decompose)
+- [ ] 02-01-PLAN.md — Add ticker cleanup and panic recovery to TransferOrchestrator
+- [ ] 02-02-PLAN.md — Add ticker cleanup and panic recovery to Downloader watch loops
+- [ ] 02-03-PLAN.md — Add panic recovery to notification loop
 
 ### Phase 3: Operational Hygiene
 **Goal**: Application validates dependencies at startup and logs operational status
@@ -67,9 +69,9 @@ Phases execute in numeric order: 1 -> 2 -> 3
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Critical Safety | 1/1 | Complete | 2026-01-31 |
-| 2. Resource Leak Prevention | 0/0 | Not started | - |
+| 2. Resource Leak Prevention | 0/3 | Planned | - |
 | 3. Operational Hygiene | 0/0 | Not started | - |
 
 ---
 *Created: 2026-01-31*
-*Last updated: 2026-01-31 after Phase 1 completion*
+*Last updated: 2026-01-31 after Phase 2 planning*
