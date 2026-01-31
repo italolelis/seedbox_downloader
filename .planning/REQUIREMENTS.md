@@ -9,8 +9,8 @@ Requirements for this maintenance milestone. Each maps to roadmap phases.
 
 ### Bug Fixes
 
-- [ ] **BUG-01**: Fix nil pointer dereference when GrabFile HTTP request fails before response is received
-- [ ] **BUG-02**: Add HTTP status code check in Discord notifier to detect and log webhook failures
+- [x] **BUG-01**: Fix nil pointer dereference when GrabFile HTTP request fails before response is received
+- [x] **BUG-02**: Add HTTP status code check in Discord notifier to detect and log webhook failures
 
 ### Resource Management
 
@@ -74,8 +74,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| BUG-01 | Phase 1 | Pending |
-| BUG-02 | Phase 1 | Pending |
+| BUG-01 | Phase 1 | Complete |
+| BUG-02 | Phase 1 | Complete |
 | RES-01 | Phase 2 | Pending |
 | RES-02 | Phase 2 | Pending |
 | RES-03 | Phase 2 | Pending |
@@ -92,4 +92,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-01-31*
-*Last updated: 2026-01-31 after roadmap creation*
+*Last updated: 2026-01-31 after Phase 1 completion*

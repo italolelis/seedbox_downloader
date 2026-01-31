@@ -12,7 +12,7 @@ This maintenance milestone fixes critical bugs and resource leaks across three f
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Critical Safety** - Eliminate crashes and silent failures
+- [x] **Phase 1: Critical Safety** - Eliminate crashes and silent failures
 - [ ] **Phase 2: Resource Leak Prevention** - Stop ticker resource leaks in goroutines
 - [ ] **Phase 3: Operational Hygiene** - Validate connections and improve observability
 
@@ -29,7 +29,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 1 plan
 
 Plans:
-- [ ] 01-01-PLAN.md — Fix nil pointer in GrabFile and add Discord status validation
+- [x] 01-01-PLAN.md — Fix nil pointer in GrabFile and add Discord status validation
 
 ### Phase 2: Resource Leak Prevention
 **Goal**: Goroutines with tickers clean up resources on all exit paths
@@ -66,10 +66,10 @@ Phases execute in numeric order: 1 -> 2 -> 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Critical Safety | 0/1 | Planned | - |
+| 1. Critical Safety | 1/1 | Complete | 2026-01-31 |
 | 2. Resource Leak Prevention | 0/0 | Not started | - |
 | 3. Operational Hygiene | 0/0 | Not started | - |
 
 ---
 *Created: 2026-01-31*
-*Last updated: 2026-01-31*
+*Last updated: 2026-01-31 after Phase 1 completion*
