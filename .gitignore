@@ -57,3 +57,6 @@ node_modules/
 # Misc
 *.bak 
 downloads/
+
+# Auto Claude data directory
+.auto-claude/

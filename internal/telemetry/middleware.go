@@ -11,9 +11,3 @@ import (
 func NewHTTPMiddleware(serviceName string) func(http.Handler) http.Handler {
 	return otelhttp.NewMiddleware(serviceName)
 }
-
-// NewHTTPHandler wraps an HTTP handler with OpenTelemetry instrumentation.
-// This is an alternative to middleware for wrapping individual handlers.
-func NewHTTPHandler(handler http.Handler, operation string) http.Handler {
-	return otelhttp.NewHandler(handler, operation)
-}

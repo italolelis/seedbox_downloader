@@ -1,10 +1,14 @@
 package arr
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 // Client represents an *arr API client.
@@ -36,19 +40,21 @@ type HistoryResponse struct {
 }
 
 // CheckImported checks if a target path has been imported into the *arr application.
-func (c *Client) CheckImported(target string) (bool, error) {
+func (c *Client) CheckImported(ctx context.Context, target string) (bool, error) {
 	inspected := 0
 	page := 0
 
 	for {
 		url := fmt.Sprintf("%s/api/v3/history?includeSeries=false&includeEpisode=false&page=%d&pageSize=1000", c.baseURL, page)
 
-		req, err := http.NewRequest(http.MethodGet, url, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {
 			return false, fmt.Errorf("failed to create request: %w", err)
 		}
 
 		req.Header.Set("X-Api-Key", c.apiKey)
+
+		otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 
 		resp, err := c.client.Do(req)
 		if err != nil {

@@ -100,7 +100,7 @@ func (c *InstrumentedTransferClient) AddTransfer(ctx context.Context, url string
 		return nil, instrumentedErr
 	}
 
-	c.telemetry.RecordTransfer("add", "success")
+	c.telemetry.RecordTransfer(ctx, "add", "success")
 
 	return result, nil
 }
@@ -117,7 +117,7 @@ func (c *InstrumentedTransferClient) RemoveTransfers(ctx context.Context, transf
 	}
 
 	for range transferIDs {
-		c.telemetry.RecordTransfer("remove", status)
+		c.telemetry.RecordTransfer(ctx, "remove", status)
 	}
 
 	return err

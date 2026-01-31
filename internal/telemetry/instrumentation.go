@@ -91,7 +91,7 @@ func (t *Telemetry) InstrumentDBOperation(ctx context.Context, operation string,
 		status = "error"
 	}
 
-	t.RecordDBOperation(operation, status, duration)
+	t.RecordDBOperation(ctx, operation, status, duration)
 
 	return err
 }
@@ -119,7 +119,7 @@ func (t *Telemetry) InstrumentClientOperation(ctx context.Context, client, opera
 		status = "error"
 	}
 
-	t.RecordClientOperation(client, operation, status)
+	t.RecordClientOperation(ctx, client, operation, status)
 
 	return err
 }
@@ -132,8 +132,8 @@ func (t *Telemetry) InstrumentDownload(ctx context.Context, transferID, transfer
 
 	start := time.Now()
 
-	t.IncrementActiveDownloads()
-	defer t.DecrementActiveDownloads()
+	t.IncrementActiveDownloads(ctx)
+	defer t.DecrementActiveDownloads(ctx)
 
 	err := t.InstrumentOperation(ctx, "download", "downloader", func(ctx context.Context) error {
 		ctx, span := t.tracer.Start(ctx, "download")
@@ -155,7 +155,7 @@ func (t *Telemetry) InstrumentDownload(ctx context.Context, transferID, transfer
 		status = "error"
 	}
 
-	t.RecordDownload(status, duration)
+	t.RecordDownload(ctx, status, duration)
 
 	return err
 }
@@ -166,8 +166,8 @@ func (t *Telemetry) InstrumentTransfer(ctx context.Context, operation string, fn
 		return fn(ctx)
 	}
 
-	t.IncrementActiveTransfers()
-	defer t.DecrementActiveTransfers()
+	t.IncrementActiveTransfers(ctx)
+	defer t.DecrementActiveTransfers(ctx)
 
 	err := t.InstrumentOperation(ctx, "transfer_"+operation, "transfer", fn)
 
@@ -176,7 +176,7 @@ func (t *Telemetry) InstrumentTransfer(ctx context.Context, operation string, fn
 		status = "error"
 	}
 
-	t.RecordTransfer(operation, status)
+	t.RecordTransfer(ctx, operation, status)
 
 	return err
 }
