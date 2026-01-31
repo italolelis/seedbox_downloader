@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"time"
 
 	"github.com/go-chi/chi"
@@ -26,8 +27,6 @@ import (
 
 var version = "develop"
 
-const goRoutineCount = 100
-
 // Config struct for environment variables.
 type config struct {
 	DownloadClient string `envconfig:"DOWNLOAD_CLIENT" default:"deluge"`
@@ -41,15 +40,15 @@ type config struct {
 	PutioToken   string `envconfig:"PUTIO_TOKEN"`
 	PutioBaseDir string `envconfig:"PUTIO_BASE_DIR"`
 
-	TargetLabel       string        `envconfig:"TARGET_LABEL"`
-	DownloadDir       string        `envconfig:"DOWNLOAD_DIR" required:"true"`
-	KeepDownloadedFor time.Duration `envconfig:"KEEP_DOWNLOADED_FOR" default:"24h"`
-	PollingInterval   time.Duration `envconfig:"POLLING_INTERVAL" default:"10m"`
-	CleanupInterval   time.Duration `envconfig:"CLEANUP_INTERVAL" default:"10m"`
-	LogLevel          slog.Level    `envconfig:"LOG_LEVEL" default:"INFO"`
-	DiscordWebhookURL string        `envconfig:"DISCORD_WEBHOOK_URL"`
-	DBPath            string        `envconfig:"DB_PATH" default:"downloads.db"`
-	MaxParallel       int           `envconfig:"MAX_PARALLEL" default:"5"`
+	TargetLabel       string         `envconfig:"TARGET_LABEL"`
+	DownloadDir       string         `envconfig:"DOWNLOAD_DIR" required:"true"`
+	KeepDownloadedFor time.Duration  `envconfig:"KEEP_DOWNLOADED_FOR" default:"24h"`
+	PollingInterval   time.Duration  `envconfig:"POLLING_INTERVAL" default:"10m"`
+	CleanupInterval   time.Duration  `envconfig:"CLEANUP_INTERVAL" default:"10m"`
+	LogLevel          *slog.LevelVar `envconfig:"LOG_LEVEL" default:"INFO"`
+	DiscordWebhookURL string         `envconfig:"DISCORD_WEBHOOK_URL"`
+	DBPath            string         `envconfig:"DB_PATH" default:"downloads.db"`
+	MaxParallel       int            `envconfig:"MAX_PARALLEL" default:"5"`
 
 	Transmission struct {
 		Username string `split_words:"true"`
@@ -65,10 +64,9 @@ type config struct {
 	}
 
 	Telemetry struct {
-		Enabled        bool   `split_words:"true" default:"true"`
-		MetricsAddress string `split_words:"true" default:"0.0.0.0:2112"`
-		MetricsPath    string `split_words:"true" default:"/metrics"`
-		ServiceName    string `split_words:"true" default:"seedbox_downloader"`
+		Enabled     bool   `split_words:"true" default:"true"`
+		OTELAddress string `split_words:"true" default:"0.0.0.0:4317"`
+		ServiceName string `split_words:"true" default:"seedbox_downloader"`
 	}
 
 	Sonarr arrConfig `envconfig:"SONARR"`
@@ -100,11 +98,11 @@ func run(ctx context.Context) error {
 	logger = logger.WithGroup("main")
 	logger.Info("starting...", "log_level", cfg.LogLevel, "version", version)
 
-	tel, err := initializeTelemetry(ctx, cfg, logger)
+	tel, err := initializeTelemetry(ctx, cfg)
 	if err != nil {
 		return err
 	}
-	defer shutdownTelemetry(tel, logger)
+	defer tel.Shutdown(ctx)
 
 	services, err := initializeServices(ctx, cfg, tel)
 	if err != nil {
@@ -112,7 +110,7 @@ func run(ctx context.Context) error {
 	}
 	defer services.Close()
 
-	servers, err := startServers(ctx, cfg, tel, logger, services)
+	servers, err := startServers(ctx, cfg, tel)
 	if err != nil {
 		return err
 	}
@@ -123,7 +121,7 @@ func run(ctx context.Context) error {
 		"polling_interval", cfg.PollingInterval.String(),
 	)
 
-	return runMainLoop(ctx, cfg, logger, servers)
+	return runMainLoop(ctx, cfg, servers)
 }
 
 type services struct {
@@ -149,35 +147,23 @@ func initializeConfig() (*config, *slog.Logger, error) {
 	}
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
+
 	slog.SetDefault(logger)
 
 	return &cfg, logger, nil
 }
 
-func initializeTelemetry(ctx context.Context, cfg *config, logger *slog.Logger) (*telemetry.Telemetry, error) {
-	telemetryConfig := telemetry.Config{
-		Enabled:        cfg.Telemetry.Enabled,
+func initializeTelemetry(ctx context.Context, cfg *config) (*telemetry.Telemetry, error) {
+	tel, err := telemetry.New(ctx, telemetry.Config{
 		ServiceName:    cfg.Telemetry.ServiceName,
 		ServiceVersion: version,
-	}
-
-	tel, err := telemetry.New(ctx, telemetryConfig)
+		OTELAddress:    cfg.Telemetry.OTELAddress,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize telemetry: %w", err)
 	}
 
-	logger.Info("telemetry initialized", "enabled", cfg.Telemetry.Enabled, "metrics_address", cfg.Telemetry.MetricsAddress)
-
 	return tel, nil
-}
-
-func shutdownTelemetry(tel *telemetry.Telemetry, logger *slog.Logger) {
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := tel.Shutdown(shutdownCtx); err != nil {
-		logger.Error("failed to shutdown telemetry", "err", err)
-	}
 }
 
 func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemetry) (*services, error) {
@@ -225,22 +211,12 @@ func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemet
 	}, nil
 }
 
-func startServers(ctx context.Context, cfg *config, tel *telemetry.Telemetry, logger *slog.Logger, _ *services) (*servers, error) {
+func startServers(ctx context.Context, cfg *config, tel *telemetry.Telemetry) (*servers, error) {
+	logger := logctx.LoggerFromContext(ctx)
+
 	serverErrors := make(chan error, 1)
 
-	var metricsServer *http.Server
-	if tel != nil && cfg.Telemetry.Enabled {
-		metricsServer = setupMetricsServer(tel, cfg)
-		go func() {
-			logger.Info("initializing metrics server", "host", cfg.Telemetry.MetricsAddress)
-
-			if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				logger.Error("metrics server error", "err", err)
-			}
-		}()
-	}
-
-	server, err := setupServer(ctx, tel, cfg)
+	server, err := setupServer(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup server: %w", err)
 	}
@@ -251,13 +227,14 @@ func startServers(ctx context.Context, cfg *config, tel *telemetry.Telemetry, lo
 	}()
 
 	return &servers{
-		api:     server,
-		metrics: metricsServer,
-		errors:  serverErrors,
+		api:    server,
+		errors: serverErrors,
 	}, nil
 }
 
-func runMainLoop(ctx context.Context, cfg *config, logger *slog.Logger, servers *servers) error {
+func runMainLoop(ctx context.Context, cfg *config, servers *servers) error {
+	logger := logctx.LoggerFromContext(ctx)
+
 	for {
 		select {
 		case err := <-servers.errors:
@@ -301,10 +278,29 @@ func setupNotificationForDownloader(
 	}
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("notification loop panic",
+					"operation", "notification_loop",
+					"panic", r,
+					"stack", string(debug.Stack()))
+
+				// Restart with clean state if context not cancelled
+				if ctx.Err() == nil {
+					logger.Info("restarting notification loop after panic",
+						"operation", "notification_loop")
+					time.Sleep(time.Second) // Brief backoff before restart
+					setupNotificationForDownloader(ctx, repo, downloader, cfg)
+				}
+			}
+		}()
+
 		for {
 			select {
 			case <-ctx.Done():
-				logger.Info("shutting down notification for downloader")
+				logger.Info("notification loop shutdown",
+					"operation", "notification_loop",
+					"reason", "context_cancelled")
 
 				return
 			case t := <-downloader.OnTransferDownloadError:
@@ -364,29 +360,10 @@ func buildDownloadClient(cfg *config) (transfer.DownloadClient, error) {
 	return nil, fmt.Errorf("invalid download client: %s", cfg.DownloadClient)
 }
 
-// setupMetricsServer creates a dedicated server for metrics.
-func setupMetricsServer(tel *telemetry.Telemetry, cfg *config) *http.Server {
-	r := chi.NewRouter()
-	r.Handle(cfg.Telemetry.MetricsPath, tel.Handler())
-
-	return &http.Server{
-		Addr:         cfg.Telemetry.MetricsAddress,
-		Handler:      r,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  5 * time.Second,
-	}
-}
-
 // setupServer prepares the handlers and services to create the http rest server.
-func setupServer(ctx context.Context, tel *telemetry.Telemetry, cfg *config) (*http.Server, error) {
+func setupServer(ctx context.Context, cfg *config) (*http.Server, error) {
 	r := chi.NewRouter()
-
-	// Add telemetry middleware using otelhttp
-	if tel != nil {
-		middleware := telemetry.NewHTTPMiddleware(cfg.Telemetry.ServiceName)
-		r.Use(middleware)
-	}
+	r.Use(telemetry.NewHTTPMiddleware(cfg.Telemetry.ServiceName))
 
 	var tHandler *rest.TransmissionHandler
 
