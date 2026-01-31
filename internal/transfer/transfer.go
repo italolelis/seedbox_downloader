@@ -94,34 +94,6 @@ func (o *TransferOrchestrator) ProduceTransfers(ctx context.Context) {
 
 	logger.Info("checking unfinished transfers", "label", o.label)
 
-	// We only need to check if something has been imported. Just by looking at the filesystem we
-	// can't determine if a transfer has been imported and removed or hasn't been downloaded.
-	// This avoids downloading a tranfer that has already been imported. In case there is a download,
-	// but it wasn't (completely) imported, we will attempt a (partial) download. Files that have
-	// been completed downloading will be skipped.
-	// transfers, err := o.dc.GetTaggedTorrents(ctx, o.label)
-	// if err != nil {
-	// 	return fmt.Errorf("failed to get tagged torrents: %w", err)
-	// }
-
-	// for _, transfer := range transfers {
-	// 	if !transfer.IsDownloadable() {
-	// 		logger.Debug("skipping transfer because it's not a downloadable transfer", "transfer_id", transfer.ID, "status", transfer.Status)
-
-	// 		continue
-	// 	}
-
-	// 	// we will check if the transfer has been imported by radarr or sonarr
-	// 	if o.repo.IsImported(ctx, transfer.ID) {
-	// 		logger.Debug("transfer not imported yet", "transfer_id", transfer.ID, "status", transfer.Status)
-
-	// 		o.OnTransferImported <- transfer
-
-	// 		continue
-	// 	}
-	// }
-	// logger.Info("done checking for unfinished transfers. Starting to monitor transfers.", "count", len(transfers))
-
 	go func() {
 		// Panic recovery (deferred last, executes first during unwind)
 		defer func() {
