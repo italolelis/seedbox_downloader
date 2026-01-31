@@ -1,3 +1,13 @@
+# Requirements Archive: v1 Seedbox Downloader - Critical Fixes
+
+**Archived:** 2026-01-31
+**Status:** ✅ SHIPPED
+
+This is the archived requirements specification for v1.
+For current requirements, see `.planning/REQUIREMENTS.md` (created for next milestone).
+
+---
+
 # Requirements: Seedbox Downloader - Critical Fixes
 
 **Defined:** 2026-01-31
@@ -91,5 +101,20 @@ Which phases cover which requirements. Updated during roadmap creation.
 - Unmapped: 0 (100% coverage)
 
 ---
-*Requirements defined: 2026-01-31*
-*Last updated: 2026-01-31 after Phase 2 completion*
+
+## Milestone Summary
+
+**Shipped:** 10 of 10 v1 requirements (100%)
+
+**Adjusted:** None - all requirements implemented as specified
+
+**Dropped:** None - all v1 requirements shipped
+
+**Key Outcomes:**
+- All critical bugs eliminated (nil pointer crashes, silent failures)
+- Resource management patterns established (defer cleanup, panic recovery)
+- Operational hygiene improved (startup validation, telemetry logging)
+- Codebase cleaned (removed 28 lines of commented-out code)
+
+---
+*Archived: 2026-01-31 as part of v1 milestone completion*

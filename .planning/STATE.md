@@ -5,93 +5,37 @@
 See: .planning/PROJECT.md (updated 2026-01-31)
 
 **Core value:** The application must run reliably 24/7 without crashes, resource leaks, or silent failures.
-**Current focus:** Phase 3 - Operational Hygiene
+**Current focus:** v1 milestone complete - ready for next milestone
 
 ## Current Position
 
-Phase: 3 of 3 (Operational Hygiene)
-Plan: 2 of 2 complete
-Status: Phase complete (milestone complete)
-Last activity: 2026-01-31 — Completed Phase 3 verification
+Milestone: v1 shipped (2026-01-31)
+Status: Complete - all 10 requirements satisfied
+Last activity: 2026-01-31 — v1 milestone archived
 
-Progress: [██████████] 100%
-
-## Performance Metrics
-
-**Velocity:**
-- Total plans completed: 6
-- Average duration: 2.0 min
-- Total execution time: 0.20 hours
-
-**By Phase:**
-
-| Phase | Plans | Total | Avg/Plan |
-|-------|-------|-------|----------|
-| 1. Critical Safety | 1 | 1.4 min | 1.4 min |
-| 2. Resource Leak Prevention | 3 | 7.3 min | 2.4 min |
-| 3. Operational Hygiene | 2 | 4.5 min | 2.25 min |
-
-**Recent Trend:**
-- Last 5 plans: 02-02 (2.1 min), 02-03 (2.2 min), 03-02 (2.0 min), 03-01 (2.5 min)
-- Trend: Consistent velocity around 2 minutes per plan
-
-*Updated after each plan completion*
+Progress: [██████████] 100% (v1 complete)
 
 ## Accumulated Context
 
 ### Decisions
 
-Decisions are logged in PROJECT.md Key Decisions table.
-Recent decisions affecting current work:
-
-- Fix bugs before adding features (stability foundation required)
-- Address resource leaks in this milestone (goroutine leaks compound over time)
-- Defer performance and security to separate milestones (focus scope on critical reliability)
-
-From plan 01-01:
-- Remove resp.Body.Close() from error path when HTTP request fails (resp is nil)
-- Validate Discord webhook status codes without reading response body (best-effort notifications)
-
-From plan 02-01:
-- Use defer ticker.Stop() immediately after ticker creation for guaranteed cleanup on all exit paths
-- Implement panic recovery with automatic restart only if context not cancelled
-- Add 1-second backoff delay before goroutine restart to prevent tight panic loops
-- Replace manual ticker.Stop() in select case with defer pattern
-
-From plan 02-02:
-- Use defer for ticker cleanup to cover all exit paths (context cancellation, normal completion, panic)
-- Change break to return in completion paths to ensure defer executes
-- No automatic restart after panic in per-transfer watch goroutines (let transfer be picked up again on next cycle)
-
-From plan 02-03:
-- Restart notification loop after panic only if context not cancelled
-- Use 1-second backoff before restarting to avoid tight panic loops
-- Log structured exit with operation and reason fields
-
-From plan 03-02:
-- Log telemetry status at Info level (not Warning) - telemetry is optional, not critical
-- Silent when enabled (no log when OTEL_ADDRESS is set) - only inform when feature disabled
-- Remove commented-out recovery code rather than implement - polling loop is intentional design
-
-From plan 03-01:
-- Use 3 retry attempts with exponential backoff for database ping validation
-- Set default pool limits to 25 open connections and 5 idle connections (appropriate for SQLite)
-- Close database connection if ping validation fails after all retries
-- Log retry attempts at Debug level to avoid noise in normal operation
+All v1 decisions archived in PROJECT.md Key Decisions table.
+Ready for next milestone planning.
 
 ### Pending Todos
 
-None yet.
+- Define requirements for next milestone
+- Plan roadmap phases
 
 ### Blockers/Concerns
 
-None yet.
+None.
 
 ## Session Continuity
 
 Last session: 2026-01-31
-Stopped at: Completed 03-01-PLAN.md
+Stopped at: v1 milestone complete - archived
 Resume file: None
 
 ---
-*Last updated: 2026-01-31*
+*Last updated: 2026-01-31 after v1 completion*
