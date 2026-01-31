@@ -46,7 +46,6 @@ Plans:
 - [x] 02-01-PLAN.md — Add ticker cleanup and panic recovery to TransferOrchestrator
 - [x] 02-02-PLAN.md — Add ticker cleanup and panic recovery to Downloader watch loops
 - [x] 02-03-PLAN.md — Add panic recovery to notification loop
-- [ ] 02-03-PLAN.md — Add panic recovery to notification loop
 
 ### Phase 3: Operational Hygiene
 **Goal**: Application validates dependencies at startup and logs operational status
@@ -57,10 +56,11 @@ Plans:
   2. Database connection failures are detected immediately at application startup
   3. Connection pool limits prevent database resource exhaustion
   4. Commented-out recovery code is either implemented or removed
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 03-01: TBD (plan-phase will decompose)
+- [ ] 03-01-PLAN.md — Add database validation with retry and connection pool configuration
+- [ ] 03-02-PLAN.md — Add telemetry status logging and remove dead code
 
 ## Progress
 
@@ -71,8 +71,8 @@ Phases execute in numeric order: 1 -> 2 -> 3
 |-------|----------------|--------|-----------|
 | 1. Critical Safety | 1/1 | Complete | 2026-01-31 |
 | 2. Resource Leak Prevention | 3/3 | Complete | 2026-01-31 |
-| 3. Operational Hygiene | 0/0 | Not started | - |
+| 3. Operational Hygiene | 0/2 | Planned | - |
 
 ---
 *Created: 2026-01-31*
-*Last updated: 2026-01-31 after Phase 2 planning*
+*Last updated: 2026-01-31 after Phase 3 planning*
