@@ -33,5 +33,9 @@ func (d *DiscordNotifier) Notify(content string) error {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("webhook failed with status %d", resp.StatusCode)
+	}
+
 	return nil
 }
