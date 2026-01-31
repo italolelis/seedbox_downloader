@@ -56,6 +56,11 @@ From plan 02-02:
 - Change break to return in completion paths to ensure defer executes
 - No automatic restart after panic in per-transfer watch goroutines (let transfer be picked up again on next cycle)
 
+From plan 02-03:
+- Restart notification loop after panic only if context not cancelled
+- Use 1-second backoff before restarting to avoid tight panic loops
+- Log structured exit with operation and reason fields
+
 ### Pending Todos
 
 None yet.
@@ -67,7 +72,7 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-01-31
-Stopped at: Completed 02-02-PLAN.md
+Stopped at: Completed 02-03-PLAN.md (Phase 2 complete)
 Resume file: None
 
 ---
