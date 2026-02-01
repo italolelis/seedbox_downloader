@@ -64,6 +64,10 @@ Recent decisions from PROJECT.md affecting v1.1 work:
 - **Phase 5 Plan 02**: Preserve HTTP 400 for malformed JSON and unknown methods (protocol violations)
 - **Phase 5 Plan 02**: Use errors.As for type-safe error inspection (matches custom error type pattern from Phase 4)
 - **Phase 5 Plan 02**: Map custom error types to user-friendly messages (enables actionable error reporting)
+- **Phase 6 Plan 01**: Use low-cardinality torrent_type attribute (only 2 values: magnet, metainfo)
+- **Phase 6 Plan 01**: Add error_type field to error logs (invalid_base64, invalid_bencode, api_error)
+- **Phase 6 Plan 01**: Nil-safe telemetry checks for backward compatibility in tests
+- **Phase 6 Plan 01**: Pass telemetry to TransmissionHandler through main.go setupServer
 - **Phase 6 Plan 02**: Use testify/require instead of assert for fail-fast behavior on test failures
 - **Phase 6 Plan 02**: Generate bencode test data inline rather than external files for self-documenting tests
 - **Phase 6 Plan 02**: Test URLEncoding rejection by using bytes that produce +/ in StdEncoding (0xff pattern)
@@ -86,19 +90,21 @@ None yet.
 - ✓ Protocol violations return HTTP 400 (malformed JSON, unknown methods)
 
 **Phase 6 progress:**
-- ✅ Unit tests for validateBencodeStructure (12 test cases covering invalid syntax, wrong root types, missing fields)
-- ✅ Unit tests for base64 decoding edge cases (5 test cases including URLEncoding vs StdEncoding)
-- ✅ Unit tests for generateTorrentFilename (hash-based filename generation and uniqueness)
-- ✅ Unit tests for formatTransmissionError (all custom error type mappings)
-- ✅ Test data directory with documentation of fixture conventions
+- ✅ Plan 01: OpenTelemetry counter for torrent type distribution (magnet vs metainfo)
+- ✅ Plan 01: Structured logging with torrent_type field for request categorization
+- ✅ Plan 01: Structured logging with error_type field for error categorization
+- ✅ Plan 02: Unit tests for validateBencodeStructure (12 test cases covering invalid syntax, wrong root types, missing fields)
+- ✅ Plan 02: Unit tests for base64 decoding edge cases (5 test cases including URLEncoding vs StdEncoding)
+- ✅ Plan 02: Unit tests for generateTorrentFilename (hash-based filename generation and uniqueness)
+- ✅ Plan 02: Unit tests for formatTransmissionError (all custom error type mappings)
+- ✅ Plan 02: Test data directory with documentation of fixture conventions
 - Need real .torrent files from amigos-share tracker for integration tests
 - Need integration tests for end-to-end MetaInfo processing
-- Need metrics for error type tracking (track InvalidContentError vs NetworkError frequency)
 
 ## Session Continuity
 
-Last session: 2026-02-01T14:38:28Z
-Stopped at: Completed 06-02-PLAN.md (Unit tests for transmission validation)
+Last session: 2026-02-01T14:38:42Z
+Stopped at: Completed 06-01-PLAN.md (Observability for torrent type tracking) and 06-02-PLAN.md (Unit tests)
 Resume file: None
 
-Next action: Continue Phase 6 with next plan (integration tests or metrics)
+Next action: Continue Phase 6 with next plan (integration tests or additional observability features)
