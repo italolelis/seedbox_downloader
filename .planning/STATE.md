@@ -5,15 +5,15 @@
 See: .planning/PROJECT.md (updated 2026-01-31)
 
 **Core value:** The application must run reliably 24/7 without crashes, resource leaks, or silent failures.
-**Current focus:** v1 milestone complete - ready for next milestone
+**Current focus:** v1.1 Torrent File Support - defining requirements
 
 ## Current Position
 
-Milestone: v1 shipped (2026-01-31)
-Status: Complete - all 10 requirements satisfied
-Last activity: 2026-01-31 — v1 milestone archived
+Milestone: v1.1 Torrent File Support
+Status: Defining requirements
+Last activity: 2026-01-31 — v1.1 milestone started
 
-Progress: [██████████] 100% (v1 complete)
+Progress: [░░░░░░░░░░] 0% (defining requirements)
 
 ## Accumulated Context
 
@@ -24,8 +24,9 @@ Ready for next milestone planning.
 
 ### Pending Todos
 
-- Define requirements for next milestone
-- Plan roadmap phases
+- Research Put.io API .torrent file content support
+- Define detailed requirements for v1.1
+- Create roadmap phases
 
 ### Blockers/Concerns
 
@@ -34,8 +35,8 @@ None.
 ## Session Continuity
 
 Last session: 2026-01-31
-Stopped at: v1 milestone complete - archived
+Stopped at: v1.1 milestone initialization - defining requirements
 Resume file: None
 
 ---
-*Last updated: 2026-01-31 after v1 completion*
+*Last updated: 2026-01-31 after v1.1 milestone start*

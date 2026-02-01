@@ -8,6 +8,17 @@ A Go-based automated downloader that orchestrates transfers from seedbox/torrent
 
 The application must run reliably 24/7 without crashes, resource leaks, or silent failures.
 
+## Current Milestone: v1.1 Torrent File Support
+
+**Goal:** Enable Sonarr/Radarr to download content from .torrent-only trackers (amigos-share) through Put.io proxy
+
+**Target features:**
+- Process base64-encoded .torrent file content from Transmission API MetaInfo field
+- Upload .torrent content directly to Put.io (no file persistence)
+- Explicit error logging when .torrent files cannot be processed
+- Test coverage for .torrent file handling
+- Observability for .torrent vs magnet link usage
+
 ## Requirements
 
 ### Validated
@@ -33,13 +44,21 @@ The application must run reliably 24/7 without crashes, resource leaks, or silen
 
 ### Active
 
-(No active requirements - ready for next milestone)
+- [ ] Handle base64-encoded .torrent file content in Transmission API MetaInfo field
+- [ ] Upload .torrent content to Put.io without file persistence
+- [ ] Log explicit errors when .torrent files cannot be processed
+- [ ] Add test coverage for .torrent file handling
+- [ ] Add observability metrics for torrent type (magnet vs file)
 
 ### Out of Scope
 
+- File persistence — .torrent files will not be saved to disk (v1.1 explicit constraint)
+- Watch folders for .torrent files — Defer to future milestone
+- Direct .torrent file upload API — Defer to future milestone
+- Deluge .torrent support — Webhook API remains Put.io only
 - Performance optimizations — Defer to future milestone (sequential ARR checks, polling latency, resume support)
 - Security hardening — Defer to future milestone (TLS warnings, credential redaction, webhook protection)
-- Test coverage — Defer to future milestone (state machine tests, integration tests, concurrency tests)
+- Test coverage expansion — Defer to future milestone (state machine tests, integration tests, concurrency tests)
 - Scaling improvements — Defer to future milestone (PostgreSQL migration, dynamic parallelism, rate limiting)
 
 ## Context
@@ -74,6 +93,7 @@ The application must run reliably 24/7 without crashes, resource leaks, or silen
 - **No Breaking Changes**: Existing deployments must work without config updates
 - **Tech Stack**: Go 1.23, existing dependencies only (no new major dependencies)
 - **Deployment**: Docker-based, CGO required for SQLite
+- **No File Persistence**: .torrent files must not be saved to disk (v1.1 requirement)
 
 ## Key Decisions
 
@@ -88,4 +108,4 @@ The application must run reliably 24/7 without crashes, resource leaks, or silen
 | Database validation with exponential backoff | Fail-fast on critical dependency with retry | ✓ Good - 3 attempts before exit, consistent with HTTP retries |
 
 ---
-*Last updated: 2026-01-31 after v1 milestone completion*
+*Last updated: 2026-01-31 after v1.1 milestone initialization*
