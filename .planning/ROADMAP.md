@@ -52,10 +52,11 @@ Plans:
   2. .torrent content is uploaded to correct parent directory (same logic as magnet links)
   3. Put.io automatically creates transfer when .torrent file is detected
   4. Upload failures return specific error messages (API error vs invalid content)
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 04-01: TBD during planning
+- [ ] 04-01-PLAN.md — Define custom error types in internal/transfer package
+- [ ] 04-02-PLAN.md — Extend Put.io client with AddTransferByBytes method
 
 #### Phase 5: Transmission API Handler
 **Goal**: Transmission API webhook accepts and processes .torrent file content
@@ -100,9 +101,9 @@ Phases execute in numeric order: 4 → 5 → 6
 | 1. Crash Prevention | v1 | 2/2 | Complete | 2026-01-31 |
 | 2. Resource Management | v1 | 2/2 | Complete | 2026-01-31 |
 | 3. Operational Hygiene | v1 | 2/2 | Complete | 2026-01-31 |
-| 4. Put.io Client Extension | v1.1 | 0/? | Not started | - |
+| 4. Put.io Client Extension | v1.1 | 0/2 | Ready | - |
 | 5. Transmission API Handler | v1.1 | 0/? | Not started | - |
 | 6. Observability & Testing | v1.1 | 0/? | Not started | - |
 
 ---
-*Last updated: 2026-02-01 after v1.1 roadmap creation*
+*Last updated: 2026-02-01 after Phase 4 planning*
