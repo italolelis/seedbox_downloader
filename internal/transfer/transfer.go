@@ -20,6 +20,7 @@ type DownloadClient interface {
 
 type TransferClient interface {
 	AddTransfer(ctx context.Context, url string, downloadDir string) (*Transfer, error)
+	AddTransferByBytes(ctx context.Context, torrentBytes []byte, filename string, downloadDir string) (*Transfer, error)
 	RemoveTransfers(ctx context.Context, transferIDs []string, deleteLocalData bool) error
 }
 

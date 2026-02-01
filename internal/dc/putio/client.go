@@ -1,6 +1,7 @@
 package putio
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
@@ -16,6 +17,8 @@ import (
 	"github.com/putdotio/go-putio"
 	"golang.org/x/oauth2"
 )
+
+const maxTorrentSize = 10 * 1024 * 1024 // 10MB max torrent file size
 
 type Client struct {
 	putioClient *putio.Client
@@ -143,6 +146,20 @@ func (c *Client) Authenticate(ctx context.Context) error {
 	return nil
 }
 
+// validateTorrentFilename validates that the filename has a .torrent extension.
+func validateTorrentFilename(filename string) error {
+	ext := filepath.Ext(filename)
+	if !strings.EqualFold(ext, ".torrent") {
+		return &transfer.InvalidContentError{
+			Filename: filename,
+			Reason:   "file extension must be .torrent (Put.io requires extension for transfer detection)",
+		}
+	}
+	return nil
+}
+
+// Deprecated: Use AddTransferByURL for magnet/HTTP(S) links or AddTransferByBytes for .torrent file content.
+// This method will be removed in a future version.
 func (c *Client) AddTransfer(ctx context.Context, url string, downloadDir string) (*transfer.Transfer, error) {
 	logger := logctx.LoggerFromContext(ctx).With("download_dir", downloadDir)
 
@@ -178,6 +195,80 @@ func (c *Client) AddTransfer(ctx context.Context, url string, downloadDir string
 		Source:             t.Source,
 		PeersConnected:     int64(t.PeersConnected),
 		PeersGettingFromUs: int64(t.PeersGettingFromUs),
+	}, nil
+}
+
+// AddTransferByBytes adds a transfer by uploading .torrent file bytes to Put.io.
+// The Put.io service automatically detects .torrent files and creates a transfer.
+func (c *Client) AddTransferByBytes(ctx context.Context, torrentBytes []byte, filename string, downloadDir string) (*transfer.Transfer, error) {
+	logger := logctx.LoggerFromContext(ctx).With("filename", filename, "download_dir", downloadDir)
+
+	// Validate file size
+	if len(torrentBytes) > maxTorrentSize {
+		return nil, &transfer.InvalidContentError{
+			Filename: filename,
+			Reason:   fmt.Sprintf("file size %d bytes exceeds maximum %d bytes", len(torrentBytes), maxTorrentSize),
+		}
+	}
+
+	// Validate file extension
+	if err := validateTorrentFilename(filename); err != nil {
+		return nil, err
+	}
+
+	// Resolve directory (same logic as magnet links)
+	var dirID int64
+	if downloadDir != "" {
+		var err error
+		dirID, err = c.findDirectoryID(ctx, downloadDir)
+		if err != nil {
+			return nil, &transfer.DirectoryError{
+				DirectoryName: downloadDir,
+				Reason:        "directory not found or inaccessible",
+				Err:           err,
+			}
+		}
+	}
+
+	// Convert bytes to io.Reader
+	reader := bytes.NewReader(torrentBytes)
+
+	logger.Info("uploading torrent file to Put.io", "size_bytes", len(torrentBytes))
+
+	// Upload to Put.io
+	upload, err := c.putioClient.Files.Upload(ctx, reader, filename, dirID)
+	if err != nil {
+		return nil, &transfer.NetworkError{
+			Operation:  "upload_torrent",
+			APIMessage: err.Error(),
+			Err:        err,
+		}
+	}
+
+	// Put.io automatically creates transfer for .torrent files
+	if upload.Transfer == nil {
+		return nil, &transfer.InvalidContentError{
+			Filename: filename,
+			Reason:   "Put.io did not create transfer (file may not be valid torrent)",
+		}
+	}
+
+	logger.Info("transfer created from torrent upload", "transfer_id", upload.Transfer.ID)
+
+	// Convert to internal transfer type (same pattern as existing AddTransfer)
+	return &transfer.Transfer{
+		ID:                 fmt.Sprintf("%d", upload.Transfer.ID),
+		Name:               upload.Transfer.Name,
+		Downloaded:         upload.Transfer.Downloaded,
+		Size:               int64(upload.Transfer.Size),
+		EstimatedTime:      upload.Transfer.EstimatedTime,
+		Status:             upload.Transfer.Status,
+		Progress:           float64(upload.Transfer.PercentDone),
+		Files:              make([]*transfer.File, 0),
+		Source:             upload.Transfer.Source,
+		PeersConnected:     int64(upload.Transfer.PeersConnected),
+		PeersGettingFromUs: int64(upload.Transfer.PeersGettingFromUs),
+		PeersSendingToUs:   int64(upload.Transfer.PeersSendingToUs),
 	}, nil
 }
 

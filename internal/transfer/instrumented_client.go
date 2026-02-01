@@ -105,6 +105,27 @@ func (c *InstrumentedTransferClient) AddTransfer(ctx context.Context, url string
 	return result, nil
 }
 
+// AddTransferByBytes adds a transfer from .torrent file bytes with telemetry.
+func (c *InstrumentedTransferClient) AddTransferByBytes(ctx context.Context, torrentBytes []byte, filename string, downloadDir string) (*Transfer, error) {
+	var result *Transfer
+
+	var err error
+
+	instrumentedErr := c.telemetry.InstrumentClientOperation(ctx, c.clientType, "add_transfer_by_bytes", func(ctx context.Context) error {
+		result, err = c.client.AddTransferByBytes(ctx, torrentBytes, filename, downloadDir)
+
+		return err
+	})
+
+	if instrumentedErr != nil {
+		return nil, instrumentedErr
+	}
+
+	c.telemetry.RecordTransfer(ctx, "add", "success")
+
+	return result, nil
+}
+
 // RemoveTransfers removes transfers with telemetry.
 func (c *InstrumentedTransferClient) RemoveTransfers(ctx context.Context, transferIDs []string, deleteLocalData bool) error {
 	err := c.telemetry.InstrumentClientOperation(ctx, c.clientType, "remove_transfers", func(ctx context.Context) error {
