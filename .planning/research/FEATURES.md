@@ -1,6 +1,6 @@
-# Feature Research: .torrent File Support
+# Feature Research: Logging Improvements
 
-**Domain:** Transmission RPC webhook with Put.io integration
+**Domain:** Production Go service observability (24/7 operations)
 **Researched:** 2026-02-01
 **Confidence:** HIGH
 
@@ -8,323 +8,233 @@
 
 ### Table Stakes (Users Expect These)
 
-Features Sonarr/Radarr expect when sending .torrent files to a Transmission-compatible download client. Missing these = integration broken.
+Features operators assume exist in a production service. Missing these = service is hard to operate.
 
 | Feature | Why Expected | Complexity | Notes |
 |---------|--------------|------------|-------|
-| Parse base64-encoded MetaInfo field | Transmission RPC spec requires either filename or metainfo field for torrent-add | LOW | Standard base64 decoding, field already present in TransmissionRequest struct (line 68) |
-| Upload .torrent content to Put.io | Put.io client supports file upload via io.Reader (FilesService.Upload) | LOW | Use existing go-putio library, no new dependencies |
-| Return success response with torrent ID | Transmission RPC spec requires "success" result with torrent details in arguments | LOW | Already implemented for magnet links (lines 250-260), extend to .torrent files |
-| Return error response for invalid .torrent | Transmission returns "invalid or corrupt torrent file" when metainfo cannot be parsed | LOW | Standard error handling pattern already exists |
-| Support both FileName and MetaInfo in same endpoint | Either field can be provided per Transmission spec, not both simultaneously | LOW | Current code only handles FileName (line 239), add conditional for MetaInfo |
+| Structured JSON logging | Standard for production systems, machine-parseable, integrates with log aggregators (Datadog, Grafana, etc.) | LOW | **Already implemented** via slog with JSONHandler |
+| Consistent log levels | Operators filter by severity; inconsistent levels create noise and hide signals | MEDIUM | Partial - needs audit of existing log.Info/Debug/Warn/Error usage |
+| Lifecycle logging | Operators need to see: startup sequence, readiness, shutdown gracefully | MEDIUM | Partial - main.go has basic startup, needs clear component initialization order |
+| Error context | Every error needs: what failed, why, what was being attempted | LOW | Present but inconsistent - some errors have transfer_id, some don't |
+| Request correlation | Follow a single entity (torrent/transfer) through entire pipeline | HIGH | Missing - no request_id or correlation_id for torrent flow tracking |
+| Trace context in logs | Logs should include trace_id/span_id from OpenTelemetry spans for cross-system correlation | MEDIUM | Missing - existing OTel integration lacks slog bridge |
+| Log level configurability | Change verbosity at runtime or via env var without restart | LOW | **Already implemented** via LOG_LEVEL env var and slog.LevelVar |
+| Operation logging | Key operations (download start, import complete, cleanup) must be visible at INFO | LOW | Partial - exists but mixed with noise |
+| Error stack traces | Critical errors (panics) need stack traces; regular errors don't | LOW | **Already implemented** for panics via debug.Stack() |
 
 ### Differentiators (Competitive Advantage)
 
-Features that improve operational visibility beyond basic .torrent file support.
+Features that make logs **excellent** for operators. Not required, but transform debugging experience.
 
 | Feature | Value Proposition | Complexity | Notes |
 |---------|-------------------|------------|-------|
-| Log torrent type (magnet vs file) explicitly | Operators need visibility into which content type is being used for debugging tracker-specific issues | LOW | Add log field "torrent_type": "magnet" or "file" in handleTorrentAdd |
-| OpenTelemetry metric for torrent type distribution | Track magnet vs .torrent file usage over time to understand tracker behavior patterns | LOW | Add counter metric with "type" label (magnet/file), existing telemetry infrastructure in place |
-| Explicit log when MetaInfo field is empty | Silent failures are project anti-pattern (v1 core value: no silent failures) | LOW | Log at Info level when MetaInfo present, Debug when using magnet |
-| Include .torrent file size in logs | Helps identify bloated .torrent files from certain trackers | LOW | Log base64-decoded byte count before upload |
-| Log Put.io file ID after .torrent upload | Provides traceability for debugging transfer failures | LOW | Put.io Upload response contains File.ID field |
+| Transfer lifecycle narrative | Single grep for transfer_id shows complete story: discovered → claimed → downloading → imported → cleaned up | MEDIUM | Requires consistent transfer_id logging across all components |
+| Startup sequence reporting | Clear phases: "Config loaded → Database validated → Client authenticated → Server listening → Ready" | LOW | Makes troubleshooting startup failures trivial |
+| Operation grouping | Logs use consistent "operation" field (e.g., "produce_transfers", "watch_imported") to group related log lines | LOW | Partially exists in panic handlers, needs expansion |
+| Progress indicators | Long operations (file downloads, polling) log periodic progress | LOW | Partially exists - download progress at DEBUG level |
+| State transitions | Explicit logs when transfers change state (queued → downloading → downloaded → imported) | LOW | Exists via channels, could be more explicit |
+| Resource utilization | Log active download count, goroutine count at intervals | MEDIUM | Metrics exist via OTel, could add periodic INFO logs |
+| Silent operations visibility | Periodic "heartbeat" log shows service is alive even when idle | LOW | No polling activity logged at INFO when no transfers found |
+| Component readiness | Each component logs when ready: "TransferOrchestrator ready", "Downloader ready", "API server listening" | LOW | Missing explicit readiness logs |
+| Dependency health checks | Log success/failure of external dependencies: Deluge/Put.io, Sonarr/Radarr, Database | MEDIUM | Auth logs exist, ongoing health unclear |
+| Log sampling for high-volume | Debug logs that fire per-file should be sampled to avoid noise | MEDIUM | Currently no sampling - could flood at DEBUG level |
 
 ### Anti-Features (Commonly Requested, Often Problematic)
 
-Features that seem good but violate project constraints or create technical debt.
+Features that seem good but create problems in production.
 
 | Feature | Why Requested | Why Problematic | Alternative |
 |---------|---------------|-----------------|-------------|
-| Persist .torrent files to disk | "We should save .torrent files for backup" | Violates v1.1 explicit constraint: "No File Persistence" (PROJECT.md line 96) | Put.io stores the .torrent content, no local persistence needed |
-| Watch folder for .torrent files | "Let users drop .torrent files into a folder" | Not how Sonarr/Radarr work (they push via API), scope creep | Defer to future milestone (PROJECT.md line 56) |
-| Direct .torrent file upload API | "Bypass Sonarr/Radarr with direct upload" | Adds new API surface area, not needed for milestone goal | Defer to future milestone (PROJECT.md line 57) |
-| Deluge .torrent support | "Support .torrent files for both clients" | Webhook API is Put.io only, Deluge not used in webhook path | Explicitly out of scope (PROJECT.md line 58) |
-| Cache decoded .torrent content | "Avoid re-decoding same .torrent" | Sonarr/Radarr send each .torrent once, no repeat requests | Unnecessary complexity, YAGNI |
+| Log every file download at INFO | "I want to see progress" | Generates 100+ logs per transfer for multi-file torrents, drowns signal in noise | Log transfer-level events at INFO (start, complete), per-file at DEBUG |
+| Log every polling tick | "I want to know service is working" | Creates noise every 10 minutes even when nothing happens, obscures real events | Log "watching transfers" at INFO only when transfers found; heartbeat log every hour when idle |
+| Duplicate logs in multiple formats | "I want human-readable AND JSON" | Doubles log volume, complicates aggregation, slows I/O | Use JSON in production (betterstack.com best practice), text locally via LOG_LEVEL |
+| Log request/response bodies | "I want to debug API issues" | Exposes credentials (API keys, tokens), massive log volume, PII concerns | Log operation metadata (method, status, duration) not payloads; use sampling for debugging |
+| WARN level for expected conditions | "I want to highlight important info" | Triggers false alerts, creates alarm fatigue, WARN should mean action needed | Use INFO for normal operations, WARN only for conditions requiring investigation |
+| Pass loggers in context.Context | "I want logger available everywhere" | Creates implicit runtime dependency, tight coupling, not compiler-enforced (Dave Cheney anti-pattern) | Inject logger as explicit dependency, use logctx only for enrichment |
+| log.Fatal in libraries/components | "I want to stop on error" | Prevents graceful shutdown, no cleanup, same as panic (Dave Cheney warning) | Return errors, let main() decide to exit |
 
 ## Feature Dependencies
 
 ```
-[Base64 decode MetaInfo]
-    └──requires──> [Validate .torrent content]
-                       └──requires──> [Upload to Put.io via io.Reader]
-                                          └──requires──> [Return Transfer ID]
+Trace Context in Logs
+    └──requires──> OpenTelemetry spans (already exists)
+    └──requires──> slog handler wrapper (otelslog bridge)
 
-[Log torrent type] ──enhances──> [All torrent-add operations]
+Request Correlation
+    └──requires──> Trace Context in Logs
+    └──enhances──> Transfer lifecycle narrative
 
-[OpenTelemetry metric] ──requires──> [Log torrent type] (use same type determination logic)
+Transfer Lifecycle Narrative
+    └──requires──> Consistent log levels
+    └──requires──> Transfer_id in all logs
+    └──enhances──> Operation grouping
 
-[Error handling] ──blocks──> [Upload to Put.io] (must handle before attempting upload)
+Startup Sequence Reporting
+    └──requires──> Component readiness
+    └──conflicts──> Silent operations (startup should be explicit)
+
+Log Sampling
+    └──requires──> Consistent log levels (only sample DEBUG)
+    └──conflicts──> Transfer lifecycle narrative (don't sample correlation logs)
 ```
 
 ### Dependency Notes
 
-- **Base64 decode requires validation:** Cannot upload invalid .torrent content to Put.io, must validate first
-- **Upload requires io.Reader:** go-putio FilesService.Upload expects io.Reader, use bytes.NewReader after decode
-- **Logging enhances observability:** Torrent type logging independent of functional requirements but critical for operational visibility (project core value)
-- **Error handling blocks upload:** Must detect invalid base64 or corrupt .torrent before API call to Put.io
+- **Trace Context requires OpenTelemetry spans:** Already exists, just need bridge handler (go.opentelemetry.io/contrib/bridges/otelslog)
+- **Request Correlation enhances Transfer lifecycle narrative:** Adding trace_id/span_id to logs makes grep-ability even better
+- **Transfer Lifecycle Narrative requires consistent transfer_id:** Must ensure every log from discovery → cleanup includes transfer_id
+- **Startup Sequence conflicts with Silent operations:** Startup should be explicit and verbose (INFO level), normal operations should be quiet unless action required
+- **Log Sampling conflicts with lifecycle narrative:** Don't sample logs that have transfer_id correlation - operators need complete narrative
 
 ## MVP Definition
 
-### Launch With (v1.1)
+### Launch With (v1.2 - This Milestone)
 
-Minimum viable features to enable .torrent-only tracker (amigos-share) support.
+Minimum viable improvement to make logs tell the application's story.
 
-- [x] Parse MetaInfo field from Transmission RPC torrent-add request
-- [x] Base64 decode MetaInfo content
-- [x] Validate .torrent content is not empty after decode
-- [x] Upload .torrent content to Put.io using FilesService.Upload
-- [x] Return Transmission-compatible success response with Transfer ID
-- [x] Return error response for invalid/corrupt .torrent content
-- [x] Log explicitly whether magnet or .torrent file is being processed
-- [x] Add OpenTelemetry counter metric for torrent type (magnet vs file)
+- [x] **Consistent log levels audit** - Review all existing logs, ensure INFO = lifecycle events, DEBUG = details, WARN/ERROR = problems
+- [x] **Startup sequence narrative** - Clear initialization order: config → telemetry → database → client auth → server → ready
+- [x] **Transfer lifecycle logging** - Ensure transfer_id appears in every log from discovery → cleanup
+- [x] **Component readiness logs** - Each major component logs "ready" at INFO level after initialization
+- [x] **Trace context in logs** - Add OpenTelemetry trace_id/span_id to logs via otelslog bridge
+- [x] **Operation field consistency** - Add "operation" field to all logs (already in panic handlers, expand)
+- [x] **Remove noise** - Eliminate redundant/confusing logs that don't add value
 
-### Add After Validation (v1.2+)
+### Add After Validation (v1.3+)
 
-Features to add once core .torrent support is working in production.
+Features to add once core logging improvements are validated.
 
-- [ ] Log .torrent file size (decoded bytes) — helps identify bloated .torrent files
-- [ ] Log Put.io file ID after upload — improves traceability for debugging
-- [ ] Test coverage for .torrent file handling — ensure regression prevention
-- [ ] Test coverage for error cases (invalid base64, corrupt .torrent) — prevent silent failures
+- [ ] **Periodic heartbeat logs** - Log "idle, watching for transfers" every hour when no activity (trigger: first week of operation)
+- [ ] **Resource utilization logs** - Periodic INFO log with active downloads, goroutines, memory (trigger: production monitoring gaps identified)
+- [ ] **Dependency health checks** - Periodic validation of Sonarr/Radarr/seedbox connectivity (trigger: operational need)
+- [ ] **State transition logs** - Explicit "transfer state changed: downloading → downloaded" logs (trigger: state machine debugging)
 
 ### Future Consideration (v2+)
 
-Features to defer until product-market fit is established or new use cases emerge.
+Features to defer until production experience guides priorities.
 
-- [ ] Watch folder for .torrent files — requires new architecture (file system monitoring)
-- [ ] Direct .torrent file upload API — requires new endpoint, authentication considerations
-- [ ] Deluge .torrent support — requires extending Deluge client, not needed for current use case
-- [ ] .torrent file validation (bencode parsing) — Put.io validates on their end, duplicate effort
-- [ ] Resume support for failed .torrent uploads — low priority, Sonarr/Radarr will retry
+- [ ] **Log sampling** - Sample per-file DEBUG logs to reduce volume (why defer: wait to see if DEBUG volume is actually problematic)
+- [ ] **Dynamic log levels** - Change log level at runtime via HTTP API or signal (why defer: no operational need yet, adds complexity)
+- [ ] **Structured error taxonomy** - Error codes/types for programmatic alerting (why defer: need production experience to identify error patterns)
 
 ## Feature Prioritization Matrix
 
 | Feature | User Value | Implementation Cost | Priority |
 |---------|------------|---------------------|----------|
-| Parse MetaInfo field | HIGH | LOW | P1 |
-| Base64 decode MetaInfo | HIGH | LOW | P1 |
-| Upload to Put.io | HIGH | LOW | P1 |
-| Return success response | HIGH | LOW | P1 |
-| Error handling for invalid .torrent | HIGH | LOW | P1 |
-| Log torrent type explicitly | HIGH | LOW | P1 |
-| OpenTelemetry metric for type | MEDIUM | LOW | P1 |
-| Log .torrent file size | LOW | LOW | P2 |
-| Log Put.io file ID | LOW | LOW | P2 |
-| Test coverage for .torrent handling | HIGH | MEDIUM | P2 |
-| Test coverage for error cases | MEDIUM | MEDIUM | P2 |
-| Watch folder support | LOW | HIGH | P3 |
-| Direct upload API | LOW | HIGH | P3 |
-| Deluge .torrent support | LOW | MEDIUM | P3 |
+| Consistent log levels audit | HIGH | LOW | P1 |
+| Startup sequence narrative | HIGH | LOW | P1 |
+| Transfer lifecycle logging | HIGH | MEDIUM | P1 |
+| Trace context in logs | HIGH | MEDIUM | P1 |
+| Component readiness logs | MEDIUM | LOW | P1 |
+| Operation field consistency | MEDIUM | LOW | P1 |
+| Remove noise | HIGH | LOW | P1 |
+| Periodic heartbeat logs | MEDIUM | LOW | P2 |
+| Resource utilization logs | MEDIUM | MEDIUM | P2 |
+| Dependency health checks | MEDIUM | HIGH | P2 |
+| State transition logs | LOW | MEDIUM | P2 |
+| Log sampling | LOW | MEDIUM | P3 |
+| Dynamic log levels | LOW | HIGH | P3 |
+| Structured error taxonomy | MEDIUM | HIGH | P3 |
 
 **Priority key:**
-- P1: Must have for launch (v1.1 blocker)
-- P2: Should have, add when possible (v1.2)
-- P3: Nice to have, future consideration (v2+)
+- P1: Must have for milestone - makes logs tell the story
+- P2: Should have - adds operational value but not critical for narrative
+- P3: Nice to have - defer until production need identified
 
-## Technical Specification
+## Current State Analysis
 
-### Transmission RPC Protocol
+Based on codebase examination:
 
-**Source:** [Transmission RPC Specification](https://github.com/transmission/transmission/blob/main/docs/rpc-spec.md)
+**What's good:**
+- ✓ Structured JSON logging via slog (log/slog package)
+- ✓ Log level configuration via env var (LOG_LEVEL)
+- ✓ Transfer_id in most logs (downloader.go, transfer.go)
+- ✓ Panic recovery with stack traces (all goroutines)
+- ✓ Context-aware logging (logctx.LoggerFromContext)
+- ✓ OpenTelemetry metrics instrumentation exists
 
-#### torrent-add Method
+**What needs improvement:**
+- ✗ No trace_id/span_id in logs (OTel exists but not bridged to slog)
+- ✗ Inconsistent log levels (mixing INFO/DEBUG for similar events)
+- ✗ Startup sequence is implicit, not narrative ("starting..." then jumps to "waiting for downloads")
+- ✗ No explicit component readiness logs
+- ✗ "operation" field only in panic logs, not consistent
+- ✗ Some logs lack transfer_id context (notification loop, main.go)
+- ✗ Polling activity logged at INFO even when no transfers found (noise)
 
-The `torrent-add` method accepts either `filename` or `metainfo` parameter:
+## Observability Patterns from Research
 
-| Parameter | Type | Description | Example |
-|-----------|------|-------------|---------|
-| `filename` | string | URL or magnet link to torrent | `magnet:?xt=urn:btih:...` |
-| `metainfo` | string | Base64-encoded .torrent file content | `ZDg6YW5ub3VuY2UzM...` |
+### Production Best Practices (2026)
 
-**Key behaviors:**
-- Either `filename` or `metainfo` must be provided, not both
-- `metainfo` contains raw .torrent file bytes encoded as base64
-- JSON doesn't allow binary data, hence base64 encoding requirement
-- When metainfo is invalid: return `{"result":"invalid or corrupt torrent file"}`
+1. **Use JSON format in production** - TextHandler for development, JSONHandler for production (Better Stack, go.dev)
+2. **Add contextual information** - Common attributes (trace_id, transfer_id) should appear in all related logs (go.dev blog)
+3. **Include stack traces for errors** - Only for unexpected failures, not business errors (Better Stack)
+4. **Maintain consistency** - Standard format across application (Better Stack)
+5. **Test before production** - Verify logs contain necessary info, not too verbose (Better Stack)
 
-#### Response Format
+### Lifecycle Logging Patterns
 
-Success response:
-```json
-{
-  "result": "success",
-  "arguments": {
-    "torrents": [
-      {
-        "id": 123,
-        "name": "Example Torrent",
-        "hashString": "abc123..."
-      }
-    ]
-  }
-}
-```
+1. **Component ordering** - Shutdown in reverse order from startup (Kubernetes graceful shutdown)
+2. **Readiness indicators** - Each component explicitly logs ready state (go-lifecycle pattern)
+3. **Health checks** - Validate dependencies on startup with retry (github.com/g4s8/go-lifecycle)
+4. **Graceful shutdown** - Log shutdown phases: stopping accepting work → draining → cleanup → exit (fx.Lifecycle pattern)
 
-Error response:
-```json
-{
-  "result": "invalid or corrupt torrent file"
-}
-```
+### Trace Correlation Patterns
 
-### Put.io API Integration
+1. **OpenTelemetry bridge** - Use otelslog to inject trace_id/span_id automatically (go.opentelemetry.io/contrib/bridges/otelslog)
+2. **Context propagation** - Use InfoContext(ctx, ...) not Info(...) to preserve trace context (OpenTelemetry docs)
+3. **Unified naming** - Consistent field names (trace_id, span_id) across all logs (oneuptime.com guide)
+4. **Cross-system correlation** - Logs + traces combined enable full request lifecycle (OpenTelemetry concepts)
 
-**Source:** [go-putio package documentation](https://pkg.go.dev/github.com/putdotio/go-putio)
+### Anti-Patterns to Avoid
 
-#### Upload Method
+1. **Package-level loggers** - Creates tight coupling, breaks dependency injection (Dave Cheney)
+2. **Logger in context** - Implicit runtime dependency, not compiler-enforced (Dave Cheney)
+3. **Excessive WARN level** - WARN should mean action needed, not "interesting info" (Dave Cheney)
+4. **log.Fatal in libraries** - Prevents graceful shutdown, equivalent to panic (Dave Cheney)
+5. **Excessive verbosity** - High signal-to-noise ratio obscures problems (Better Stack, Datadog)
+6. **Unsampled high-volume** - Per-file logs at INFO create noise (Better Stack sampling guidance)
 
-The `FilesService.Upload` method uploads file content:
+## Competitor Analysis
 
-```go
-func (f *FilesService) Upload(
-    ctx context.Context,
-    r io.Reader,        // File content stream
-    filename string,    // File name (e.g., "download.torrent")
-    parent int64        // Parent folder ID (-1 for default)
-) (Upload, error)
-```
+While this is an internal service, comparable production systems (monitoring agents, data pipelines, long-running workers) demonstrate these patterns:
 
-**Response:**
-```go
-type Upload struct {
-    File     *File     // Populated for non-torrent files
-    Transfer *Transfer // Populated when uploaded file is a .torrent
-}
-```
-
-**Key behaviors:**
-- When uploaded file is `.torrent`, Put.io automatically creates a Transfer
-- `Transfer` field contains transfer ID and status
-- `File` field is nil for torrent uploads
-- Upload reads content into memory, suitable for .torrent files (typically <1MB)
-
-### Sonarr/Radarr Behavior
-
-**Sources:**
-- [Sonarr Download Clients](https://buildarr.github.io/plugins/sonarr/configuration/download-clients/)
-- [Radarr Settings](https://wiki.servarr.com/sonarr/settings)
-
-**Observed behavior:**
-- Sonarr/Radarr detect if indexer returns magnet link or .torrent file
-- For magnet links: send `filename` parameter with magnet URI
-- For .torrent files: download .torrent, base64 encode, send `metainfo` parameter
-- Expect Transmission-compatible response format
-- Retry on error responses with exponential backoff
-
-### Error Handling
-
-**Sources:**
-- [Transmission RPC Error Responses](https://forum.transmissionbt.com/viewtopic.php?t=8023)
-- Project requirement: "No silent failures" (PROJECT.md line 9)
-
-| Error Condition | Detection | Response | HTTP Status | Log Level |
-|----------------|-----------|----------|-------------|-----------|
-| MetaInfo field empty | `req.Arguments.MetaInfo == ""` | Process as magnet (FileName field) | 200 OK | Debug |
-| Both MetaInfo and FileName empty | Both fields empty string | "filename or metainfo required" | 400 Bad Request | Error |
-| Invalid base64 in MetaInfo | `base64.StdEncoding.DecodeString` error | "invalid base64 encoding" | 400 Bad Request | Error |
-| Decoded .torrent is empty | `len(decodedBytes) == 0` | "invalid or corrupt torrent file" | 400 Bad Request | Error |
-| Put.io upload fails | `FilesService.Upload` returns error | Forward Put.io error message | 400 Bad Request | Error |
-| Put.io Upload.Transfer is nil | Upload succeeds but Transfer field nil | "failed to create transfer from torrent" | 500 Internal Server Error | Error |
-
-### Observability Requirements
-
-**Source:** Existing telemetry infrastructure (internal/telemetry/)
-
-#### Logging
-
-Structured logging with fields:
-
-```go
-logger.Info("processing torrent add request",
-    "torrent_type", "file",              // "magnet" or "file"
-    "has_metainfo", true,                // boolean
-    "metainfo_size_bytes", 45123,        // decoded byte count (optional, P2)
-    "putio_file_id", 789,                // Put.io file ID (optional, P2)
-    "putio_transfer_id", 456,            // Put.io transfer ID
-)
-```
-
-#### OpenTelemetry Metrics
-
-Counter metric for torrent type distribution:
-
-```go
-meter := otel.GetMeterProvider().Meter("seedbox_downloader")
-torrentAddCounter, _ := meter.Int64Counter(
-    "torrent_add_total",
-    metric.WithDescription("Total torrent-add requests by type"),
-)
-
-torrentAddCounter.Add(ctx, 1,
-    metric.WithAttributes(
-        attribute.String("type", "file"), // "magnet" or "file"
-    ),
-)
-```
-
-## Implementation Notes
-
-### Existing Code Analysis
-
-**Current behavior (internal/http/rest/transmission.go:230-248):**
-- Only handles `FileName` field (line 239)
-- When `MetaInfo == ""`, processes as magnet link
-- When `MetaInfo != ""`, silently ignores (falls through to nil torrent)
-- Returns success response with nil torrent, causing nil pointer on JSON marshal
-
-**Required changes:**
-1. Add conditional check for `MetaInfo != ""`
-2. Base64 decode MetaInfo content
-3. Create `bytes.NewReader` from decoded content
-4. Call `h.dc.UploadTorrent(ctx, reader, h.label)` (new method)
-5. Log torrent type for observability
-6. Add OpenTelemetry counter metric
-
-**New method required in Put.io client:**
-```go
-// UploadTorrent uploads .torrent file content to Put.io and returns Transfer
-func (c *Client) UploadTorrent(ctx context.Context, torrentContent io.Reader, downloadDir string) (*transfer.Transfer, error)
-```
-
-### Backward Compatibility
-
-**Constraint:** Must not change existing APIs, configuration, or database schema (PROJECT.md line 92)
-
-**Verification:**
-- ✓ No changes to TransmissionRequest struct (MetaInfo field already exists)
-- ✓ No changes to configuration (uses existing Put.io client)
-- ✓ No database schema changes (transfers stored same way)
-- ✓ Existing magnet link path unchanged (conditional preserves existing behavior)
-- ✓ Existing deployments work without config updates (feature is additive)
-
-### Testing Strategy
-
-**P2 - Defer to v1.2:**
-- Unit test: Valid base64 .torrent content → successful upload
-- Unit test: Invalid base64 → error response
-- Unit test: Empty decoded content → error response
-- Unit test: Put.io upload failure → error response
-- Unit test: Magnet link still works (regression prevention)
-- Integration test: End-to-end .torrent file flow with real Put.io API (staging environment)
+| Pattern | Datadog Agent | Prometheus Exporter | This Service |
+|---------|---------------|---------------------|--------------|
+| Startup narrative | Yes - component init sequence logged | Yes - config → validation → ready | Partial - needs explicit phases |
+| Trace correlation | Yes - trace_id in all logs | N/A (metrics-only) | No - missing otelslog bridge |
+| Component readiness | Yes - "datadog-agent is ready" | Yes - "exporter started successfully" | No - implicit readiness |
+| Heartbeat logs | Yes - periodic health at INFO | Yes - scrape success logged | No - silent when idle |
+| Operation grouping | Yes - consistent operation tags | Yes - collector component tags | Partial - only in panic handlers |
 
 ## Sources
 
-### Official Documentation (HIGH confidence)
-- [Transmission RPC Specification](https://github.com/transmission/transmission/blob/main/docs/rpc-spec.md) - Official protocol spec
-- [go-putio Package Documentation](https://pkg.go.dev/github.com/putdotio/go-putio) - Official Go client library
-- [Transmission RPC Forum - MetaInfo Usage](https://forum.transmissionbt.com/viewtopic.php?t=8023) - Official forum discussion on metainfo parameter
+**Go slog Best Practices:**
+- [Logging in Go with Slog: The Ultimate Guide | Better Stack Community](https://betterstack.com/community/guides/logging/logging-in-go/)
+- [Structured Logging with slog - The Go Programming Language](https://go.dev/blog/slog)
+- [Logging in Go with Slog: A Practitioner's Guide · Dash0](https://www.dash0.com/guides/logging-in-go-with-slog)
+- [Effective Logging in Go: Best Practices and Implementation Guide - DEV Community](https://dev.to/fazal_mansuri_/effective-logging-in-go-best-practices-and-implementation-guide-23hp)
 
-### Ecosystem Documentation (MEDIUM confidence)
-- [Sonarr Download Clients](https://buildarr.github.io/plugins/sonarr/configuration/download-clients/) - Community documentation
-- [Sonarr Settings](https://wiki.servarr.com/sonarr/settings) - Official Servarr wiki
-- [OpenTelemetry Metrics](https://opentelemetry.io/docs/concepts/signals/metrics/) - Official OTel documentation
+**Lifecycle & Graceful Shutdown:**
+- [How to shutdown a Go application gracefully | Josemy's blog](https://josemyduarte.github.io/2023-04-24-golang-lifecycle/)
+- [How to Implement Graceful Shutdown in Go for Kubernetes](https://oneuptime.com/blog/post/2026-01-07-go-graceful-shutdown-kubernetes/view)
+- [lifecycle package - github.com/g4s8/go-lifecycle](https://pkg.go.dev/github.com/g4s8/go-lifecycle)
 
-### Implementation Examples (MEDIUM confidence)
-- [transmission-rpc Python client](https://transmission-rpc.readthedocs.io/en/v3.3.0/_modules/transmission_rpc/client.html) - Reference implementation showing metainfo usage
-- [Put.io API clients](https://github.com/putdotio/go-putio) - Official Go client showing upload patterns
+**Trace Context & Correlation:**
+- [How to Set Up Structured Logging in Go with OpenTelemetry](https://oneuptime.com/blog/post/2026-01-07-go-structured-logging-opentelemetry/view)
+- [OpenTelemetry Slog [otelslog]: Golang Bridge Setup & Examples | Uptrace](https://uptrace.dev/guides/opentelemetry-slog)
+- [Context propagation | OpenTelemetry](https://opentelemetry.io/docs/concepts/context-propagation/)
+- [Traces | OpenTelemetry](https://opentelemetry.io/docs/concepts/signals/traces/)
+
+**Anti-Patterns:**
+- [The package level logger anti pattern | Dave Cheney](https://dave.cheney.net/2017/01/23/the-package-level-logger-anti-pattern)
+- [Logging Best Practices: 12 Dos and Don'ts | Better Stack Community](https://betterstack.com/community/guides/logging/logging-best-practices/)
+
+**Signal-to-Noise Ratio:**
+- [How to Optimize Log Volume and Reduce Noise at Scale | Datadog](https://www.datadoghq.com/knowledge-center/log-optimization/)
+- [Monitoring: Turning Noise into Signal](https://accu.org/journals/overload/26/144/oldwood_2488/)
 
 ---
-*Feature research for: v1.1 .torrent File Support*
+*Feature research for: Logging Improvements (v1.2)*
 *Researched: 2026-02-01*
-*Confidence: HIGH - All core findings verified against official documentation*
+*Confidence: HIGH (verified with authoritative sources + codebase analysis)*

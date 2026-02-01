@@ -1,230 +1,278 @@
 # Project Research Summary
 
-**Project:** .torrent File Content Support for Transmission API Proxy
-**Domain:** Webhook-triggered torrent transfer proxy
+**Project:** Seedbox Downloader Logging Improvements
+**Domain:** Production Go service observability (24/7 event-driven operations)
 **Researched:** 2026-02-01
 **Confidence:** HIGH
 
 ## Executive Summary
 
-This project extends an existing Transmission RPC webhook that proxies torrent transfers to Put.io. Currently it only supports magnet links via the `filename` parameter. The goal is to add support for .torrent file content sent as base64-encoded data in the `metainfo` parameter, enabling compatibility with .torrent-only trackers (specifically amigos-share).
+The seedbox downloader is a production Go service with existing structured logging (slog) and OpenTelemetry tracing infrastructure. The research reveals a mature foundation that needs strategic enhancements rather than wholesale replacement. The primary opportunity is bridging the gap between existing OpenTelemetry traces and slog output using the official otelslog bridge, which will automatically inject trace_id and span_id into all logs for correlation.
 
-The recommended approach is straightforward: decode base64 MetaInfo, validate the torrent content, and upload to Put.io using `Files.Upload()` instead of `Transfers.Add()`. The Put.io SDK automatically detects .torrent files and creates transfers when the filename ends in `.torrent`. Implementation requires no new dependencies beyond Go standard library (`encoding/base64`, `bytes`), though adding bencode validation (via `jackpal/bencode-go` or `zeebo/bencode`) is strongly recommended to distinguish decoding failures from corrupt torrents. The entire flow operates in-memory with no file persistence, adhering to project constraints.
+The recommended approach is incremental enhancement through four phases: (1) add the otelslog bridge for automatic trace correlation, (2) audit and fix context propagation to eliminate logs missing trace IDs, (3) standardize log levels and add structured lifecycle logging, and (4) implement dynamic log level controls for production debugging. This approach preserves the existing investment in slog and OpenTelemetry while addressing the critical gaps: missing trace correlation, inconsistent log levels, and inadequate lifecycle visibility.
 
-The primary risk is incorrect base64 variant selection (StdEncoding vs RawStdEncoding vs URLEncoding) causing silent failures. Prevention requires testing with actual Sonarr/Radarr webhooks to verify which encoding they use. Secondary risks include memory exhaustion from large .torrent files (mitigated by request size limits) and breaking backward compatibility with magnet links (prevented by proper control flow with explicit MetaInfo vs FileName precedence). The architecture uses type assertion to access Put.io-specific `UploadTorrent()` method without polluting the `TransferClient` interface, maintaining clean separation between implementations.
+Key risks center on performance degradation from excessive logging, log cardinality explosion driving costs, and breaking existing log consumers (dashboards, alerts). Mitigation requires careful log level discipline (INFO for lifecycle only, DEBUG for details), sampling high-frequency operations, and treating log field names as an API contract with deprecation periods for any schema changes.
 
 ## Key Findings
 
 ### Recommended Stack
 
-The implementation requires zero new dependencies for core functionality, leveraging Go standard library and the existing Put.io SDK. Base64 decoding uses `encoding/base64.StdEncoding` (RFC 4648 compliant), bytes are wrapped in `bytes.NewReader` for the io.Reader interface, and `github.com/putdotio/go-putio` v1.7.2's `Files.Upload()` method handles the upload. The SDK automatically detects .torrent files by extension and populates the Transfer field in the Upload response. Optional but strongly recommended: add bencode validation with `jackpal/bencode-go` or `zeebo/bencode` to provide specific error messages distinguishing invalid base64 from corrupt torrent structure.
+The research strongly validates the existing technology choices and recommends a single strategic addition: the official OpenTelemetry slog bridge. The current stack (slog for structured logging, OpenTelemetry v1.38.0 for tracing, Chi router for HTTP) is production-ready and follows 2026 best practices.
 
 **Core technologies:**
-- Go stdlib `encoding/base64`: Decode base64-encoded .torrent content — built-in, RFC 4648 compliant, zero dependencies
-- Go stdlib `bytes`: Convert decoded bytes to io.Reader — built-in, efficient for in-memory operations
-- `github.com/putdotio/go-putio` v1.7.2: Upload .torrent content via Files.Upload() — already in use, supports auto-detection of torrent files
+- **go.opentelemetry.io/contrib/bridges/otelslog** (v0.14.0+): Automatic trace context injection — Official OTel bridge that adds trace_id/span_id to all log entries with <1% overhead. This is the single most valuable addition, enabling correlation between logs and distributed traces without code changes.
+- **log/slog** (Go 1.23 stdlib): Structured JSON logging — Already in use, no changes needed. Standard library choice ensures long-term stability and zero external dependencies for core logging.
+- **OpenTelemetry** (v1.38.0): Distributed tracing — Already in use, just needs log integration via otelslog bridge. Existing HTTP middleware and instrumented clients provide trace context that logs currently don't capture.
 
-**Optional validation:**
-- `jackpal/bencode-go` or `zeebo/bencode`: Parse torrent structure for validation — enables specific error messages, prevents blind uploads
+**Optional enhancements:**
+- **github.com/go-chi/httplog**: HTTP request logging middleware for Chi router — Zero dependencies, built-in request ID generation, automatic log level by status code (5xx=error, 4xx=warn, 2xx=info).
+- **github.com/golang-cz/devslog**: Pretty console output for local development — Should NOT be used in production, only for improving local debugging experience.
+
+**Anti-recommendations (what NOT to use):**
+- Custom trace context handlers — Use official otelslog bridge instead
+- Third-party community bridges (e.g., github.com/go-slog/otelslog) — Prefer official go.opentelemetry.io package
+- TextHandler in production — Use JSONHandler for machine-parseable logs
+- Multiple logger instances — Single logger with handler composition is clearer
 
 ### Expected Features
 
-The feature set focuses on core .torrent support with strong observability to distinguish magnet vs file handling.
+The research identifies production observability patterns from comparable 24/7 services (monitoring agents, data pipelines, long-running workers). The feature landscape separates table stakes (required for operability) from differentiators (transforming debugging experience).
 
 **Must have (table stakes):**
-- Parse base64-encoded MetaInfo field from Transmission RPC requests — Transmission spec requires either filename or metainfo
-- Upload .torrent content to Put.io — core milestone requirement
-- Return Transmission-compatible success/error responses — Sonarr/Radarr expect standard response format
-- Support both FileName (magnet) and MetaInfo (.torrent) in same endpoint — maintain backward compatibility
-- Explicit error handling for invalid base64, corrupt torrents, upload failures — no silent failures (project core value)
+- **Structured JSON logging** — Already implemented via slog with JSONHandler
+- **Consistent log levels** — Needs audit; operators filter by severity and inconsistency creates noise
+- **Lifecycle logging** — Partial; needs clear component initialization sequence
+- **Error context** — Present but inconsistent; needs transfer_id in all related logs
+- **Trace context in logs** — Missing; requires otelslog bridge for trace_id/span_id injection
+- **Log level configurability** — Already implemented via LOG_LEVEL env var
+- **Operation logging** — Partial; key operations visible at INFO but mixed with noise
+- **Error stack traces** — Already implemented for panics
 
-**Should have (operational visibility):**
-- Log torrent type explicitly (magnet vs file) — critical for debugging tracker-specific issues
-- OpenTelemetry metric for torrent type distribution — track magnet vs .torrent usage patterns
-- Log .torrent file size (decoded bytes) — identify bloated .torrent files from certain trackers
-- Log Put.io file ID after upload — improves traceability for debugging transfer failures
+**Should have (competitive):**
+- **Transfer lifecycle narrative** — Single grep for transfer_id shows complete story (discovered → claimed → downloading → imported → cleaned up)
+- **Startup sequence reporting** — Clear phases: "Config loaded → Database validated → Client authenticated → Server listening → Ready"
+- **Operation grouping** — Consistent "operation" field to group related log lines
+- **Component readiness** — Each component logs when ready: "TransferOrchestrator ready", "Downloader ready"
+- **State transitions** — Explicit logs when transfers change state
+- **HTTP request logging** — Currently missing; no visibility into API usage patterns
 
 **Defer (v2+):**
-- Watch folder for .torrent files — not how Sonarr/Radarr work, requires new architecture
-- Direct .torrent file upload API — adds new API surface, not needed for milestone goal
-- Deluge .torrent support — webhook API is Put.io only, Deluge not used in webhook path
-- Cache decoded .torrent content — Sonarr/Radarr send each .torrent once, unnecessary complexity
+- **Log sampling** — Wait to see if DEBUG volume is actually problematic in production
+- **Dynamic log levels via API** — No operational need yet; adds complexity
+- **Structured error taxonomy** — Need production experience to identify error patterns first
+- **Dependency health checks** — Periodic validation of external services (add when operational gaps identified)
+- **Resource utilization logs** — Periodic reporting of active downloads, goroutines (add when monitoring gaps identified)
+
+**Anti-features (avoid these):**
+- **Log every file download at INFO** — Creates 100+ logs per transfer, drowns signal in noise; use transfer-level events at INFO, per-file at DEBUG
+- **Log every polling tick** — Creates noise every 10 minutes; log only when transfers found
+- **Duplicate logs in multiple formats** — Doubles volume; use JSON in production, text locally
+- **Log request/response bodies** — Exposes credentials and creates massive volume; log metadata only
+- **WARN level for expected conditions** — Triggers false alerts; use INFO for normal operations
 
 ### Architecture Approach
 
-The architecture maintains clean separation between HTTP concerns (handler layer), domain operations (client adapter layer), and external service APIs (Put.io SDK). The handler validates input and transforms base64 to bytes before calling business logic. For .torrent files, a new `UploadTorrent(ctx, torrentData, downloadDir)` method is added to the Put.io client concrete type (NOT the TransferClient interface) to avoid forcing Deluge client to implement unsupported methods. Type assertion is used in the handler to access this Put.io-specific method, failing fast for non-Put.io clients. The entire data flow is in-memory: request → base64 decode → bytes.NewReader → Files.Upload → network, with no intermediate file persistence.
+The existing architecture is event-driven with goroutine-based pipeline stages. The logging architecture must overlay this without disrupting the proven patterns. The key insight is that context propagation already exists (via logctx package) but isn't fully leveraged for trace correlation.
 
-**Major components:**
-1. **handleTorrentAdd (transmission.go)** — Validates mutually exclusive FileName/MetaInfo fields, decodes base64, routes to appropriate client method
-2. **Put.io Client.UploadTorrent** — Wraps torrent bytes in io.Reader, calls Files.Upload with .torrent filename, extracts Transfer from Upload response
-3. **Put.io SDK Files.Upload** — Creates multipart request, auto-detects .torrent extension, returns Upload struct with Transfer field
+**Major components and logging enhancements:**
+1. **OpenTelemetry Bridge Integration** — Wrap existing slog handler with otelslog bridge; zero changes to existing logging calls, automatic trace_id/span_id injection using context already passed to InfoContext()
+2. **Component-Scoped Loggers** — Change from `.WithGroup("component")` (nested JSON) to `.With(slog.String("component", "name"))` (flat attributes) for easier filtering in log aggregation
+3. **Pipeline Flow Tracing** — Add consistent attributes (transfer_id, transfer_name, operation, component) to enable tracing torrents through entire pipeline: Webhook → Orchestrator → Downloader → Import Monitor → Cleanup
+4. **HTTP Request Logging Middleware** — Add go-chi/httplog before existing telemetry middleware for request/response logging with automatic request ID generation
+5. **Lifecycle Event Logging** — Structure startup/shutdown as distinct phases with clear component initialization order and readiness indicators
+6. **Goroutine Lifecycle Logging** — Already well-implemented with panic recovery and shutdown logging; maintain existing patterns
 
-**Key patterns:**
-- **Handler layer validation:** HTTP handlers validate and transform input before calling business logic (base64 decoding is HTTP concern)
-- **Type assertion for implementation-specific features:** Use type assertion to access methods not on interface when feature only supported by subset of implementations
-- **SDK auto-detection:** Put.io SDK automatically creates transfers when uploading files with .torrent extension
-- **Bytes-in-memory:** Process file content entirely in memory without disk writes (explicit project constraint: no file persistence)
+**Data flow:**
+```
+[HTTP Request] → [HTTP Middleware logs: method, path, status]
+    → [Handler logs: operation="torrent-add"]
+    → [Client logs: component="putio", operation="add_transfer"]
+    → [Pipeline logs: transfer_id, operation="discover|claim|download|import|cleanup"]
+```
+
+**Integration points:**
+- Existing logctx package (preserve) — Works perfectly with new patterns
+- Existing OpenTelemetry instrumentation (preserve) — Logs will automatically correlate via otelslog
+- Existing HTTP middleware (enhance) — Add httplog middleware before existing telemetry middleware
+- Existing goroutine patterns (preserve) — Already have good panic recovery and context propagation
 
 ### Critical Pitfalls
 
-1. **Base64 Encoding Variant Mismatch** — Go provides four base64 variants (StdEncoding, RawStdEncoding, URLEncoding, RawURLEncoding). The Transmission spec doesn't specify which variant. Using the wrong one causes "invalid or corrupt torrent file" errors even when content is valid. Prevention: capture actual Sonarr/Radarr webhook requests and test which encoding variant they use. Standard Transmission implementations typically use StdEncoding with padding.
+Research identified eight critical pitfalls from recent production incidents (2025-2026) and authoritative observability sources. These represent real failure modes, not theoretical concerns.
 
-2. **Bencode Validation Skipped Before Upload** — Decoded base64 data uploaded to Put.io without validating it's actually valid bencoded torrent content. Put.io rejects the upload with generic "invalid transfer" error, making debugging impossible. Prevention: validate bencode structure after decoding with `bencode.Unmarshal()`, return specific "invalid bencode" error vs "invalid base64" vs "Put.io rejected upload".
+1. **Breaking Log Schema for Existing Consumers** — Changing log field names or structure breaks dashboards and alerts downstream. Treat log field names as API contract; use additive changes only with 2-4 week deprecation periods.
 
-3. **MetaInfo vs FileName Field Precedence Undefined** — Transmission spec says "either filename or metainfo must be included" but doesn't specify behavior when both are sent. Current code silently ignores MetaInfo when present, causing nil torrent and panic. Prevention: define explicit precedence (MetaInfo takes priority over FileName, matching Transmission behavior), handle all four field combination cases explicitly.
+2. **The !BADKEY Footgun with slog** — Using alternating key-value pairs `logger.Info("msg", "key", value)` instead of slog.Attr helpers creates silent corruption when argument count is odd. Enforce `sloglint` with `attr-only: true` in CI/CD to prevent company-wide.
 
-4. **Backward Compatibility Broken by Control Flow Bug** — When adding MetaInfo handling, nil torrent variable from if/else logic causes existing magnet link code path to break. Prevention: restructure control flow to handle all cases (MetaInfo, FileName, both, neither), add nil check before marshaling torrent response, test magnet links still work with new code deployed.
+3. **Missing Trace Context in Logs** — Using `logger.Info()` instead of `logger.InfoContext(ctx)` means logs lack trace IDs. Always use context-aware methods; verify logs contain trace_id/span_id fields in integration tests.
 
-5. **Silent Failures Without Observability** — No metrics track torrent_type (magnet vs file), making it impossible to tell if .torrent support is broken while magnet metrics look healthy. Prevention: add torrent_type attribute to all metrics and logs immediately with new code, create separate metrics for .torrent-specific failures (decode errors, bencode errors), update Grafana dashboard to show success rate by type.
+4. **Log Cardinality Explosion** — High-cardinality fields (UUIDs, timestamps with milliseconds) drive exponential cost increases (from $200/month to $4,000/month). Limit high-cardinality fields to ERROR/WARN only; implement sampling for INFO logs.
+
+5. **Context Propagation Failure in Goroutines** — Starting goroutines without propagating context loses trace correlation and prevents cancellation. In one incident, this caused 50,847 goroutines, 47GB memory, 32-second response times. Always pass context: `go func(ctx context.Context) { ... }(ctx)`.
+
+6. **Performance Degradation from Synchronous Logging** — Detailed logging on hot paths causes measurable throughput reduction (20% in benchmarks). Use DEBUG level for hot paths, INFO only for lifecycle; implement sampling for high-frequency operations.
+
+7. **Missing AddSource Performance Cost** — Enabling `AddSource: true` globally adds runtime.Caller() overhead on every log call. Disable in production; enable only in development or for ERROR level logs.
+
+8. **No Graceful Log Level Change Mechanism** — Hardcoded log levels require 5-15 minute redeploy for DEBUG during incidents. Implement dynamic control via HTTP endpoint or signal handling with authentication.
 
 ## Implications for Roadmap
 
-Based on research, suggested phase structure prioritizes foundation (client layer), integration (handler routing), and observability as a first-class concern, not an afterthought.
+Based on the research, the implementation should follow a risk-managed progression from low-risk infrastructure changes to higher-risk refactoring. The phases build on existing patterns rather than replacing them.
 
-### Phase 1: Client Layer Foundation
-**Rationale:** Build bottom-up starting with Put.io client method before handler integration. Allows independent testing of upload logic without HTTP complexity. Validates that Put.io SDK's Files.Upload() actually works for .torrent content before committing to architecture.
+### Phase 1: OpenTelemetry Bridge Integration
+**Rationale:** Lowest-risk, highest-value enhancement. Wraps existing logger without any code changes to logging calls. Immediately enables trace correlation across entire system.
 
-**Delivers:** `UploadTorrent(ctx, torrentData, downloadDir)` method in Put.io client that wraps bytes in io.Reader, calls Files.Upload with .torrent filename, extracts Transfer from response, and maps to domain model.
-
-**Addresses:**
-- Upload .torrent content to Put.io (table stakes)
-- Return Transfer ID from Put.io response (table stakes)
-- Error wrapping with context (operational visibility)
-
-**Avoids:**
-- **Pitfall 4 (Put.io API compatibility):** Proves Files.Upload() works for .torrent content before building handler layer
-- **Pitfall 6 (memory exhaustion):** Establishes baseline memory usage patterns for testing
-
-**Implementation notes:**
-- Reuse existing `findDirectoryID` helper
-- Add error handling for Upload.Transfer == nil
-- No changes to TransferClient interface
-- Unit testable with mock Put.io SDK
-
-### Phase 2: Handler Layer Integration
-**Rationale:** Now that client method works, integrate with HTTP handler. This phase handles all the validation, routing, and backward compatibility concerns. Must get control flow right before adding observability, otherwise metrics will be inconsistent.
-
-**Delivers:** Modified `handleTorrentAdd` that validates FileName XOR MetaInfo fields, decodes base64, routes MetaInfo → UploadTorrent vs FileName → AddTransfer, maintains backward compatibility with magnet links.
+**Delivers:** Automatic trace_id/span_id injection in all logs, enabling correlation with distributed traces for incident response.
 
 **Addresses:**
-- Parse base64-encoded MetaInfo field (table stakes)
-- Support both FileName and MetaInfo in same endpoint (table stakes)
-- Explicit error handling for invalid base64, corrupt torrents (table stakes)
-- Return Transmission-compatible responses (table stakes)
+- Missing trace context in logs (table stakes feature)
+- Request correlation (differentiator feature)
 
 **Avoids:**
-- **Pitfall 1 (base64 variant mismatch):** Test with real Sonarr/Radarr webhooks to verify StdEncoding works
-- **Pitfall 2 (bencode validation skipped):** Add bencode.Unmarshal() validation between decode and upload
-- **Pitfall 3 (field precedence undefined):** MetaInfo takes explicit priority over FileName, all four cases handled
-- **Pitfall 5 (backward compatibility broken):** Restructure if/else to handle all cases, test magnet links unchanged
+- Missing trace context in logs pitfall (Critical #3)
+- Context propagation failures (Critical #5 — foundation for fixing)
 
-**Implementation notes:**
-- Add `encoding/base64` import
-- Add type assertion to `*putio.Client` for UploadTorrent access
-- Add bencode validation (optional but strongly recommended)
-- Return specific errors: "invalid base64" vs "invalid bencode" vs "upload failed"
+**Implementation:** Add otelslog bridge in main.go initializeConfig(), wrap existing JSONHandler, verify trace_id appears in logs.
 
-### Phase 3: Observability & Instrumentation
-**Rationale:** With functional implementation complete, add comprehensive observability to enable production debugging and measure .torrent adoption. This is not an afterthought but a first-class feature requirement (project core value: no silent failures).
+### Phase 2: Context Propagation Audit
+**Rationale:** Essential foundation for trace correlation to work. Must verify all logging calls use context-aware methods and all goroutines receive context. Builds on Phase 1 bridge infrastructure.
 
-**Delivers:** OpenTelemetry metrics, structured logging, and Grafana dashboard updates to distinguish magnet vs .torrent handling.
+**Delivers:** All logs include trace context; no broken correlation chains; proper goroutine lifecycle management.
 
 **Addresses:**
-- Log torrent type explicitly (operational visibility)
-- OpenTelemetry metric for torrent type distribution (operational visibility)
-- Log .torrent file size (operational visibility)
-- Log Put.io file ID after upload (operational visibility)
+- Consistent logging across all components
+- Goroutine lifecycle logging (already partially done, needs verification)
 
 **Avoids:**
-- **Pitfall 7 (silent failures without observability):** Metrics track torrent_type separately, errors categorized by type and reason, Grafana shows success rate by type
+- Missing trace context pitfall (Critical #3)
+- Context propagation failure in goroutines pitfall (Critical #5)
+- !BADKEY footgun pitfall (Critical #2 — audit finds these)
 
-**Implementation notes:**
-- Add counter metric: `torrent_add_total{type="magnet"|"file"}`
-- Add error metric: `torrent_add_errors_total{type="...", reason="..."}`
-- Add histogram: `torrent_file_size_bytes`
-- Update Grafana dashboard with panels for type distribution, success rate by type, decode failure rate
-- Add OTEL span attributes: `torrent.type`, `torrent.size_bytes`
+**Implementation:** Grep for non-context log calls (.Info, .Error without Context suffix), verify all go func() receives context, run sloglint in CI.
+
+### Phase 3: Lifecycle & Component Logging
+**Rationale:** With trace correlation working (Phases 1-2), now enhance the content of logs. Changes isolated to startup/shutdown sequences and component initialization — lower risk than touching pipeline logic.
+
+**Delivers:** Clear startup narrative, component readiness indicators, consistent operation fields, HTTP request logging.
+
+**Addresses:**
+- Startup sequence reporting (differentiator)
+- Component readiness (differentiator)
+- Operation grouping (differentiator)
+- HTTP request logging (should-have)
+
+**Avoids:**
+- Breaking log schema pitfall (Critical #1 — additive changes only)
+- Performance degradation pitfall (Critical #6 — log levels discipline)
+
+**Implementation:** Add lifecycle phases to main.go run(), add component-scoped loggers, add httplog middleware, standardize operation field usage.
+
+### Phase 4: Pipeline Flow Enhancement
+**Rationale:** Most invasive changes touching component logic. With solid foundation (Phases 1-3), now enhance pipeline-specific logging. Requires careful testing to avoid breaking existing behavior.
+
+**Delivers:** Transfer lifecycle narrative (grep transfer_id shows complete story), state transition visibility, consistent transfer context across pipeline stages.
+
+**Addresses:**
+- Transfer lifecycle narrative (differentiator)
+- State transitions (should-have)
+- Operation logging consistency (table stakes)
+
+**Avoids:**
+- Log cardinality explosion pitfall (Critical #4 — control transfer_id usage)
+- Performance degradation pitfall (Critical #6 — sampling in hot paths)
+
+**Implementation:** Create transfer-scoped loggers with consistent attributes, add operation field to all pipeline stages, audit and reduce noisy DEBUG logs.
 
 ### Phase Ordering Rationale
 
-- **Bottom-up implementation:** Client layer before handler ensures each component is independently testable
-- **Validation with integration:** Handler phase combines routing and validation, preventing partial implementations
-- **Observability as feature:** Separate phase ensures metrics aren't skipped as "nice to have"
-- **Dependency order:** Handler depends on client method existing, observability depends on routing logic
-- **Risk mitigation:** Each phase addresses specific pitfalls, preventing compounding errors
+- **Phase 1 first** because it's infrastructure wrapping with zero behavior changes — lowest risk, enables everything else
+- **Phase 2 second** because it verifies the context foundation needed for Phase 1 to work correctly
+- **Phase 3 third** because lifecycle changes are isolated to main.go and startup/shutdown — lower risk than pipeline changes
+- **Phase 4 last** because it touches component logic and requires careful testing — highest risk, but built on solid foundation
+
+**Deferred to post-implementation:**
+- Dynamic log level control (Phase 5) — useful but not critical; no production need yet
+- Log sampling implementation (Phase 6) — wait to see if volume is actually problematic
+- Dependency health checks (Phase 7) — add when operational gaps identified
 
 ### Research Flags
 
-**Phases with standard patterns (skip research-phase):**
-- **Phase 1 (Client Layer):** Well-documented Put.io SDK, Files.Upload() method verified from source code
-- **Phase 2 (Handler Layer):** Standard HTTP validation patterns, base64 decoding is Go stdlib
-- **Phase 3 (Observability):** Existing telemetry infrastructure in place, add to established patterns
+**Phases likely needing deeper research during planning:**
+- **Phase 2 (Context Propagation Audit):** May discover complex context threading issues requiring architectural decisions
+- **Phase 4 (Pipeline Flow Enhancement):** Transfer state machine may reveal edge cases needing domain research
 
-**No phases require deeper research.** All critical integration points verified from official sources (Put.io SDK source code, Transmission RPC spec, Go stdlib docs). Base64 variant testing with real Sonarr/Radarr webhooks is implementation verification, not research.
+**Phases with standard patterns (skip research-phase):**
+- **Phase 1 (OpenTelemetry Bridge):** Well-documented official pattern, no unknowns
+- **Phase 3 (Lifecycle Logging):** Standard startup/shutdown patterns, heavily documented
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | All components verified from official sources: Go stdlib docs, Put.io SDK source code at v1.7.2 line 215, zero new dependencies required |
-| Features | HIGH | Transmission RPC spec explicitly defines MetaInfo field format, Sonarr/Radarr behavior documented in community wikis, feature set validated against real-world usage |
-| Architecture | HIGH | Existing codebase provides clear patterns, Put.io SDK method signatures verified from source, type assertion pattern is standard Go practice |
-| Pitfalls | HIGH | All pitfalls identified from official documentation (Transmission RPC spec, Put.io SDK behavior), community forums (Transmission forum on MetaInfo usage), and industry best practices (backward compatibility, observability) |
+| Stack | HIGH | Official OpenTelemetry documentation, slog is stdlib, multiple authoritative guides (Better Stack, Uptrace, go.dev blog) consulted |
+| Features | HIGH | Analyzed comparable production services (Datadog Agent, Prometheus exporters), verified with 2026 best practices guides and real operational needs |
+| Architecture | HIGH | Patterns validated against official OpenTelemetry architecture docs, context propagation patterns from multiple recent guides, existing codebase analysis confirms applicability |
+| Pitfalls | HIGH | All eight pitfalls sourced from recent production incidents (2025-2026), official warning documentation, and authoritative observability sources |
 
 **Overall confidence:** HIGH
 
-All critical paths verified from authoritative sources. Put.io SDK behavior confirmed from actual source code (`/Users/italovietro/go/pkg/mod/github.com/putdotio/go-putio@v1.7.2/files.go:215`). Transmission RPC spec is official protocol documentation. Base64 decoding is Go standard library with stable API since Go 1.0.
+The research is grounded in official documentation (go.dev blog, OpenTelemetry specs, slog package docs), authoritative guides from observability platforms (Better Stack, Uptrace, Dash0, SigNoz), and recent production incident reports (2025-2026). All recommendations align with current Go best practices as of January 2026.
 
 ### Gaps to Address
 
-**Base64 encoding variant verification (minor):** Transmission spec doesn't explicitly state which base64 variant (Std/Raw/URL). Research indicates StdEncoding is standard, but must verify with actual Sonarr/Radarr webhook during implementation. This is implementation verification, not a research gap.
+While confidence is high, these areas need attention during implementation:
 
-**Put.io error response format (minor):** Research shows Put.io returns generic errors when upload fails, but exact error response structure for invalid .torrent content not documented. During implementation, test with malformed .torrent to capture actual error response format for proper error handling.
+- **Log consumer inventory:** Need to identify all dashboards, alerts, and log queries consuming current log output before making schema changes. Address during Phase 1 planning by documenting existing consumers and testing changes against queries.
 
-**Large .torrent memory profile (minor):** Research identifies memory exhaustion risk for 50MB+ .torrent files, but exact memory multiplier (base64 string → decoded bytes → reader) not profiled. Add memory instrumentation during Phase 3 to measure actual overhead under load.
+- **Actual cardinality impact:** Research provides thresholds (1M+ unique combinations problematic) but need to measure actual cardinality in this service's workload. Address during Phase 4 by monitoring unique field combinations and implementing sampling if needed.
 
-**Bencode validation library choice (low priority):** Research identifies two options (`jackpal/bencode-go`, `zeebo/bencode`) but doesn't benchmark performance or API ergonomics. Choose during implementation based on simplest API for validation-only use case (don't need full torrent parsing).
+- **Performance baseline:** Benchmarks from research (20% throughput reduction) are general guidance, not specific to this codebase. Address during Phase 3/4 by load testing before and after changes to measure actual impact.
+
+- **Existing log level discipline:** Current state analysis shows inconsistent levels but needs comprehensive audit to understand scope. Address early in Phase 2 by grepping for all log calls and categorizing by level/context.
 
 ## Sources
 
-### PRIMARY (HIGH confidence)
+### Primary (HIGH confidence)
 
 **Official Documentation:**
-- [Transmission RPC Specification](https://github.com/transmission/transmission/blob/main/docs/rpc-spec.md) — MetaInfo field format, torrent-add method, response format
-- [Go encoding/base64 package](https://pkg.go.dev/encoding/base64) — StdEncoding, RawStdEncoding variants, DecodeString API
-- [Go bytes package](https://pkg.go.dev/bytes) — NewReader method for io.Reader conversion
-- [github.com/putdotio/go-putio package](https://pkg.go.dev/github.com/putdotio/go-putio/putio) — FilesService.Upload() documentation, Upload type definition
+- [Structured Logging with slog - The Go Programming Language](https://go.dev/blog/slog) — Official introduction and best practices
+- [log/slog package documentation](https://pkg.go.dev/log/slog) — Standard library reference
+- [OpenTelemetry Slog Bridge Package](https://pkg.go.dev/go.opentelemetry.io/contrib/bridges/otelslog) — Official API documentation for otelslog bridge
+- [OpenTelemetry Logging Specification](https://opentelemetry.io/docs/specs/otel/logs/) — Standard specification for log integration
+- [Context propagation | OpenTelemetry](https://opentelemetry.io/docs/concepts/context-propagation/) — Official context patterns
 
-**Source Code:**
-- `/Users/italovietro/go/pkg/mod/github.com/putdotio/go-putio@v1.7.2/files.go:215` — Files.Upload() method implementation showing torrent auto-detection
-- `/Users/italovietro/projects/seedbox_downloader/internal/http/rest/transmission.go` — Current handleTorrentAdd implementation (lines 230-260)
-- `/Users/italovietro/projects/seedbox_downloader/internal/dc/putio/client.go` — Current Put.io client showing AddTransfer pattern
-- `/Users/italovietro/projects/seedbox_downloader/.planning/PROJECT.md` — Project constraints (no file persistence line 96)
+**Authoritative Guides (2025-2026):**
+- [Logging in Go with Slog: The Ultimate Guide | Better Stack](https://betterstack.com/community/guides/logging/logging-in-go/) — Comprehensive best practices
+- [Logging in Go with Slog: A Practitioner's Guide | Dash0](https://www.dash0.com/guides/logging-in-go-with-slog) — Production patterns
+- [How to Set Up Structured Logging in Go with OpenTelemetry | OneUpTime](https://oneuptime.com/blog/post/2026-01-07-go-structured-logging-opentelemetry/view) — January 2026 integration guide
+- [OpenTelemetry Slog Integration | Uptrace](https://uptrace.dev/guides/opentelemetry-slog) — Practical setup guide
+- [Complete Guide to Logging in Golang with slog | SigNoz](https://signoz.io/guides/golang-slog/) — Comprehensive tutorial
 
-### SECONDARY (MEDIUM confidence)
+### Secondary (MEDIUM confidence)
 
-**Community Documentation:**
-- [Sonarr Download Clients](https://buildarr.github.io/plugins/sonarr/configuration/download-clients/) — Sonarr behavior with download clients
-- [Sonarr Settings](https://wiki.servarr.com/sonarr/settings) — Official Servarr wiki on download client configuration
-- [Transmission Forum: MetaInfo Usage](https://forum.transmissionbt.com/viewtopic.php?t=8023) — Community discussion confirming MetaInfo field usage
-- [Transmission Forum: Base64 Encoding](https://forum.transmissionbt.com/viewtopic.php?t=9289) — Community discussion on encoding issues
+**Best Practices & Patterns:**
+- [Logging Best Practices: 12 Dos and Don'ts | Better Stack](https://betterstack.com/community/guides/logging/logging-best-practices/) — General logging guidance
+- [9 Logging Best Practices | Dash0](https://www.dash0.com/guides/logging-best-practices) — Production logging patterns
+- [How to shutdown a Go application gracefully | Josemy's blog](https://josemyduarte.github.io/2023-04-24-golang-lifecycle/) — Lifecycle management patterns
+- [The package level logger anti pattern | Dave Cheney](https://dave.cheney.net/2017/01/23/the-package-level-logger-anti-pattern) — Logger dependency injection guidance
 
-**Architecture Patterns:**
-- [OpenTelemetry Metrics](https://opentelemetry.io/docs/concepts/signals/metrics/) — Official OTel metrics concepts
-- [Go REST API Architecture](https://medium.com/@janishar.ali/how-to-architecture-good-go-backend-rest-api-services-14cc4730c05b) — Layer responsibility patterns
-- [Clean Architecture in Go](https://depshub.com/blog/clean-architecture-in-go/) — Interface segregation patterns
+**Production Incidents & Case Studies:**
+- [Finding and Fixing a 50,000 Goroutine Leak](https://skoredin.pro/blog/golang/goroutine-leak-debugging) (Dec 2025) — Real incident demonstrating context propagation failures
+- [Understanding and Debugging Goroutine Leaks in Go Web Servers](https://leapcell.io/blog/understanding-and-debugging-goroutine-leaks-in-go-web-servers) (Oct 2025) — Production debugging patterns
+- [Detecting Goroutine Leaks via the Go Garbage Collector](https://medium.com/@aman.kohli1/detecting-goroutine-leaks-via-the-go-garbage-collector-deep-dive-180128dd81cc) (Jan 2026) — Diagnostic techniques
 
-### TERTIARY (LOW confidence, referenced for context)
+### Tertiary (LOW confidence)
 
-**Bencode Libraries:**
-- [jackpal/bencode-go](https://github.com/jackpal/bencode-go) — Popular Go bencode implementation
-- [zeebo/bencode](https://zeebo.github.io/bencode/) — Alternative Go bencode library
-- [anacrolix/torrent/bencode](https://pkg.go.dev/github.com/anacrolix/torrent/bencode) — Full-featured torrent library (overkill for validation-only)
+**Cost & Cardinality Management:**
+- [Understanding High Cardinality in Observability](https://www.observeinc.com/blog/understanding-high-cardinality-in-observability) — Cost impact patterns
+- [How to Wrangle Metric Data Explosions](https://chronosphere.io/learn/wrangle-metric-data-explosions-with-chronosphere-profiler/) — Cardinality management strategies
+- [How to Optimize Log Volume and Reduce Noise at Scale | Datadog](https://www.datadoghq.com/knowledge-center/log-optimization/) — Volume optimization guidance
 
-**Error Handling Best Practices:**
-- [Zalando API Guidelines: Compatibility](https://github.com/zalando/restful-api-guidelines/blob/main/chapters/compatibility.adoc) — Industry standards for backward compatibility
-- [Google AIP-180](https://google.aip.dev/180) — Backwards compatibility patterns
-- [Spacelift: Observability Best Practices 2026](https://spacelift.io/blog/observability-best-practices) — Current observability patterns
+**Middleware & Tooling:**
+- [go-chi/httplog](https://github.com/go-chi/httplog) — HTTP logging middleware for Chi
+- [slog-multi Package](https://pkg.go.dev/github.com/samber/slog-multi) — Advanced handler composition patterns
+- [go-lifecycle Package](https://pkg.go.dev/github.com/g4s8/go-lifecycle) — Lifecycle management library
 
 ---
 *Research completed: 2026-02-01*
