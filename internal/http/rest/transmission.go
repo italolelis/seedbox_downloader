@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/italolelis/seedbox_downloader/internal/dc/putio"
 	"github.com/italolelis/seedbox_downloader/internal/logctx"
+	"github.com/italolelis/seedbox_downloader/internal/telemetry"
 	"github.com/italolelis/seedbox_downloader/internal/transfer"
 	"github.com/zeebo/bencode"
 )
@@ -107,16 +108,18 @@ type TransmissionHandler struct {
 	dc          *putio.Client
 	label       string
 	downloadDir string
+	telemetry   *telemetry.Telemetry
 }
 
 // NewTransmissionHandler creates a new content handler.
-func NewTransmissionHandler(username, password string, dc *putio.Client, label string, downloadDir string) *TransmissionHandler {
+func NewTransmissionHandler(username, password string, dc *putio.Client, label string, downloadDir string, t *telemetry.Telemetry) *TransmissionHandler {
 	return &TransmissionHandler{
 		username:    username,
 		password:    password,
 		dc:          dc,
 		label:       label,
 		downloadDir: downloadDir,
+		telemetry:   t,
 	}
 }
 
@@ -290,7 +293,11 @@ func (h *TransmissionHandler) handleTorrentAddByMetaInfo(ctx context.Context, re
 	// Decode base64 content (requirement API-02)
 	torrentBytes, err := base64.StdEncoding.DecodeString(req.Arguments.MetaInfo)
 	if err != nil {
-		logger.Error("failed to decode base64 metainfo", "err", err)
+		logger.Error("failed to decode base64 metainfo",
+			"err", err,
+			"error_type", "invalid_base64",
+			"metainfo_length", len(req.Arguments.MetaInfo),
+		)
 		return nil, &transfer.InvalidContentError{
 			Filename: "metainfo",
 			Reason:   fmt.Sprintf("invalid base64 encoding: %v", err),
@@ -310,7 +317,11 @@ func (h *TransmissionHandler) handleTorrentAddByMetaInfo(ctx context.Context, re
 
 	// Validate bencode structure (requirement API-03)
 	if err := validateBencodeStructure(torrentBytes); err != nil {
-		logger.Error("bencode validation failed", "err", err)
+		logger.Error("bencode validation failed",
+			"err", err,
+			"error_type", "invalid_bencode",
+			"size_bytes", len(torrentBytes),
+		)
 		return nil, err
 	}
 
@@ -321,7 +332,12 @@ func (h *TransmissionHandler) handleTorrentAddByMetaInfo(ctx context.Context, re
 	// Upload to Put.io using Phase 4 client method
 	torrent, err := h.dc.AddTransferByBytes(ctx, torrentBytes, filename, h.label)
 	if err != nil {
-		logger.Error("failed to add transfer by bytes", "err", err)
+		logger.Error("failed to add transfer by bytes",
+			"err", err,
+			"error_type", "api_error",
+			"filename", filename,
+			"size_bytes", len(torrentBytes),
+		)
 		return nil, err
 	}
 
@@ -339,11 +355,17 @@ func (h *TransmissionHandler) handleTorrentAdd(ctx context.Context, req *Transmi
 	// Requirement API-06: Prioritize MetaInfo when both present
 	if req.Arguments.MetaInfo != "" {
 		// Requirement API-01: Detect MetaInfo field
-		logger.Debug("received torrent add with metainfo field")
+		logger.Debug("processing torrent add request", "torrent_type", "metainfo")
+		if h.telemetry != nil {
+			h.telemetry.RecordTorrentType(ctx, "metainfo")
+		}
 		torrent, err = h.handleTorrentAddByMetaInfo(ctx, req)
 	} else if req.Arguments.FileName != "" {
 		// Requirement API-05: Maintain backward compatibility
-		logger.Debug("received torrent add with filename field (magnet link)")
+		logger.Debug("processing torrent add request", "torrent_type", "magnet")
+		if h.telemetry != nil {
+			h.telemetry.RecordTorrentType(ctx, "magnet")
+		}
 		magnetLink := req.Arguments.FileName
 		// we use the label as the download directory. When using put.io as a shared download client, we can't use the download directory from the request.
 		torrent, err = h.dc.AddTransfer(ctx, magnetLink, h.label)

@@ -218,7 +218,7 @@ func startServers(ctx context.Context, cfg *config, tel *telemetry.Telemetry) (*
 
 	serverErrors := make(chan error, 1)
 
-	server, err := setupServer(ctx, cfg)
+	server, err := setupServer(ctx, cfg, tel)
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup server: %w", err)
 	}
@@ -363,7 +363,7 @@ func buildDownloadClient(cfg *config) (transfer.DownloadClient, error) {
 }
 
 // setupServer prepares the handlers and services to create the http rest server.
-func setupServer(ctx context.Context, cfg *config) (*http.Server, error) {
+func setupServer(ctx context.Context, cfg *config, tel *telemetry.Telemetry) (*http.Server, error) {
 	r := chi.NewRouter()
 	r.Use(telemetry.NewHTTPMiddleware(cfg.Telemetry.ServiceName))
 
@@ -376,7 +376,7 @@ func setupServer(ctx context.Context, cfg *config) (*http.Server, error) {
 	}
 
 	if putioClient, ok := originalClient.(*putio.Client); ok {
-		tHandler = rest.NewTransmissionHandler(cfg.Transmission.Username, cfg.Transmission.Password, putioClient, cfg.TargetLabel, cfg.PutioBaseDir)
+		tHandler = rest.NewTransmissionHandler(cfg.Transmission.Username, cfg.Transmission.Password, putioClient, cfg.TargetLabel, cfg.PutioBaseDir, tel)
 		r.Mount("/", tHandler.Routes())
 	} else {
 		return nil, fmt.Errorf("download client is not a putio client: %s", cfg.DownloadClient)
