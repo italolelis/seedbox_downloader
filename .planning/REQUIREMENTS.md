@@ -80,13 +80,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PUTIO-02 | Phase 4 | Complete |
 | PUTIO-03 | Phase 4 | Complete |
 | PUTIO-04 | Phase 4 | Complete |
-| OBS-01 | Phase 6 | Pending |
-| OBS-02 | Phase 6 | Pending |
-| OBS-03 | Phase 6 | Pending |
-| TEST-01 | Phase 6 | Pending |
-| TEST-02 | Phase 6 | Pending |
-| TEST-03 | Phase 6 | Pending |
-| TEST-04 | Phase 6 | Pending |
+| OBS-01 | Phase 6 | Complete |
+| OBS-02 | Phase 6 | Complete |
+| OBS-03 | Phase 6 | Complete |
+| TEST-01 | Phase 6 | Complete |
+| TEST-02 | Phase 6 | Complete |
+| TEST-03 | Phase 6 | Complete |
+| TEST-04 | Phase 6 | Complete |
 
 **Coverage:**
 - v1.1 requirements: 17 total
