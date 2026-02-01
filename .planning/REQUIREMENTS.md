@@ -76,10 +76,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | API-04 | Phase 5 | Pending |
 | API-05 | Phase 5 | Pending |
 | API-06 | Phase 5 | Pending |
-| PUTIO-01 | Phase 4 | Pending |
-| PUTIO-02 | Phase 4 | Pending |
-| PUTIO-03 | Phase 4 | Pending |
-| PUTIO-04 | Phase 4 | Pending |
+| PUTIO-01 | Phase 4 | Complete |
+| PUTIO-02 | Phase 4 | Complete |
+| PUTIO-03 | Phase 4 | Complete |
+| PUTIO-04 | Phase 4 | Complete |
 | OBS-01 | Phase 6 | Pending |
 | OBS-02 | Phase 6 | Pending |
 | OBS-03 | Phase 6 | Pending |
