@@ -89,10 +89,12 @@ Plans:
   5. Unit tests verify bencode validation (malformed structure, missing fields)
   6. Integration tests verify real .torrent files work with Put.io SDK
   7. Backward compatibility tests verify magnet links still work identically
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 06-01: TBD during planning
+- [ ] 06-01-PLAN.md — Add torrent type metrics and structured logging (OBS-01, OBS-02, OBS-03)
+- [ ] 06-02-PLAN.md — Unit tests for bencode validation and helper functions (TEST-01, TEST-02)
+- [ ] 06-03-PLAN.md — Integration tests for handler with mock client (TEST-03, TEST-04)
 
 ## Progress
 
@@ -106,7 +108,7 @@ Phases execute in numeric order: 4 → 5 → 6
 | 3. Operational Hygiene | v1 | 2/2 | Complete | 2026-01-31 |
 | 4. Put.io Client Extension | v1.1 | 2/2 | Complete | 2026-02-01 |
 | 5. Transmission API Handler | v1.1 | 2/2 | Complete | 2026-02-01 |
-| 6. Observability & Testing | v1.1 | 0/? | Not started | - |
+| 6. Observability & Testing | v1.1 | 0/3 | Not started | - |
 
 ---
 *Last updated: 2026-02-01 after Phase 5 execution*
