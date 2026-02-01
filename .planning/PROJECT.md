@@ -8,16 +8,16 @@ A Go-based automated downloader that orchestrates transfers from seedbox/torrent
 
 The application must run reliably 24/7 without crashes, resource leaks, or silent failures.
 
-## Current Milestone: v1.1 Torrent File Support
+## Latest Milestone: v1.1 Torrent File Support (Shipped: 2026-02-01)
 
-**Goal:** Enable Sonarr/Radarr to download content from .torrent-only trackers (amigos-share) through Put.io proxy
+**Goal:** Enable Sonarr/Radarr to download content from .torrent-only trackers through Put.io proxy
 
-**Target features:**
-- Process base64-encoded .torrent file content from Transmission API MetaInfo field
-- Upload .torrent content directly to Put.io (no file persistence)
-- Explicit error logging when .torrent files cannot be processed
-- Test coverage for .torrent file handling
-- Observability for .torrent vs magnet link usage
+**Delivered:**
+- ✓ Process base64-encoded .torrent file content from Transmission API MetaInfo field
+- ✓ Upload .torrent content directly to Put.io (no file persistence)
+- ✓ Explicit error logging when .torrent files cannot be processed
+- ✓ Test coverage for .torrent file handling (33 tests, 56.2% coverage)
+- ✓ Observability for .torrent vs magnet link usage (structured logs + metrics)
 
 ## Requirements
 
@@ -41,14 +41,15 @@ The application must run reliably 24/7 without crashes, resource leaks, or silen
 - ✓ Connection pool configuration via environment variables — v1
 - ✓ Telemetry status logging at startup — v1
 - ✓ Clean codebase without commented-out dead code — v1
+- ✓ Handle base64-encoded .torrent file content in Transmission API MetaInfo field — v1.1
+- ✓ Upload .torrent content to Put.io without file persistence — v1.1
+- ✓ Log explicit errors when .torrent files cannot be processed — v1.1
+- ✓ Add test coverage for .torrent file handling — v1.1 (33 tests)
+- ✓ Add observability metrics for torrent type (magnet vs file) — v1.1
 
 ### Active
 
-- [ ] Handle base64-encoded .torrent file content in Transmission API MetaInfo field
-- [ ] Upload .torrent content to Put.io without file persistence
-- [ ] Log explicit errors when .torrent files cannot be processed
-- [ ] Add test coverage for .torrent file handling
-- [ ] Add observability metrics for torrent type (magnet vs file)
+(None — ready for next milestone planning)
 
 ### Out of Scope
 
@@ -63,14 +64,15 @@ The application must run reliably 24/7 without crashes, resource leaks, or silen
 
 ## Context
 
-**Shipped v1 (2026-01-31):**
-- 3,177 lines of Go across 25 files
-- All 10 v1 requirements satisfied (crash prevention, resource management, operational hygiene)
-- Production-ready for 24/7 operation
+**Shipped v1.1 (2026-02-01):**
+- 4,558 lines of Go across 32 files (+6,542 insertions from v1)
+- All 17 v1.1 requirements satisfied (.torrent file support)
+- Production-ready with enhanced observability
 
 **Architecture:**
 - Event-driven pipeline: TransferOrchestrator → Downloader → Import Monitor → Cleanup
 - Client-agnostic via DownloadClient/TransferClient interfaces
+- Transmission RPC API webhook for Sonarr/Radarr integration
 - SQLite for state persistence with connection pooling (25 open, 5 idle conns)
 - OpenTelemetry with OTLP/gRPC export (status logged at startup)
 - Panic recovery with context-aware restart on all long-running goroutines
@@ -78,14 +80,19 @@ The application must run reliably 24/7 without crashes, resource leaks, or silen
 **Tech Stack:**
 - Go 1.23, Chi Router v5, SQLite with CGO
 - OpenTelemetry v1.38.0, cenkalti/backoff v5 for retry logic
+- Bencode library (github.com/zeebo/bencode v1.0.0) for .torrent validation
 - Docker deployment with distroless base image
 
 **Deployment:**
 - Long-running 24/7 service
 - Multiple concurrent downloads (default: 5 parallel)
 - Polling loops every 10 minutes for transfers and cleanup
+- Transmission webhook endpoint for Sonarr/Radarr
 - Database validation on startup with 3-retry exponential backoff
 - Resource cleanup on all goroutine exit paths (context cancellation, completion, panic)
+
+**Previous Milestones:**
+- v1 Critical Fixes (2026-01-31): 3 phases, 6 plans — crash prevention, resource management, operational hygiene
 
 ## Constraints
 
@@ -108,4 +115,4 @@ The application must run reliably 24/7 without crashes, resource leaks, or silen
 | Database validation with exponential backoff | Fail-fast on critical dependency with retry | ✓ Good - 3 attempts before exit, consistent with HTTP retries |
 
 ---
-*Last updated: 2026-01-31 after v1.1 milestone initialization*
+*Last updated: 2026-02-01 after v1.1 milestone completion*

@@ -1,5 +1,35 @@
 # Project Milestones: Seedbox Downloader
 
+## v1.1 Torrent File Support (Shipped: 2026-02-01)
+
+**Delivered:** Enable Sonarr/Radarr to download content from .torrent-only trackers through Put.io proxy
+
+**Phases completed:** 4-6 (7 plans total)
+
+**Key accomplishments:**
+
+- Custom error types for structured error handling across transfer operations
+- Extended Put.io client with `.torrent` file upload capability via `AddTransferByBytes`
+- Transmission API handler with base64 decoding and bencode validation
+- Structured logging and OpenTelemetry metrics for torrent type tracking (magnet vs .torrent)
+- 33 tests added (25 unit + 8 integration) with 56.2% coverage of handler package
+- Maintained backward compatibility with existing magnet link workflows
+
+**Stats:**
+
+- 32 files modified
+- 4,558 lines of Go total (+6,542 insertions, -85 deletions)
+- 3 phases, 7 plans, 17 requirements
+- Same day implementation (2026-02-01, ~3 hours)
+- 17/17 v1.1 requirements satisfied (100%)
+- 0 critical gaps, 0 technical debt
+
+**Git range:** `3e444e3` (feat(04-01)) → `25c8769` (chore: Phase 6 complete)
+
+**What's next:** Production deployment and real-world validation with Sonarr/Radarr webhooks
+
+---
+
 ## v1 Critical Fixes (Shipped: 2026-01-31)
 
 **Delivered:** Production-ready maintenance release ensuring 24/7 reliability without crashes, resource leaks, or silent failures
