@@ -3,6 +3,7 @@ package rest
 import (
 	"context"
 	"crypto/sha1"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -14,9 +15,12 @@ import (
 	"github.com/italolelis/seedbox_downloader/internal/dc/putio"
 	"github.com/italolelis/seedbox_downloader/internal/logctx"
 	"github.com/italolelis/seedbox_downloader/internal/transfer"
+	"github.com/zeebo/bencode"
 )
 
 const sessionID = "useless-session-id"
+
+const maxTorrentSize = 10 * 1024 * 1024 // 10MB - matches Phase 4 limit
 
 type TransmissionTorrentStatus int
 
@@ -227,28 +231,128 @@ func (h *TransmissionHandler) basicAuthMiddleware(next http.Handler) http.Handle
 	})
 }
 
+// validateBencodeStructure validates that data is proper bencode torrent structure.
+func validateBencodeStructure(data []byte) error {
+	var torrentData interface{}
+
+	// Decode bencode structure
+	if err := bencode.DecodeBytes(data, &torrentData); err != nil {
+		return &transfer.InvalidContentError{
+			Filename: "metainfo",
+			Reason:   fmt.Sprintf("invalid bencode structure: %v", err),
+			Err:      err,
+		}
+	}
+
+	// Verify root is a dictionary
+	dict, ok := torrentData.(map[string]interface{})
+	if !ok {
+		return &transfer.InvalidContentError{
+			Filename: "metainfo",
+			Reason:   "bencode root must be a dictionary",
+		}
+	}
+
+	// Check for required 'info' field
+	if _, hasInfo := dict["info"]; !hasInfo {
+		return &transfer.InvalidContentError{
+			Filename: "metainfo",
+			Reason:   "bencode missing required 'info' dictionary",
+		}
+	}
+
+	return nil
+}
+
+// generateTorrentFilename generates a unique .torrent filename from torrent content.
+func generateTorrentFilename(torrentBytes []byte) string {
+	hash := sha1.Sum(torrentBytes)
+	hashStr := hex.EncodeToString(hash[:])
+	return fmt.Sprintf("%s.torrent", hashStr[:16])
+}
+
+// handleTorrentAddByMetaInfo processes .torrent file content from MetaInfo field.
+func (h *TransmissionHandler) handleTorrentAddByMetaInfo(ctx context.Context, req *TransmissionRequest) (*transfer.Transfer, error) {
+	logger := logctx.LoggerFromContext(ctx)
+
+	// Decode base64 content (requirement API-02)
+	torrentBytes, err := base64.StdEncoding.DecodeString(req.Arguments.MetaInfo)
+	if err != nil {
+		logger.Error("failed to decode base64 metainfo", "err", err)
+		return nil, &transfer.InvalidContentError{
+			Filename: "metainfo",
+			Reason:   fmt.Sprintf("invalid base64 encoding: %v", err),
+			Err:      err,
+		}
+	}
+
+	logger.Debug("decoded metainfo", "size_bytes", len(torrentBytes))
+
+	// Check size BEFORE bencode validation (prevent memory exhaustion)
+	if len(torrentBytes) > maxTorrentSize {
+		return nil, &transfer.InvalidContentError{
+			Filename: "metainfo",
+			Reason:   fmt.Sprintf("size %d bytes exceeds maximum %d bytes", len(torrentBytes), maxTorrentSize),
+		}
+	}
+
+	// Validate bencode structure (requirement API-03)
+	if err := validateBencodeStructure(torrentBytes); err != nil {
+		logger.Error("bencode validation failed", "err", err)
+		return nil, err
+	}
+
+	// Generate filename for Put.io (requires .torrent extension)
+	filename := generateTorrentFilename(torrentBytes)
+	logger.Debug("generated filename", "filename", filename)
+
+	// Upload to Put.io using Phase 4 client method
+	torrent, err := h.dc.AddTransferByBytes(ctx, torrentBytes, filename, h.label)
+	if err != nil {
+		logger.Error("failed to add transfer by bytes", "err", err)
+		return nil, err
+	}
+
+	logger.Info("transfer created from metainfo", "transfer_id", torrent.ID, "name", torrent.Name)
+
+	return torrent, nil
+}
+
 func (h *TransmissionHandler) handleTorrentAdd(ctx context.Context, req *TransmissionRequest) (*TransmissionResponse, error) {
 	logger := logctx.LoggerFromContext(ctx).With("method", "handle_torrent_add")
 
 	var torrent *transfer.Transfer
+	var err error
 
-	if req.Arguments.MetaInfo == "" {
-		// Magnet links
-		logger.Debug("received torrent add magnet link")
-
+	// Requirement API-06: Prioritize MetaInfo when both present
+	if req.Arguments.MetaInfo != "" {
+		// Requirement API-01: Detect MetaInfo field
+		logger.Debug("received torrent add with metainfo field")
+		torrent, err = h.handleTorrentAddByMetaInfo(ctx, req)
+	} else if req.Arguments.FileName != "" {
+		// Requirement API-05: Maintain backward compatibility
+		logger.Debug("received torrent add with filename field (magnet link)")
 		magnetLink := req.Arguments.FileName
-
-		var err error
-
 		// we use the label as the download directory. When using put.io as a shared download client, we can't use the download directory from the request.
 		torrent, err = h.dc.AddTransfer(ctx, magnetLink, h.label)
 		if err != nil {
 			return nil, fmt.Errorf("failed to add transfer: %w", err)
 		}
+	} else {
+		return nil, fmt.Errorf("either metainfo or filename must be provided")
 	}
 
+	if err != nil {
+		return nil, err
+	}
+
+	// Marshal success response (Transmission format with torrent-added)
 	jsonTorrent, err := json.Marshal(map[string]interface{}{
-		"torrents": []*transfer.Transfer{torrent},
+		"torrent-added": map[string]interface{}{
+			"id":         torrent.ID,
+			"name":       torrent.Name,
+			"hashString": torrent.ID,
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal torrent: %w", err)
