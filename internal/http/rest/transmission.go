@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -456,4 +457,32 @@ func (h *TransmissionHandler) handleTorrentGet(ctx context.Context) (*Transmissi
 		Result:    "success",
 		Arguments: jsonTorrents,
 	}, nil
+}
+
+// formatTransmissionError converts internal errors to Transmission-compatible error messages.
+// Transmission RPC uses the "result" field for error reporting - this function
+// produces user-friendly error messages for common failure cases.
+func formatTransmissionError(err error) string {
+	var invalidErr *transfer.InvalidContentError
+	if errors.As(err, &invalidErr) {
+		return fmt.Sprintf("invalid torrent: %s", invalidErr.Reason)
+	}
+
+	var networkErr *transfer.NetworkError
+	if errors.As(err, &networkErr) {
+		return fmt.Sprintf("upload failed: %s", networkErr.APIMessage)
+	}
+
+	var dirErr *transfer.DirectoryError
+	if errors.As(err, &dirErr) {
+		return fmt.Sprintf("directory error: %s", dirErr.Reason)
+	}
+
+	var authErr *transfer.AuthenticationError
+	if errors.As(err, &authErr) {
+		return "authentication failed"
+	}
+
+	// Generic fallback for unknown errors
+	return fmt.Sprintf("error: %v", err)
 }
