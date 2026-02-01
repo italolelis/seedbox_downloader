@@ -10,19 +10,19 @@ See: .planning/PROJECT.md (updated 2026-01-31)
 ## Current Position
 
 Milestone: v1.1 Torrent File Support
-Phase: 5 of 6 (Transmission API Handler) - COMPLETE
-Plan: 2 of 2 complete
-Status: Phase 5 complete - Ready for Phase 6
-Last activity: 2026-02-01 — Completed 05-02-PLAN.md (Transmission error responses)
+Phase: 6 of 6 (Observability & Testing) - IN PROGRESS
+Plan: 2 of ? complete
+Status: Phase 6 in progress
+Last activity: 2026-02-01 — Completed 06-02-PLAN.md (Unit tests for transmission validation)
 
-Progress: [█████░░░░░] 56% (10/18 plans total across v1 + v1.1)
+Progress: [██████░░░░] 61% (11/18 plans total across v1 + v1.1)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 10 (v1: 6, v1.1: 4)
+- Total plans completed: 11 (v1: 6, v1.1: 5)
 - Average duration: ~2 minutes per plan (v1.1)
-- Total execution time: v1 < 1 day, v1.1 Phase 4 ~5 minutes, Phase 5 ~3 minutes
+- Total execution time: v1 < 1 day, v1.1 Phase 4 ~5 minutes, Phase 5 ~3 minutes, Phase 6 ~2 minutes so far
 
 **By Phase:**
 
@@ -33,14 +33,15 @@ Progress: [█████░░░░░] 56% (10/18 plans total across v1 + v1
 | 3. Operational Hygiene | 2/2 | Complete |
 | 4. Put.io Client Extension | 2/2 | Complete |
 | 5. Transmission API Handler | 2/2 | Complete |
-| 6. Observability & Testing | 0/? | Not started |
+| 6. Observability & Testing | 2/? | In progress |
 
 **Recent Trend:**
 - v1 shipped in < 1 day (2026-01-31)
 - v1.1 Phase 4 complete in ~5 minutes (2026-02-01)
 - v1.1 Phase 5 complete in ~3 minutes (2026-02-01)
+- v1.1 Phase 6 Plan 02 complete in 2 minutes (2026-02-01)
 
-*Updated after Phase 5 Plan 02 completion*
+*Updated after Phase 6 Plan 02 completion*
 
 ## Accumulated Context
 
@@ -63,6 +64,10 @@ Recent decisions from PROJECT.md affecting v1.1 work:
 - **Phase 5 Plan 02**: Preserve HTTP 400 for malformed JSON and unknown methods (protocol violations)
 - **Phase 5 Plan 02**: Use errors.As for type-safe error inspection (matches custom error type pattern from Phase 4)
 - **Phase 5 Plan 02**: Map custom error types to user-friendly messages (enables actionable error reporting)
+- **Phase 6 Plan 02**: Use testify/require instead of assert for fail-fast behavior on test failures
+- **Phase 6 Plan 02**: Generate bencode test data inline rather than external files for self-documenting tests
+- **Phase 6 Plan 02**: Test URLEncoding rejection by using bytes that produce +/ in StdEncoding (0xff pattern)
+- **Phase 6 Plan 02**: Document that Go's base64.StdEncoding is strict about padding (contrary to common assumption)
 
 ### Pending Todos
 
@@ -80,19 +85,20 @@ None yet.
 - ✓ Custom error type mapping to user-friendly messages
 - ✓ Protocol violations return HTTP 400 (malformed JSON, unknown methods)
 
-**Phase 6 readiness:**
-- ✅ Ready to start Phase 6 (Observability & Testing)
-- ✅ Error formatting function (formatTransmissionError) is unit-testable
-- ✅ Clear error response structure for integration tests
-- ✅ MetaInfo handling has helper functions (validateBencodeStructure, generateTorrentFilename) for unit testing
+**Phase 6 progress:**
+- ✅ Unit tests for validateBencodeStructure (12 test cases covering invalid syntax, wrong root types, missing fields)
+- ✅ Unit tests for base64 decoding edge cases (5 test cases including URLEncoding vs StdEncoding)
+- ✅ Unit tests for generateTorrentFilename (hash-based filename generation and uniqueness)
+- ✅ Unit tests for formatTransmissionError (all custom error type mappings)
+- ✅ Test data directory with documentation of fixture conventions
 - Need real .torrent files from amigos-share tracker for integration tests
-- Need unit tests for base64 decoding edge cases and bencode validation
+- Need integration tests for end-to-end MetaInfo processing
 - Need metrics for error type tracking (track InvalidContentError vs NetworkError frequency)
 
 ## Session Continuity
 
-Last session: 2026-02-01T12:39:51Z
-Stopped at: Completed 05-02-PLAN.md (Transmission error responses) - Phase 5 complete
+Last session: 2026-02-01T14:38:28Z
+Stopped at: Completed 06-02-PLAN.md (Unit tests for transmission validation)
 Resume file: None
 
-Next action: Run `/gsd:plan-phase 6` to plan Phase 6 (Observability & Testing)
+Next action: Continue Phase 6 with next plan (integration tests or metrics)
