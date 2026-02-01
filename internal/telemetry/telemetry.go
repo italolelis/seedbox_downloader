@@ -46,6 +46,7 @@ type Telemetry struct {
 	clientErrors          metric.Int64Counter
 	dbOperationsTotal     metric.Int64Counter
 	dbOperationDuration   metric.Float64Histogram
+	torrentTypeCounter    metric.Int64Counter
 
 	// System health
 	systemErrors metric.Int64Counter
@@ -236,6 +237,17 @@ func (t *Telemetry) RecordSystemError(ctx context.Context, component, errorType 
 	}
 }
 
+// RecordTorrentType records a torrent add operation by type.
+func (t *Telemetry) RecordTorrentType(ctx context.Context, torrentType string) {
+	if t.torrentTypeCounter != nil {
+		t.torrentTypeCounter.Add(ctx, 1,
+			metric.WithAttributes(
+				attribute.String("torrent_type", torrentType),
+			),
+		)
+	}
+}
+
 // Shutdown gracefully shuts down the telemetry system.
 func (t *Telemetry) Shutdown(ctx context.Context) error {
 	if mp, ok := t.meterProvider.(*sdkmetric.MeterProvider); ok {
@@ -383,6 +395,15 @@ func (t *Telemetry) initializeBusinessMetrics() error {
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create db.operations.duration histogram: %w", err)
+	}
+
+	t.torrentTypeCounter, err = t.meter.Int64Counter(
+		"torrents.type.total",
+		metric.WithDescription("Total torrents added by type (magnet vs metainfo)"),
+		metric.WithUnit("{torrent}"),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create torrents.type.total counter: %w", err)
 	}
 
 	return nil
