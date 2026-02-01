@@ -10,19 +10,19 @@ See: .planning/PROJECT.md (updated 2026-01-31)
 ## Current Position
 
 Milestone: v1.1 Torrent File Support
-Phase: 5 of 6 (Transmission API Handler) - IN PROGRESS
-Plan: 1 of 2 complete
-Status: Phase 5 in progress - Plan 05-01 complete
-Last activity: 2026-02-01 — Completed 05-01-PLAN.md (MetaInfo support)
+Phase: 5 of 6 (Transmission API Handler) - COMPLETE
+Plan: 2 of 2 complete
+Status: Phase 5 complete - Ready for Phase 6
+Last activity: 2026-02-01 — Completed 05-02-PLAN.md (Transmission error responses)
 
-Progress: [█████░░░░░] 50% (9/18 plans total across v1 + v1.1)
+Progress: [█████░░░░░] 56% (10/18 plans total across v1 + v1.1)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 9 (v1: 6, v1.1: 3)
+- Total plans completed: 10 (v1: 6, v1.1: 4)
 - Average duration: ~2 minutes per plan (v1.1)
-- Total execution time: v1 < 1 day, v1.1 Phase 4 ~5 minutes, Phase 5 Plan 01 ~2 minutes
+- Total execution time: v1 < 1 day, v1.1 Phase 4 ~5 minutes, Phase 5 ~3 minutes
 
 **By Phase:**
 
@@ -32,15 +32,15 @@ Progress: [█████░░░░░] 50% (9/18 plans total across v1 + v1.
 | 2. Resource Management | 2/2 | Complete |
 | 3. Operational Hygiene | 2/2 | Complete |
 | 4. Put.io Client Extension | 2/2 | Complete |
-| 5. Transmission API Handler | 1/2 | In progress |
+| 5. Transmission API Handler | 2/2 | Complete |
 | 6. Observability & Testing | 0/? | Not started |
 
 **Recent Trend:**
 - v1 shipped in < 1 day (2026-01-31)
 - v1.1 Phase 4 complete in ~5 minutes (2026-02-01)
-- v1.1 Phase 5 Plan 01 complete in ~2 minutes (2026-02-01)
+- v1.1 Phase 5 complete in ~3 minutes (2026-02-01)
 
-*Updated after Phase 5 Plan 01 completion*
+*Updated after Phase 5 Plan 02 completion*
 
 ## Accumulated Context
 
@@ -59,6 +59,10 @@ Recent decisions from PROJECT.md affecting v1.1 work:
 - **Phase 5 Plan 01**: Check size limit before bencode validation to prevent memory exhaustion on malformed uploads
 - **Phase 5 Plan 01**: Generate hash-based filenames to avoid encoding issues with special characters
 - **Phase 5 Plan 01**: Prioritize MetaInfo over FileName when both fields present (API-06 requirement)
+- **Phase 5 Plan 02**: Return HTTP 200 with error in result field for RPC errors (Transmission protocol compliance)
+- **Phase 5 Plan 02**: Preserve HTTP 400 for malformed JSON and unknown methods (protocol violations)
+- **Phase 5 Plan 02**: Use errors.As for type-safe error inspection (matches custom error type pattern from Phase 4)
+- **Phase 5 Plan 02**: Map custom error types to user-friendly messages (enables actionable error reporting)
 
 ### Pending Todos
 
@@ -66,25 +70,29 @@ None yet.
 
 ### Blockers/Concerns
 
-**Phase 5 Plan 01 complete:**
+**Phase 5 complete:**
 - ✓ MetaInfo field detection and prioritization implemented
 - ✓ Base64 decoding with StdEncoding working
 - ✓ Bencode validation using zeebo/bencode v1.0.0
 - ✓ Size limit enforcement before bencode parsing
 - ✓ Backward compatibility maintained for magnet links
-
-**Phase 5 Plan 02 readiness:**
-- Need to implement Transmission-compatible error responses (HTTP 200 with error in "result" field)
-- Current implementation returns HTTP 400 with error string (breaks Transmission client compatibility)
+- ✓ Transmission-compatible error responses (HTTP 200 with error in result field)
+- ✓ Custom error type mapping to user-friendly messages
+- ✓ Protocol violations return HTTP 400 (malformed JSON, unknown methods)
 
 **Phase 6 readiness:**
+- ✅ Ready to start Phase 6 (Observability & Testing)
+- ✅ Error formatting function (formatTransmissionError) is unit-testable
+- ✅ Clear error response structure for integration tests
+- ✅ MetaInfo handling has helper functions (validateBencodeStructure, generateTorrentFilename) for unit testing
 - Need real .torrent files from amigos-share tracker for integration tests
 - Need unit tests for base64 decoding edge cases and bencode validation
+- Need metrics for error type tracking (track InvalidContentError vs NetworkError frequency)
 
 ## Session Continuity
 
-Last session: 2026-02-01T12:35:36Z
-Stopped at: Completed 05-01-PLAN.md (MetaInfo support)
+Last session: 2026-02-01T12:39:51Z
+Stopped at: Completed 05-02-PLAN.md (Transmission error responses) - Phase 5 complete
 Resume file: None
 
-Next action: Execute 05-02-PLAN.md (Transmission error responses) or run `/gsd:plan-phase 5` if Plan 02 not yet created
+Next action: Run `/gsd:plan-phase 6` to plan Phase 6 (Observability & Testing)
