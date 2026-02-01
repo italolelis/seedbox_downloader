@@ -190,8 +190,19 @@ func (h *TransmissionHandler) HandleRPC(w http.ResponseWriter, r *http.Request) 
 
 	if err != nil {
 		logger.Error("failed to handle request", "method", req.Method, "err", err)
-		http.Error(w, err.Error(), http.StatusBadRequest)
 
+		// Transmission RPC returns HTTP 200 with error in result field
+		// This allows clients to display specific error messages
+		errorResponse := &TransmissionResponse{
+			Result: formatTransmissionError(err),
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if encodeErr := json.NewEncoder(w).Encode(errorResponse); encodeErr != nil {
+			// Only use HTTP error for server-side failures (encoding)
+			logger.Error("failed to encode error response", "err", encodeErr)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+		}
 		return
 	}
 
