@@ -71,10 +71,11 @@ Plans:
   5. Existing magnet link behavior (FileName field) works identically after changes
   6. When both MetaInfo and FileName present, MetaInfo takes priority
 **Plans**: 2 plans
+**Status**: Complete (2026-02-01)
 
 Plans:
-- [ ] 05-01-PLAN.md — Add bencode dependency and extend handleTorrentAdd for MetaInfo support
-- [ ] 05-02-PLAN.md — Fix Transmission-compatible error responses
+- [x] 05-01-PLAN.md — Add bencode dependency and extend handleTorrentAdd for MetaInfo support
+- [x] 05-02-PLAN.md — Fix Transmission-compatible error responses
 
 #### Phase 6: Observability & Testing
 **Goal**: Production visibility and test coverage for .torrent file handling
@@ -104,8 +105,8 @@ Phases execute in numeric order: 4 → 5 → 6
 | 2. Resource Management | v1 | 2/2 | Complete | 2026-01-31 |
 | 3. Operational Hygiene | v1 | 2/2 | Complete | 2026-01-31 |
 | 4. Put.io Client Extension | v1.1 | 2/2 | Complete | 2026-02-01 |
-| 5. Transmission API Handler | v1.1 | 0/2 | Not started | - |
+| 5. Transmission API Handler | v1.1 | 2/2 | Complete | 2026-02-01 |
 | 6. Observability & Testing | v1.1 | 0/? | Not started | - |
 
 ---
-*Last updated: 2026-02-01 after Phase 5 planning*
+*Last updated: 2026-02-01 after Phase 5 execution*
