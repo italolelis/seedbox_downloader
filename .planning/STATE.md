@@ -11,18 +11,18 @@ See: .planning/PROJECT.md (updated 2026-01-31)
 
 Milestone: v1.1 Torrent File Support
 Phase: 6 of 6 (Observability & Testing) - IN PROGRESS
-Plan: 2 of ? complete
+Plan: 3 of ? complete
 Status: Phase 6 in progress
-Last activity: 2026-02-01 — Completed 06-02-PLAN.md (Unit tests for transmission validation)
+Last activity: 2026-02-01 — Completed 06-03-PLAN.md (Integration tests for Transmission RPC handler)
 
-Progress: [██████░░░░] 61% (11/18 plans total across v1 + v1.1)
+Progress: [██████░░░░] 67% (12/18 plans total across v1 + v1.1)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 11 (v1: 6, v1.1: 5)
+- Total plans completed: 12 (v1: 6, v1.1: 6)
 - Average duration: ~2 minutes per plan (v1.1)
-- Total execution time: v1 < 1 day, v1.1 Phase 4 ~5 minutes, Phase 5 ~3 minutes, Phase 6 ~2 minutes so far
+- Total execution time: v1 < 1 day, v1.1 Phase 4 ~5 minutes, Phase 5 ~3 minutes, Phase 6 ~6 minutes so far
 
 **By Phase:**
 
@@ -33,15 +33,15 @@ Progress: [██████░░░░] 61% (11/18 plans total across v1 + v1
 | 3. Operational Hygiene | 2/2 | Complete |
 | 4. Put.io Client Extension | 2/2 | Complete |
 | 5. Transmission API Handler | 2/2 | Complete |
-| 6. Observability & Testing | 2/? | In progress |
+| 6. Observability & Testing | 3/? | In progress |
 
 **Recent Trend:**
 - v1 shipped in < 1 day (2026-01-31)
 - v1.1 Phase 4 complete in ~5 minutes (2026-02-01)
 - v1.1 Phase 5 complete in ~3 minutes (2026-02-01)
-- v1.1 Phase 6 Plan 02 complete in 2 minutes (2026-02-01)
+- v1.1 Phase 6 Plans 01-03 complete in ~6 minutes (2026-02-01)
 
-*Updated after Phase 6 Plan 02 completion*
+*Updated after Phase 6 Plan 03 completion*
 
 ## Accumulated Context
 
@@ -72,6 +72,9 @@ Recent decisions from PROJECT.md affecting v1.1 work:
 - **Phase 6 Plan 02**: Generate bencode test data inline rather than external files for self-documenting tests
 - **Phase 6 Plan 02**: Test URLEncoding rejection by using bytes that produce +/ in StdEncoding (0xff pattern)
 - **Phase 6 Plan 02**: Document that Go's base64.StdEncoding is strict about padding (contrary to common assumption)
+- **Phase 6 Plan 03**: Use interface-based dependency injection (DownloadClient) for testability
+- **Phase 6 Plan 03**: Mock client tracks call patterns to verify routing logic (addTransferCalled vs addTransferByBytesCalled)
+- **Phase 6 Plan 03**: Real torrent file test skips gracefully when fixture not present (enables optional manual testing)
 
 ### Pending Todos
 
@@ -98,13 +101,18 @@ None yet.
 - ✅ Plan 02: Unit tests for generateTorrentFilename (hash-based filename generation and uniqueness)
 - ✅ Plan 02: Unit tests for formatTransmissionError (all custom error type mappings)
 - ✅ Plan 02: Test data directory with documentation of fixture conventions
-- Need real .torrent files from amigos-share tracker for integration tests
-- Need integration tests for end-to-end MetaInfo processing
+- ✅ Plan 03: DownloadClient interface for testable Put.io operations
+- ✅ Plan 03: Mock Put.io client for integration testing
+- ✅ Plan 03: 8 integration tests for Transmission RPC handler (MetaInfo, magnet, errors, auth)
+- ✅ Plan 03: Backward compatibility verified (magnet links use AddTransfer)
+- ✅ Plan 03: MetaInfo prioritization verified (MetaInfo takes precedence over FileName)
+- ✅ Plan 03: Transmission protocol compliance verified (HTTP 200 with error in result)
+- ✅ Plan 03: Test coverage at 56.2% for internal/http/rest package
 
 ## Session Continuity
 
-Last session: 2026-02-01T14:38:42Z
-Stopped at: Completed 06-01-PLAN.md (Observability for torrent type tracking) and 06-02-PLAN.md (Unit tests)
+Last session: 2026-02-01T14:43:37Z
+Stopped at: Completed 06-03-PLAN.md (Integration tests for Transmission RPC handler)
 Resume file: None
 
-Next action: Continue Phase 6 with next plan (integration tests or additional observability features)
+Next action: Continue Phase 6 with next plan (if any remaining) or proceed to phase completion
