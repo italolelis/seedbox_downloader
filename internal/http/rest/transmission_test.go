@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"testing"
@@ -8,6 +9,45 @@ import (
 	"github.com/italolelis/seedbox_downloader/internal/transfer"
 	"github.com/stretchr/testify/require"
 )
+
+// mockPutioClient implements DownloadClient interface for testing.
+type mockPutioClient struct {
+	addTransferFunc          func(ctx context.Context, magnetLink, parentName string) (*transfer.Transfer, error)
+	addTransferByBytesFunc   func(ctx context.Context, content []byte, filename, parentName string) (*transfer.Transfer, error)
+	addTransferCalled        bool
+	addTransferByBytesCalled bool
+	lastMagnetLink           string
+	lastFilename             string
+	lastParentName           string
+}
+
+func (m *mockPutioClient) AddTransfer(ctx context.Context, magnetLink, parentName string) (*transfer.Transfer, error) {
+	m.addTransferCalled = true
+	m.lastMagnetLink = magnetLink
+	m.lastParentName = parentName
+	if m.addTransferFunc != nil {
+		return m.addTransferFunc(ctx, magnetLink, parentName)
+	}
+	return &transfer.Transfer{ID: "mock-transfer-id", Name: "mock-transfer"}, nil
+}
+
+func (m *mockPutioClient) AddTransferByBytes(ctx context.Context, content []byte, filename, parentName string) (*transfer.Transfer, error) {
+	m.addTransferByBytesCalled = true
+	m.lastFilename = filename
+	m.lastParentName = parentName
+	if m.addTransferByBytesFunc != nil {
+		return m.addTransferByBytesFunc(ctx, content, filename, parentName)
+	}
+	return &transfer.Transfer{ID: "mock-transfer-id", Name: "mock-transfer"}, nil
+}
+
+func (m *mockPutioClient) GetTaggedTorrents(ctx context.Context, label string) ([]*transfer.Transfer, error) {
+	return []*transfer.Transfer{}, nil
+}
+
+func (m *mockPutioClient) RemoveTransfers(ctx context.Context, ids []string, deleteData bool) error {
+	return nil
+}
 
 func TestValidateBencodeStructure(t *testing.T) {
 	tests := []struct {

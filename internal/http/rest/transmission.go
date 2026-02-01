@@ -13,7 +13,6 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/italolelis/seedbox_downloader/internal/dc/putio"
 	"github.com/italolelis/seedbox_downloader/internal/logctx"
 	"github.com/italolelis/seedbox_downloader/internal/telemetry"
 	"github.com/italolelis/seedbox_downloader/internal/transfer"
@@ -23,6 +22,15 @@ import (
 const sessionID = "useless-session-id"
 
 const maxTorrentSize = 10 * 1024 * 1024 // 10MB - matches Phase 4 limit
+
+// DownloadClient defines the interface for torrent client operations.
+// This interface enables mocking in tests while the production code uses *putio.Client.
+type DownloadClient interface {
+	AddTransfer(ctx context.Context, magnetLink, parentName string) (*transfer.Transfer, error)
+	AddTransferByBytes(ctx context.Context, content []byte, filename, parentName string) (*transfer.Transfer, error)
+	GetTaggedTorrents(ctx context.Context, label string) ([]*transfer.Transfer, error)
+	RemoveTransfers(ctx context.Context, ids []string, deleteData bool) error
+}
 
 type TransmissionTorrentStatus int
 
@@ -105,14 +113,14 @@ func NewTransmissionConfig(downloadDir string) *TransmissionConfig {
 type TransmissionHandler struct {
 	username    string
 	password    string
-	dc          *putio.Client
+	dc          DownloadClient
 	label       string
 	downloadDir string
 	telemetry   *telemetry.Telemetry
 }
 
 // NewTransmissionHandler creates a new content handler.
-func NewTransmissionHandler(username, password string, dc *putio.Client, label string, downloadDir string, t *telemetry.Telemetry) *TransmissionHandler {
+func NewTransmissionHandler(username, password string, dc DownloadClient, label string, downloadDir string, t *telemetry.Telemetry) *TransmissionHandler {
 	return &TransmissionHandler{
 		username:    username,
 		password:    password,
