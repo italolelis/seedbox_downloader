@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-02-01)
 
 **Core value:** The application must run reliably 24/7 without crashes, resource leaks, or silent failures.
-**Current focus:** Planning next milestone
+**Current focus:** v1.2 Logging Improvements - defining requirements
 
 ## Current Position
 
-Milestone: v1.1 Torrent File Support — ✅ SHIPPED (2026-02-01)
-Phase: All 6 phases complete
-Status: Ready for next milestone planning
-Last activity: 2026-02-01 — v1.1 milestone completed and archived
+Milestone: v1.2 Logging Improvements
+Phase: Not started (defining requirements)
+Status: Defining requirements
+Last activity: 2026-02-01 — Milestone v1.2 started
 
-Progress: [██████████] 100% (13/13 plans shipped across v1 + v1.1)
+Progress: Starting new milestone
 
 ## Shipped Milestones
 
@@ -33,11 +33,7 @@ Progress: [██████████] 100% (13/13 plans shipped across v1 +
 
 ## Next Steps
 
-Run `/gsd:new-milestone` to start next milestone cycle:
-- Adaptive questioning to gather context
-- Requirements definition
-- Roadmap creation
-- Phase planning
+Defining requirements for v1.2 logging improvements.
 
 ---
-*Updated: 2026-02-01 after v1.1 milestone completion*
+*Updated: 2026-02-01 for v1.2 milestone start*

@@ -8,7 +8,18 @@ A Go-based automated downloader that orchestrates transfers from seedbox/torrent
 
 The application must run reliably 24/7 without crashes, resource leaks, or silent failures.
 
-## Latest Milestone: v1.1 Torrent File Support (Shipped: 2026-02-01)
+## Current Milestone: v1.2 Logging Improvements
+
+**Goal:** Make logs tell the story of what the application is doing during its lifecycle
+
+**Target features:**
+- Startup sequence logs that clearly show initialization order and readiness state
+- Normal operation logs that explain what's happening (torrent flow, polling, cleanup)
+- Consistent log levels throughout (INFO for lifecycle events, DEBUG for details, WARN/ERROR for problems)
+- Ability to trace a torrent through the entire pipeline from webhook → download → import → cleanup
+- Remove confusing/redundant log messages that add noise without value
+
+## Previous Milestone: v1.1 Torrent File Support (Shipped: 2026-02-01)
 
 **Goal:** Enable Sonarr/Radarr to download content from .torrent-only trackers through Put.io proxy
 
@@ -115,4 +126,4 @@ The application must run reliably 24/7 without crashes, resource leaks, or silen
 | Database validation with exponential backoff | Fail-fast on critical dependency with retry | ✓ Good - 3 attempts before exit, consistent with HTTP retries |
 
 ---
-*Last updated: 2026-02-01 after v1.1 milestone completion*
+*Last updated: 2026-02-01 after v1.2 milestone initialization*
