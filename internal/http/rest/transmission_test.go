@@ -3,7 +3,13 @@ package rest
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/italolelis/seedbox_downloader/internal/transfer"
@@ -319,4 +325,243 @@ func TestFormatTransmissionError(t *testing.T) {
 			require.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+func TestHandleTorrentAdd_MetaInfo_Success(t *testing.T) {
+	// Create valid bencode content
+	validTorrent := []byte("d4:infod4:name4:testee")
+	metainfo := base64.StdEncoding.EncodeToString(validTorrent)
+
+	mockClient := &mockPutioClient{
+		addTransferByBytesFunc: func(ctx context.Context, content []byte, filename, parentName string) (*transfer.Transfer, error) {
+			return &transfer.Transfer{
+				ID:   "12345",
+				Name: "test-transfer",
+			}, nil
+		},
+	}
+
+	handler := NewTransmissionHandler("testuser", "testpass", mockClient, "test-label", "/downloads", nil)
+
+	reqBody := fmt.Sprintf(`{
+		"method": "torrent-add",
+		"arguments": {
+			"metainfo": "%s"
+		}
+	}`, metainfo)
+
+	req := httptest.NewRequest(http.MethodPost, "/transmission/rpc", strings.NewReader(reqBody))
+	req.SetBasicAuth("testuser", "testpass")
+
+	w := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "expected HTTP 200")
+
+	var resp TransmissionResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(t, "success", resp.Result)
+	require.Contains(t, string(resp.Arguments), "torrent-added")
+
+	// Verify correct method was called
+	require.True(t, mockClient.addTransferByBytesCalled, "AddTransferByBytes should be called for metainfo")
+	require.False(t, mockClient.addTransferCalled, "AddTransfer should not be called for metainfo")
+}
+
+func TestHandleTorrentAdd_MagnetLink_BackwardCompatibility(t *testing.T) {
+	mockClient := &mockPutioClient{
+		addTransferFunc: func(ctx context.Context, magnetLink, parentName string) (*transfer.Transfer, error) {
+			return &transfer.Transfer{
+				ID:   "67890",
+				Name: "magnet-transfer",
+			}, nil
+		},
+	}
+
+	handler := NewTransmissionHandler("testuser", "testpass", mockClient, "test-label", "/downloads", nil)
+
+	reqBody := `{
+		"method": "torrent-add",
+		"arguments": {
+			"filename": "magnet:?xt=urn:btih:ABCDEF1234567890ABCDEF1234567890ABCDEF12&dn=Test+Torrent"
+		}
+	}`
+
+	req := httptest.NewRequest(http.MethodPost, "/transmission/rpc", strings.NewReader(reqBody))
+	req.SetBasicAuth("testuser", "testpass")
+
+	w := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "expected HTTP 200")
+
+	var resp TransmissionResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(t, "success", resp.Result)
+	require.Contains(t, string(resp.Arguments), "torrent-added")
+
+	// Verify correct method was called - this is the key backward compatibility check
+	require.True(t, mockClient.addTransferCalled, "AddTransfer should be called for magnet links")
+	require.False(t, mockClient.addTransferByBytesCalled, "AddTransferByBytes should not be called for magnet links")
+	require.Contains(t, mockClient.lastMagnetLink, "magnet:", "magnet link should be passed to AddTransfer")
+}
+
+func TestHandleTorrentAdd_MetaInfo_PrioritizedOverFileName(t *testing.T) {
+	// When both MetaInfo and FileName are present, MetaInfo should be used (API-06)
+	validTorrent := []byte("d4:infod4:name4:testee")
+	metainfo := base64.StdEncoding.EncodeToString(validTorrent)
+
+	mockClient := &mockPutioClient{}
+
+	handler := NewTransmissionHandler("testuser", "testpass", mockClient, "test-label", "/downloads", nil)
+
+	// Request with BOTH metainfo and filename
+	reqBody := fmt.Sprintf(`{
+		"method": "torrent-add",
+		"arguments": {
+			"metainfo": "%s",
+			"filename": "magnet:?xt=urn:btih:IGNORED"
+		}
+	}`, metainfo)
+
+	req := httptest.NewRequest(http.MethodPost, "/transmission/rpc", strings.NewReader(reqBody))
+	req.SetBasicAuth("testuser", "testpass")
+
+	w := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	// MetaInfo should be prioritized - AddTransferByBytes called, not AddTransfer
+	require.True(t, mockClient.addTransferByBytesCalled, "MetaInfo should be prioritized over FileName")
+	require.False(t, mockClient.addTransferCalled, "FileName should be ignored when MetaInfo present")
+}
+
+func TestHandleTorrentAdd_InvalidBase64_ReturnsTransmissionError(t *testing.T) {
+	mockClient := &mockPutioClient{}
+	handler := NewTransmissionHandler("testuser", "testpass", mockClient, "test-label", "/downloads", nil)
+
+	// Invalid base64 - contains characters not in base64 alphabet
+	reqBody := `{
+		"method": "torrent-add",
+		"arguments": {
+			"metainfo": "!!!invalid-base64!!!"
+		}
+	}`
+
+	req := httptest.NewRequest(http.MethodPost, "/transmission/rpc", strings.NewReader(reqBody))
+	req.SetBasicAuth("testuser", "testpass")
+
+	w := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(w, req)
+
+	// Transmission protocol: HTTP 200 with error in result field
+	require.Equal(t, http.StatusOK, w.Code, "Transmission errors should return HTTP 200")
+
+	var resp TransmissionResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Contains(t, resp.Result, "invalid torrent", "error should indicate invalid torrent")
+	require.Contains(t, resp.Result, "base64", "error should mention base64")
+}
+
+func TestHandleTorrentAdd_InvalidBencode_ReturnsTransmissionError(t *testing.T) {
+	mockClient := &mockPutioClient{}
+	handler := NewTransmissionHandler("testuser", "testpass", mockClient, "test-label", "/downloads", nil)
+
+	// Valid base64 but invalid bencode content
+	invalidBencode := base64.StdEncoding.EncodeToString([]byte("not valid bencode"))
+
+	reqBody := fmt.Sprintf(`{
+		"method": "torrent-add",
+		"arguments": {
+			"metainfo": "%s"
+		}
+	}`, invalidBencode)
+
+	req := httptest.NewRequest(http.MethodPost, "/transmission/rpc", strings.NewReader(reqBody))
+	req.SetBasicAuth("testuser", "testpass")
+
+	w := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "Transmission errors should return HTTP 200")
+
+	var resp TransmissionResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Contains(t, resp.Result, "invalid torrent", "error should indicate invalid torrent")
+	require.Contains(t, resp.Result, "bencode", "error should mention bencode")
+}
+
+func TestHandleTorrentAdd_AuthenticationRequired(t *testing.T) {
+	mockClient := &mockPutioClient{}
+	handler := NewTransmissionHandler("testuser", "testpass", mockClient, "test-label", "/downloads", nil)
+
+	reqBody := `{"method": "torrent-add", "arguments": {"filename": "magnet:?xt=urn:btih:TEST"}}`
+
+	// Request without authentication
+	req := httptest.NewRequest(http.MethodPost, "/transmission/rpc", strings.NewReader(reqBody))
+	// Note: NOT calling req.SetBasicAuth()
+
+	w := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusUnauthorized, w.Code, "missing auth should return 401")
+}
+
+func TestHandleTorrentAdd_WrongCredentials(t *testing.T) {
+	mockClient := &mockPutioClient{}
+	handler := NewTransmissionHandler("testuser", "testpass", mockClient, "test-label", "/downloads", nil)
+
+	reqBody := `{"method": "torrent-add", "arguments": {"filename": "magnet:?xt=urn:btih:TEST"}}`
+
+	req := httptest.NewRequest(http.MethodPost, "/transmission/rpc", strings.NewReader(reqBody))
+	req.SetBasicAuth("wronguser", "wrongpass")
+
+	w := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusUnauthorized, w.Code, "wrong credentials should return 401")
+}
+
+// TestHandleTorrentAdd_RealTorrentFile tests with a real .torrent file fixture (TEST-03 requirement).
+// This test is skipped if the fixture file is not present - obtain a valid .torrent from your tracker.
+func TestHandleTorrentAdd_RealTorrentFile(t *testing.T) {
+	torrentPath := "testdata/valid.torrent"
+	torrentData, err := os.ReadFile(torrentPath)
+	if os.IsNotExist(err) {
+		t.Skip("Skipping: testdata/valid.torrent not present. See testdata/README.md for instructions.")
+	}
+	require.NoError(t, err, "failed to read torrent file")
+
+	metainfo := base64.StdEncoding.EncodeToString(torrentData)
+
+	mockClient := &mockPutioClient{
+		addTransferByBytesFunc: func(ctx context.Context, content []byte, filename, parentName string) (*transfer.Transfer, error) {
+			// Verify the content matches what we sent
+			require.Equal(t, torrentData, content, "torrent content should match fixture")
+			return &transfer.Transfer{ID: "real-torrent-id", Name: "real-transfer"}, nil
+		},
+	}
+
+	handler := NewTransmissionHandler("testuser", "testpass", mockClient, "test-label", "/downloads", nil)
+
+	reqBody := fmt.Sprintf(`{
+		"method": "torrent-add",
+		"arguments": {
+			"metainfo": "%s"
+		}
+	}`, metainfo)
+
+	req := httptest.NewRequest(http.MethodPost, "/transmission/rpc", strings.NewReader(reqBody))
+	req.SetBasicAuth("testuser", "testpass")
+
+	w := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "expected HTTP 200")
+
+	var resp TransmissionResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(t, "success", resp.Result, "should successfully process real torrent file")
+	require.True(t, mockClient.addTransferByBytesCalled, "AddTransferByBytes should be called")
 }
