@@ -81,37 +81,37 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TRACE-01 | TBD | Pending |
-| TRACE-02 | TBD | Pending |
-| TRACE-03 | TBD | Pending |
-| TRACE-04 | TBD | Pending |
-| TRACE-05 | TBD | Pending |
-| TRACE-06 | TBD | Pending |
-| LIFECYCLE-01 | TBD | Pending |
-| LIFECYCLE-02 | TBD | Pending |
-| LIFECYCLE-03 | TBD | Pending |
-| LIFECYCLE-04 | TBD | Pending |
-| LIFECYCLE-05 | TBD | Pending |
-| LIFECYCLE-06 | TBD | Pending |
-| LEVELS-01 | TBD | Pending |
-| LEVELS-02 | TBD | Pending |
-| LEVELS-03 | TBD | Pending |
-| LEVELS-04 | TBD | Pending |
-| LEVELS-05 | TBD | Pending |
-| LEVELS-06 | TBD | Pending |
-| LEVELS-07 | TBD | Pending |
-| HTTP-01 | TBD | Pending |
-| HTTP-02 | TBD | Pending |
-| HTTP-03 | TBD | Pending |
-| HTTP-04 | TBD | Pending |
-| HTTP-05 | TBD | Pending |
-| HTTP-06 | TBD | Pending |
+| TRACE-01 | Phase 7 | Pending |
+| TRACE-02 | Phase 7 | Pending |
+| TRACE-03 | Phase 7 | Pending |
+| TRACE-04 | Phase 7 | Pending |
+| TRACE-05 | Phase 7 | Pending |
+| TRACE-06 | Phase 7 | Pending |
+| LIFECYCLE-01 | Phase 8 | Pending |
+| LIFECYCLE-02 | Phase 8 | Pending |
+| LIFECYCLE-03 | Phase 8 | Pending |
+| LIFECYCLE-04 | Phase 8 | Pending |
+| LIFECYCLE-05 | Phase 8 | Pending |
+| LIFECYCLE-06 | Phase 8 | Pending |
+| LEVELS-01 | Phase 9 | Pending |
+| LEVELS-02 | Phase 9 | Pending |
+| LEVELS-03 | Phase 9 | Pending |
+| LEVELS-04 | Phase 9 | Pending |
+| LEVELS-05 | Phase 9 | Pending |
+| LEVELS-06 | Phase 9 | Pending |
+| LEVELS-07 | Phase 9 | Pending |
+| HTTP-01 | Phase 10 | Pending |
+| HTTP-02 | Phase 10 | Pending |
+| HTTP-03 | Phase 10 | Pending |
+| HTTP-04 | Phase 10 | Pending |
+| HTTP-05 | Phase 10 | Pending |
+| HTTP-06 | Phase 10 | Pending |
 
 **Coverage:**
 - v1.2 requirements: 25 total
-- Mapped to phases: 0 (roadmap not created yet)
-- Unmapped: 25
+- Mapped to phases: 25 (100%)
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-02-01*
-*Last updated: 2026-02-01 after initial definition*
+*Last updated: 2026-02-02 after roadmap creation*
