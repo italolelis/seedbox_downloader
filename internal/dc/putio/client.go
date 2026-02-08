@@ -55,22 +55,30 @@ func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*transfer
 			continue
 		}
 
-		file, err := c.putioClient.Files.Get(ctx, t.FileID)
-		if err != nil {
-			logger.ErrorContext(ctx, "failed to get file", "transfer_id", t.ID, "err", err)
+		// Use SaveParentID for tag matching (works for both in-progress and completed transfers)
+		if t.SaveParentID == 0 {
+			logger.DebugContext(ctx, "skipping transfer with no save parent", "transfer_id", t.ID, "status", t.Status)
 
 			continue
 		}
 
-		parent, err := c.putioClient.Files.Get(ctx, file.ParentID)
+		parent, err := c.putioClient.Files.Get(ctx, t.SaveParentID)
 		if err != nil {
-			logger.ErrorContext(ctx, "failed to get parent file", "file_id", file.ID, "err", err)
+			logger.ErrorContext(ctx, "failed to get parent folder", "transfer_id", t.ID, "save_parent_id", t.SaveParentID, "err", err)
 
 			continue
 		}
 
 		if parent.IsDir() && parent.Name != tag {
-			logger.DebugContext(ctx, "skipping file", "file_id", file.ID, "file_name", file.Name, "parent_name", parent.Name)
+			logger.DebugContext(ctx, "skipping transfer, parent folder doesn't match tag",
+				"transfer_id", t.ID, "parent_name", parent.Name, "expected_tag", tag)
+
+			continue
+		}
+
+		file, err := c.putioClient.Files.Get(ctx, t.FileID)
+		if err != nil {
+			logger.ErrorContext(ctx, "failed to get file", "transfer_id", t.ID, "err", err)
 
 			continue
 		}

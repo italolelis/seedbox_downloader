@@ -3,9 +3,17 @@ package putio
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/italolelis/seedbox_downloader/internal/transfer"
+	putio "github.com/putdotio/go-putio"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestValidateTorrentFilename_ValidExtensions(t *testing.T) {
@@ -127,5 +135,176 @@ func TestAddTransferByBytes_FileTooLarge(t *testing.T) {
 		if !found {
 			t.Errorf("expected reason to contain %q, got %q", expectedSubstring, invalidErr.Reason)
 		}
+	}
+}
+
+func newTestClient(serverURL string) *Client {
+	goputioClient := putio.NewClient(nil)
+	u, _ := url.Parse(serverURL)
+	goputioClient.BaseURL = u
+
+	return &Client{putioClient: goputioClient}
+}
+
+func TestGetTaggedTorrents_SaveParentIDMatching(t *testing.T) {
+	tests := []struct {
+		name         string
+		tag          string
+		transfers    string
+		fileHandlers map[string]string // file ID -> response body
+		fileStatus   map[string]int    // file ID -> status code
+		wantCount    int
+		wantNames    []string
+		wantLabels   []string
+	}{
+		{
+			name: "matching_tag",
+			tag:  "mytag",
+			transfers: `{"transfers":[{
+				"id":1,"name":"test-transfer","file_id":100,"save_parent_id":200,
+				"status":"COMPLETED","percent_done":100,"size":1000,
+				"source":"magnet:test","downloaded":1000,
+				"peers_connected":0,"peers_getting_from_us":0,"peers_sending_to_us":0
+			}]}`,
+			fileHandlers: map[string]string{
+				"200": `{"file":{"id":200,"name":"mytag","size":0,"file_type":"FOLDER","content_type":"application/x-directory"}}`,
+				"100": `{"file":{"id":100,"name":"test-file.mkv","size":1000,"file_type":"VIDEO","content_type":"video/x-matroska"}}`,
+			},
+			wantCount:  1,
+			wantNames:  []string{"test-transfer"},
+			wantLabels: []string{"mytag"},
+		},
+		{
+			name: "non_matching_tag",
+			tag:  "mytag",
+			transfers: `{"transfers":[{
+				"id":2,"name":"other-transfer","file_id":100,"save_parent_id":200,
+				"status":"COMPLETED","percent_done":100,"size":1000,
+				"source":"magnet:test","downloaded":1000,
+				"peers_connected":0,"peers_getting_from_us":0,"peers_sending_to_us":0
+			}]}`,
+			fileHandlers: map[string]string{
+				"200": `{"file":{"id":200,"name":"othertag","size":0,"file_type":"FOLDER","content_type":"application/x-directory"}}`,
+			},
+			wantCount: 0,
+		},
+		{
+			name: "saveparentid_zero",
+			tag:  "mytag",
+			transfers: `{"transfers":[{
+				"id":3,"name":"no-parent-transfer","file_id":100,"save_parent_id":0,
+				"status":"COMPLETED","percent_done":100,"size":1000,
+				"source":"magnet:test","downloaded":1000,
+				"peers_connected":0,"peers_getting_from_us":0,"peers_sending_to_us":0
+			}]}`,
+			wantCount: 0,
+		},
+		{
+			name: "fileid_zero",
+			tag:  "mytag",
+			transfers: `{"transfers":[{
+				"id":4,"name":"in-progress-transfer","file_id":0,"save_parent_id":200,
+				"status":"DOWNLOADING","percent_done":50,"size":2000,
+				"source":"magnet:test","downloaded":1000,
+				"peers_connected":5,"peers_getting_from_us":0,"peers_sending_to_us":3
+			}]}`,
+			wantCount: 0,
+		},
+		{
+			name: "parent_fetch_error",
+			tag:  "mytag",
+			transfers: `{"transfers":[{
+				"id":5,"name":"error-transfer","file_id":100,"save_parent_id":999,
+				"status":"COMPLETED","percent_done":100,"size":1000,
+				"source":"magnet:test","downloaded":1000,
+				"peers_connected":0,"peers_getting_from_us":0,"peers_sending_to_us":0
+			}]}`,
+			fileHandlers: map[string]string{},
+			fileStatus: map[string]int{
+				"999": http.StatusInternalServerError,
+			},
+			wantCount: 0,
+		},
+		{
+			name: "multiple_transfers_mixed",
+			tag:  "mytag",
+			transfers: `{"transfers":[
+				{"id":10,"name":"matching-transfer","file_id":100,"save_parent_id":200,
+				 "status":"COMPLETED","percent_done":100,"size":1000,
+				 "source":"magnet:test1","downloaded":1000,
+				 "peers_connected":0,"peers_getting_from_us":0,"peers_sending_to_us":0},
+				{"id":11,"name":"wrong-tag-transfer","file_id":101,"save_parent_id":201,
+				 "status":"COMPLETED","percent_done":100,"size":2000,
+				 "source":"magnet:test2","downloaded":2000,
+				 "peers_connected":0,"peers_getting_from_us":0,"peers_sending_to_us":0},
+				{"id":12,"name":"no-parent-transfer","file_id":102,"save_parent_id":0,
+				 "status":"COMPLETED","percent_done":100,"size":3000,
+				 "source":"magnet:test3","downloaded":3000,
+				 "peers_connected":0,"peers_getting_from_us":0,"peers_sending_to_us":0}
+			]}`,
+			fileHandlers: map[string]string{
+				"200": `{"file":{"id":200,"name":"mytag","size":0,"file_type":"FOLDER","content_type":"application/x-directory"}}`,
+				"100": `{"file":{"id":100,"name":"matching-file.mkv","size":1000,"file_type":"VIDEO","content_type":"video/x-matroska"}}`,
+				"201": `{"file":{"id":201,"name":"othertag","size":0,"file_type":"FOLDER","content_type":"application/x-directory"}}`,
+			},
+			wantCount:  1,
+			wantNames:  []string{"matching-transfer"},
+			wantLabels: []string{"mytag"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+
+			mux.HandleFunc("/v2/transfers/list", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprint(w, tt.transfers)
+			})
+
+			mux.HandleFunc("/v2/files/", func(w http.ResponseWriter, r *http.Request) {
+				fileID := strings.TrimPrefix(r.URL.Path, "/v2/files/")
+				w.Header().Set("Content-Type", "application/json")
+
+				if tt.fileStatus != nil {
+					if status, ok := tt.fileStatus[fileID]; ok {
+						w.WriteHeader(status)
+						fmt.Fprint(w, `{"error_type":"ERROR","error_message":"server error"}`)
+						return
+					}
+				}
+
+				if tt.fileHandlers != nil {
+					if body, ok := tt.fileHandlers[fileID]; ok {
+						fmt.Fprint(w, body)
+						return
+					}
+				}
+
+				w.WriteHeader(http.StatusNotFound)
+				fmt.Fprint(w, `{"error_type":"NOT_FOUND","error_message":"not found"}`)
+			})
+
+			server := httptest.NewServer(mux)
+			defer server.Close()
+
+			client := newTestClient(server.URL)
+			torrents, err := client.GetTaggedTorrents(context.Background(), tt.tag)
+
+			require.NoError(t, err)
+			assert.Len(t, torrents, tt.wantCount)
+
+			for i, name := range tt.wantNames {
+				if i < len(torrents) {
+					assert.Equal(t, name, torrents[i].Name)
+				}
+			}
+
+			for i, label := range tt.wantLabels {
+				if i < len(torrents) {
+					assert.Equal(t, label, torrents[i].Label)
+				}
+			}
+		})
 	}
 }
