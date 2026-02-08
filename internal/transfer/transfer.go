@@ -137,14 +137,18 @@ func (o *TransferOrchestrator) ProduceTransfers(ctx context.Context) {
 func (o *TransferOrchestrator) watchTransfers(ctx context.Context) error {
 	logger := logctx.LoggerFromContext(ctx)
 
-	logger.InfoContext(ctx, "watching transfers", "label", o.label)
+	logger.DebugContext(ctx, "polling for transfers", "label", o.label)
 
 	transfers, err := o.dc.GetTaggedTorrents(ctx, o.label)
 	if err != nil {
 		return fmt.Errorf("failed to get tagged torrents: %w", err)
 	}
 
-	logger.InfoContext(ctx, "active transfers", "transfer_count", len(transfers))
+	if len(transfers) > 0 {
+		logger.InfoContext(ctx, "transfers found", "count", len(transfers))
+	} else {
+		logger.DebugContext(ctx, "no transfers found")
+	}
 
 	for _, transfer := range transfers {
 		transferLogger := logger.With("transfer_id", transfer.ID, "status", transfer.Status)
