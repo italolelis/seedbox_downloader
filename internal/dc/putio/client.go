@@ -132,16 +132,16 @@ func (c *Client) GrabFile(ctx context.Context, file *transfer.File) (io.ReadClos
 func (c *Client) Authenticate(ctx context.Context) error {
 	logger := logctx.LoggerFromContext(ctx)
 
-	logger.Info("authenticating with Put.io")
+	logger.InfoContext(ctx, "authenticating with Put.io")
 
 	user, err := c.putioClient.Account.Info(ctx)
 	if err != nil {
-		logger.Error("failed to get account info", "err", err)
+		logger.ErrorContext(ctx, "failed to get account info", "err", err)
 
 		return fmt.Errorf("failed to get account info: %w", err)
 	}
 
-	logger.Info("authenticated with Put.io", "user", user.Username)
+	logger.InfoContext(ctx, "authenticated with Put.io", "user", user.Username)
 
 	return nil
 }
@@ -174,14 +174,14 @@ func (c *Client) AddTransfer(ctx context.Context, url string, downloadDir string
 		}
 	}
 
-	logger.Info("adding transfer to Put.io", "transfer_url", url)
+	logger.InfoContext(ctx, "adding transfer to Put.io", "transfer_url", url)
 
 	t, err := c.putioClient.Transfers.Add(ctx, url, dirID, "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to add transfer: %w", err)
 	}
 
-	logger.Info("transfer added to Put.io", "transfer_id", t.ID)
+	logger.InfoContext(ctx, "transfer added to Put.io", "transfer_id", t.ID)
 
 	return &transfer.Transfer{
 		ID:                 fmt.Sprintf("%d", t.ID),
@@ -233,7 +233,7 @@ func (c *Client) AddTransferByBytes(ctx context.Context, torrentBytes []byte, fi
 	// Convert bytes to io.Reader
 	reader := bytes.NewReader(torrentBytes)
 
-	logger.Info("uploading torrent file to Put.io", "size_bytes", len(torrentBytes))
+	logger.InfoContext(ctx, "uploading torrent file to Put.io", "size_bytes", len(torrentBytes))
 
 	// Upload to Put.io
 	upload, err := c.putioClient.Files.Upload(ctx, reader, filename, dirID)
@@ -253,7 +253,7 @@ func (c *Client) AddTransferByBytes(ctx context.Context, torrentBytes []byte, fi
 		}
 	}
 
-	logger.Info("transfer created from torrent upload", "transfer_id", upload.Transfer.ID)
+	logger.InfoContext(ctx, "transfer created from torrent upload", "transfer_id", upload.Transfer.ID)
 
 	// Convert to internal transfer type (same pattern as existing AddTransfer)
 	return &transfer.Transfer{
@@ -276,7 +276,7 @@ func (c *Client) AddTransferByBytes(ctx context.Context, torrentBytes []byte, fi
 func (c *Client) RemoveTransfers(ctx context.Context, transferIDs []string, deleteFiles bool) error {
 	logger := logctx.LoggerFromContext(ctx)
 
-	logger.Info("removing transfer from Put.io", "transfer_ids", transferIDs)
+	logger.InfoContext(ctx, "removing transfer from Put.io", "transfer_ids", transferIDs)
 
 	transfers, err := c.putioClient.Transfers.List(ctx)
 	if err != nil {
@@ -296,13 +296,13 @@ func (c *Client) RemoveTransfers(ctx context.Context, transferIDs []string, dele
 
 		// If deleteLocalData is true and the file exists, delete it
 		if deleteFiles && transfer.FileID != 0 {
-			logger.Info("deleting local file data", "file_id", transfer.FileID)
+			logger.InfoContext(ctx, "deleting local file data", "file_id", transfer.FileID)
 
 			if err := c.putioClient.Files.Delete(ctx, transfer.FileID); err != nil {
 				return fmt.Errorf("failed to delete local file data: %w", err)
 			}
 
-			logger.Info("local file data deleted", "file_id", transfer.FileID)
+			logger.InfoContext(ctx, "local file data deleted", "file_id", transfer.FileID)
 		}
 	}
 
@@ -377,7 +377,7 @@ func (c *Client) getFilesRecursively(ctx context.Context, parentID int64, basePa
 		case "folder":
 			nestedFiles, err := c.getFilesRecursively(ctx, f.ID, filepath.Join(basePath, f.Name))
 			if err != nil {
-				logger.Error("failed to get nested files", "err", err)
+				logger.ErrorContext(ctx, "failed to get nested files", "err", err)
 
 				continue
 			}
