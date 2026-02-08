@@ -200,15 +200,19 @@ func TestGetTaggedTorrents_SaveParentIDMatching(t *testing.T) {
 			wantCount: 0,
 		},
 		{
-			name: "fileid_zero",
+			name: "in_progress_fileid_zero_returned",
 			tag:  "mytag",
 			transfers: `{"transfers":[{
 				"id":4,"name":"in-progress-transfer","file_id":0,"save_parent_id":200,
 				"status":"DOWNLOADING","percent_done":50,"size":2000,
 				"source":"magnet:test","downloaded":1000,
-				"peers_connected":5,"peers_getting_from_us":0,"peers_sending_to_us":3
+				"peers_connected":5,"peers_getting_from_us":0,"peers_sending_to_us":3,
+				"down_speed":1048576
 			}]}`,
-			wantCount: 0,
+			fileHandlers: map[string]string{
+				"200": `{"file":{"id":200,"name":"mytag","size":0,"file_type":"FOLDER","content_type":"application/x-directory"}}`,
+			},
+			wantCount: 1,
 		},
 		{
 			name: "parent_fetch_error",
@@ -250,6 +254,56 @@ func TestGetTaggedTorrents_SaveParentIDMatching(t *testing.T) {
 			wantCount:  1,
 			wantNames:  []string{"matching-transfer"},
 			wantLabels: []string{"mytag"},
+		},
+		{
+			name: "in_progress_transfer_returned",
+			tag:  "mytag",
+			transfers: `{"transfers":[{
+				"id":20,"name":"active-download","file_id":0,"save_parent_id":200,
+				"status":"DOWNLOADING","percent_done":50,"size":2000,
+				"source":"magnet:test","downloaded":1000,
+				"peers_connected":5,"peers_getting_from_us":0,"peers_sending_to_us":3,
+				"down_speed":1048576
+			}]}`,
+			fileHandlers: map[string]string{
+				"200": `{"file":{"id":200,"name":"mytag","size":0,"file_type":"FOLDER","content_type":"application/x-directory"}}`,
+			},
+			wantCount: 1,
+		},
+		{
+			name: "completed_transfer_has_files",
+			tag:  "mytag",
+			transfers: `{"transfers":[{
+				"id":21,"name":"completed-download","file_id":100,"save_parent_id":200,
+				"status":"COMPLETED","percent_done":100,"size":1500,
+				"source":"magnet:test","downloaded":1500,
+				"peers_connected":0,"peers_getting_from_us":0,"peers_sending_to_us":0
+			}]}`,
+			fileHandlers: map[string]string{
+				"200": `{"file":{"id":200,"name":"mytag","size":0,"file_type":"FOLDER","content_type":"application/x-directory"}}`,
+				"100": `{"file":{"id":100,"name":"completed-file.mkv","size":1500,"file_type":"VIDEO","content_type":"video/x-matroska"}}`,
+			},
+			wantCount: 1,
+		},
+		{
+			name: "mixed_inprogress_and_completed",
+			tag:  "mytag",
+			transfers: `{"transfers":[
+				{"id":30,"name":"in-progress","file_id":0,"save_parent_id":200,
+				 "status":"DOWNLOADING","percent_done":50,"size":2000,
+				 "source":"magnet:test1","downloaded":1000,
+				 "peers_connected":5,"peers_getting_from_us":0,"peers_sending_to_us":3,
+				 "down_speed":524288},
+				{"id":31,"name":"completed","file_id":100,"save_parent_id":200,
+				 "status":"COMPLETED","percent_done":100,"size":1500,
+				 "source":"magnet:test2","downloaded":1500,
+				 "peers_connected":0,"peers_getting_from_us":0,"peers_sending_to_us":0}
+			]}`,
+			fileHandlers: map[string]string{
+				"200": `{"file":{"id":200,"name":"mytag","size":0,"file_type":"FOLDER","content_type":"application/x-directory"}}`,
+				"100": `{"file":{"id":100,"name":"completed-file.mkv","size":1500,"file_type":"VIDEO","content_type":"video/x-matroska"}}`,
+			},
+			wantCount: 2,
 		},
 	}
 
@@ -303,6 +357,27 @@ func TestGetTaggedTorrents_SaveParentIDMatching(t *testing.T) {
 			for i, label := range tt.wantLabels {
 				if i < len(torrents) {
 					assert.Equal(t, label, torrents[i].Label)
+				}
+			}
+
+			// Additional verification for specific test cases
+			switch tt.name {
+			case "in_progress_fileid_zero_returned", "in_progress_transfer_returned":
+				if len(torrents) > 0 {
+					assert.Empty(t, torrents[0].Files, "in-progress transfer should have empty Files array")
+					assert.Equal(t, int64(5), torrents[0].PeersConnected, "PeersConnected should be populated")
+					assert.Equal(t, int64(3), torrents[0].PeersSendingToUs, "PeersSendingToUs should be populated")
+					assert.Equal(t, int64(1048576), torrents[0].DownloadSpeed, "DownloadSpeed should be populated")
+				}
+			case "completed_transfer_has_files":
+				if len(torrents) > 0 {
+					assert.NotEmpty(t, torrents[0].Files, "completed transfer should have populated Files array")
+				}
+			case "mixed_inprogress_and_completed":
+				if len(torrents) >= 2 {
+					assert.Empty(t, torrents[0].Files, "first transfer (in-progress) should have empty Files array")
+					assert.NotEmpty(t, torrents[1].Files, "second transfer (completed) should have populated Files array")
+					assert.Equal(t, int64(524288), torrents[0].DownloadSpeed, "in-progress transfer should have DownloadSpeed")
 				}
 			}
 		})
