@@ -87,7 +87,7 @@ Plans:
 - [x] 07-01: Create TraceHandler wrapper and integrate into logger initialization
 - [x] 07-02: Migrate core components (downloader, transfer, main.go) to context-aware logging
 - [x] 07-03: Migrate client components (deluge, putio, transmission) to context-aware logging
-- [ ] 07-04: [Gap closure] Complete Put.io client migration (8 remaining non-context calls)
+- [x] 07-04: [Gap closure] Complete Put.io client migration (8 remaining non-context calls)
 
 #### Phase 8: Lifecycle Visibility
 **Goal**: Clear visibility into application startup, shutdown, and component initialization
@@ -151,7 +151,7 @@ Phases execute in numeric order: 7 → 8 → 9 → 10
 | 4. Error Handling Foundation | v1.1 | 1/1 | Complete | 2026-02-01 |
 | 5. Torrent File Upload | v1.1 | 3/3 | Complete | 2026-02-01 |
 | 6. Observability & Testing | v1.1 | 3/3 | Complete | 2026-02-01 |
-| 7. Trace Correlation | v1.2 | 3/4 | In Progress | - |
+| 7. Trace Correlation | v1.2 | 4/4 | Complete | 2026-02-08 |
 | 8. Lifecycle Visibility | v1.2 | 0/TBD | Not started | - |
 | 9. Log Level Consistency | v1.2 | 0/TBD | Not started | - |
 | 10. HTTP Request Logging | v1.2 | 0/TBD | Not started | - |

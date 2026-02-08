@@ -9,12 +9,12 @@ Requirements for logging improvements milestone. Each maps to roadmap phases.
 
 ### Trace Correlation
 
-- [ ] **TRACE-01**: All log entries include trace_id when OpenTelemetry tracing is active
-- [ ] **TRACE-02**: All log entries include span_id when within an active span
-- [ ] **TRACE-03**: otelslog bridge wraps existing slog handler without breaking current JSON output format
-- [ ] **TRACE-04**: All logging calls in HTTP handlers use InfoContext/DebugContext/etc (not Info/Debug)
-- [ ] **TRACE-05**: All goroutines receive context and propagate it to logging calls
-- [ ] **TRACE-06**: Log entries without trace context are identifiable (missing trace_id indicates propagation bug)
+- [x] **TRACE-01**: All log entries include trace_id when OpenTelemetry tracing is active
+- [x] **TRACE-02**: All log entries include span_id when within an active span
+- [x] **TRACE-03**: otelslog bridge wraps existing slog handler without breaking current JSON output format
+- [x] **TRACE-04**: All logging calls in HTTP handlers use InfoContext/DebugContext/etc (not Info/Debug)
+- [x] **TRACE-05**: All goroutines receive context and propagate it to logging calls
+- [x] **TRACE-06**: Log entries without trace context are identifiable (missing trace_id indicates propagation bug)
 
 ### Lifecycle Visibility
 
@@ -81,12 +81,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TRACE-01 | Phase 7 | Pending |
-| TRACE-02 | Phase 7 | Pending |
-| TRACE-03 | Phase 7 | Pending |
-| TRACE-04 | Phase 7 | Pending |
-| TRACE-05 | Phase 7 | Pending |
-| TRACE-06 | Phase 7 | Pending |
+| TRACE-01 | Phase 7 | Complete |
+| TRACE-02 | Phase 7 | Complete |
+| TRACE-03 | Phase 7 | Complete |
+| TRACE-04 | Phase 7 | Complete |
+| TRACE-05 | Phase 7 | Complete |
+| TRACE-06 | Phase 7 | Complete |
 | LIFECYCLE-01 | Phase 8 | Pending |
 | LIFECYCLE-02 | Phase 8 | Pending |
 | LIFECYCLE-03 | Phase 8 | Pending |

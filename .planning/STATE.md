@@ -5,7 +5,7 @@
 See: .planning/PROJECT.md (updated 2026-02-01)
 
 **Core value:** The application must run reliably 24/7 without crashes, resource leaks, or silent failures.
-**Current focus:** Phase 7 - Trace Correlation
+**Current focus:** Phase 8 - Lifecycle Visibility
 
 ## Current Position
 
@@ -68,4 +68,4 @@ None yet.
 Last session: 2026-02-08
 Stopped at: Completed 07-04-PLAN.md (Phase 7 complete)
 Resume file: None
-Next step: Phase 7 (Trace Correlation) complete. Ready for next phase or milestone verification.
+Next step: Run `/gsd:plan-phase 8` to plan Lifecycle Visibility phase
