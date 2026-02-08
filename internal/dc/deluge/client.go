@@ -144,7 +144,7 @@ func (c *Client) Authenticate(ctx context.Context) error {
 		return fmt.Errorf("deluge auth.login failed: %v", rpcResp.Error)
 	}
 
-	logger.DebugContext(ctx, "authenticated with deluge")
+	logger.InfoContext(ctx, "authenticated with deluge", "username", c.Username)
 
 	return nil
 }

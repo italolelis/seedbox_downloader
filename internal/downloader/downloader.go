@@ -114,6 +114,11 @@ func (d *Downloader) DownloadTransfer(ctx context.Context, transfer *transfer.Tr
 
 	logger := logctx.LoggerFromContext(ctx)
 
+	logger.InfoContext(ctx, "starting download",
+		"transfer_id", transfer.ID,
+		"transfer_name", transfer.Name,
+		"file_count", len(transfer.Files))
+
 	sem := make(chan struct{}, d.maxParallel)
 
 	for i := range transfer.Files {
@@ -176,7 +181,7 @@ func (d *Downloader) DownloadFile(ctx context.Context, transferID string, file *
 		return fmt.Errorf("failed to download file: %w", err)
 	}
 
-	logger.InfoContext(ctx, "downloaded and saved file", "target", targetPath)
+	logger.DebugContext(ctx, "file downloaded", "target", targetPath)
 
 	return nil
 }
@@ -322,7 +327,7 @@ func (d *Downloader) ensureTargetDir(ctx context.Context, targetPath string, log
 func (d *Downloader) writeFile(ctx context.Context, out *os.File, reader io.Reader, url, targetPath string, totalBytes int64) error {
 	logger := logctx.LoggerFromContext(ctx)
 
-	logger.InfoContext(ctx, "downloading file", "file_path", targetPath, "file_size", humanize.Bytes(uint64(totalBytes)))
+	logger.DebugContext(ctx, "downloading file", "file_path", targetPath, "file_size", humanize.Bytes(uint64(totalBytes)))
 
 	progressInterval := int64(100 * 1024 * 1024) // 100MB
 	progressCb := func(written int64, total int64) {
