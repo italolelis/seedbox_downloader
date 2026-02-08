@@ -98,29 +98,52 @@ func run(ctx context.Context) error {
 
 	ctx = logctx.WithLogger(ctx, logger)
 	logger = logger.WithGroup("main")
-	logger.InfoContext(ctx, "starting...", "log_level", cfg.LogLevel, "version", version)
 
+	// Log configuration loaded with safe values (no secrets)
+	logger.InfoContext(ctx, "configuration loaded",
+		"version", version,
+		"log_level", cfg.LogLevel,
+		"target_label", cfg.TargetLabel,
+		"download_dir", cfg.DownloadDir,
+		"polling_interval", cfg.PollingInterval.String(),
+		"cleanup_interval", cfg.CleanupInterval.String(),
+		"keep_downloaded_for", cfg.KeepDownloadedFor.String(),
+		"max_parallel", cfg.MaxParallel,
+		"download_client", cfg.DownloadClient,
+		"db_path", cfg.DBPath,
+		"bind_address", cfg.Web.BindAddress,
+		"telemetry_enabled", cfg.Telemetry.Enabled,
+	)
+
+	logger.InfoContext(ctx, "initializing telemetry")
 	tel, err := initializeTelemetry(ctx, cfg)
 	if err != nil {
 		return err
 	}
 	defer tel.Shutdown(ctx)
+	logger.InfoContext(ctx, "telemetry ready",
+		"service_name", cfg.Telemetry.ServiceName,
+		"otel_enabled", cfg.Telemetry.Enabled,
+	)
 
+	logger.InfoContext(ctx, "initializing services")
 	services, err := initializeServices(ctx, cfg, tel)
 	if err != nil {
 		return err
 	}
 	defer services.Close()
 
+	logger.InfoContext(ctx, "starting HTTP server")
 	servers, err := startServers(ctx, cfg, tel)
 	if err != nil {
 		return err
 	}
+	logger.InfoContext(ctx, "server ready", "bind_address", cfg.Web.BindAddress)
 
-	logger.InfoContext(ctx, "waiting for downloads...",
+	logger.InfoContext(ctx, "service ready",
+		"bind_address", cfg.Web.BindAddress,
 		"target_label", cfg.TargetLabel,
-		"download_dir", cfg.DownloadDir,
-		"polling_interval", cfg.PollingInterval.String(),
+		"version", version,
 	)
 
 	return runMainLoop(ctx, cfg, servers)
@@ -171,13 +194,22 @@ func initializeTelemetry(ctx context.Context, cfg *config) (*telemetry.Telemetry
 }
 
 func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemetry) (*services, error) {
+	logger := logctx.LoggerFromContext(ctx)
+
+	logger.InfoContext(ctx, "initializing database")
 	database, err := sqlite.InitDB(ctx, cfg.DBPath, cfg.DBMaxOpenConns, cfg.DBMaxIdleConns)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize the database: %w", err)
 	}
+	logger.InfoContext(ctx, "database ready",
+		"db_path", cfg.DBPath,
+		"max_open_conns", cfg.DBMaxOpenConns,
+		"max_idle_conns", cfg.DBMaxIdleConns,
+	)
 
 	dr := sqlite.NewInstrumentedDownloadRepository(database, tel)
 
+	logger.InfoContext(ctx, "initializing download client")
 	dc, err := buildDownloadClient(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build download client: %w", err)
@@ -187,6 +219,7 @@ func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemet
 	if err := instrumentedDC.Authenticate(ctx); err != nil {
 		return nil, fmt.Errorf("failed to authenticate with the download client: %w", err)
 	}
+	logger.InfoContext(ctx, "download client ready", "client_type", cfg.DownloadClient)
 
 	arrServices := []*arr.Client{
 		arr.NewClient(cfg.Sonarr.APIKey, cfg.Sonarr.BaseURL),
