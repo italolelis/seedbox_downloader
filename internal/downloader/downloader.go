@@ -71,21 +71,21 @@ func (d *Downloader) Close() {
 func (d *Downloader) WatchDownloads(ctx context.Context, incomingTransfers <-chan *transfer.Transfer) {
 	logger := logctx.LoggerFromContext(ctx)
 
-	logger.Info("watching downloads")
+	logger.InfoContext(ctx, "watching downloads")
 
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
-				logger.Info("shutting down downloader")
+				logger.InfoContext(ctx, "shutting down downloader")
 
 				return
 			case transfer := <-incomingTransfers:
-				logger.Debug("downloading transfer", "transfer_id", transfer.ID, "transfer_name", transfer.Name)
+				logger.DebugContext(ctx, "downloading transfer", "transfer_id", transfer.ID, "transfer_name", transfer.Name)
 
 				downloadedFiles, err := d.DownloadTransfer(ctx, transfer)
 				if err != nil {
-					logger.Error("failed to download transfer", "download_id", transfer.ID, "err", err)
+					logger.ErrorContext(ctx, "failed to download transfer", "download_id", transfer.ID, "err", err)
 
 					d.OnTransferDownloadError <- transfer
 
@@ -93,7 +93,7 @@ func (d *Downloader) WatchDownloads(ctx context.Context, incomingTransfers <-cha
 				}
 
 				if downloadedFiles > 0 {
-					logger.Info("downloads completed", "download_id", transfer.ID, "transfer_name", transfer.Name)
+					logger.InfoContext(ctx, "downloads completed", "download_id", transfer.ID, "transfer_name", transfer.Name)
 
 					d.OnTransferDownloadFinished <- transfer
 				}
@@ -126,12 +126,12 @@ func (d *Downloader) DownloadTransfer(ctx context.Context, transfer *transfer.Tr
 			targetPath := filepath.Join(d.downloadDir, file.Path)
 			if err := d.DownloadFile(ctx, transfer.ID, file, targetPath); err != nil {
 				if err == storage.ErrDownloaded {
-					logger.Debug("file already downloaded", "download_id", transfer.ID, "file_path", file.Path)
+					logger.DebugContext(ctx, "file already downloaded", "download_id", transfer.ID, "file_path", file.Path)
 
 					return err
 				}
 
-				logger.Error("failed to download file", "download_id", transfer.ID, "file_path", file.Path, "err", err)
+				logger.ErrorContext(ctx, "failed to download file", "download_id", transfer.ID, "file_path", file.Path, "err", err)
 
 				return err
 			}
@@ -159,7 +159,7 @@ func (d *Downloader) DownloadFile(ctx context.Context, transferID string, file *
 
 	defer fileReader.Close()
 
-	if err := d.ensureTargetDir(targetPath, logger); err != nil {
+	if err := d.ensureTargetDir(ctx, targetPath, logger); err != nil {
 		return fmt.Errorf("failed to create target directory: %w", err)
 	}
 
@@ -176,7 +176,7 @@ func (d *Downloader) DownloadFile(ctx context.Context, transferID string, file *
 		return fmt.Errorf("failed to download file: %w", err)
 	}
 
-	logger.Info("downloaded and saved file", "target", targetPath)
+	logger.InfoContext(ctx, "downloaded and saved file", "target", targetPath)
 
 	return nil
 }
@@ -184,12 +184,12 @@ func (d *Downloader) DownloadFile(ctx context.Context, transferID string, file *
 func (d *Downloader) WatchForImported(ctx context.Context, t *transfer.Transfer, pollingInterval time.Duration) {
 	logger := logctx.LoggerFromContext(ctx)
 
-	logger.Info("watching for imported transfers", "transfer_id", t.ID, "polling_interval", pollingInterval)
+	logger.InfoContext(ctx, "watching for imported transfers", "transfer_id", t.ID, "polling_interval", pollingInterval)
 
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				logger.Error("watch imported panic",
+				logger.ErrorContext(ctx, "watch imported panic",
 					"operation", "watch_imported",
 					"transfer_id", t.ID,
 					"panic", r,
@@ -203,7 +203,7 @@ func (d *Downloader) WatchForImported(ctx context.Context, t *transfer.Transfer,
 		for {
 			select {
 			case <-ctx.Done():
-				logger.Info("watch imported shutdown",
+				logger.InfoContext(ctx, "watch imported shutdown",
 					"operation", "watch_imported",
 					"transfer_id", t.ID,
 					"reason", "context_cancelled")
@@ -211,13 +211,13 @@ func (d *Downloader) WatchForImported(ctx context.Context, t *transfer.Transfer,
 			case <-ticker.C:
 				imported, err := d.checkForImported(ctx, t)
 				if err != nil {
-					logger.Error("failed to check for imported transfer", "transfer_id", t.ID, "err", err)
+					logger.ErrorContext(ctx, "failed to check for imported transfer", "transfer_id", t.ID, "err", err)
 
 					continue
 				}
 
 				if imported {
-					logger.Info("transfer imported, stopping watch",
+					logger.InfoContext(ctx, "transfer imported, stopping watch",
 						"operation", "watch_imported",
 						"transfer_id", t.ID,
 						"reason", "transfer_imported")
@@ -232,12 +232,12 @@ func (d *Downloader) WatchForImported(ctx context.Context, t *transfer.Transfer,
 func (d *Downloader) WatchForSeeding(ctx context.Context, t *transfer.Transfer, pollingInterval time.Duration) {
 	logger := logctx.LoggerFromContext(ctx)
 
-	logger.Info("watching for seeding transfers", "transfer_id", t.ID, "polling_interval", pollingInterval)
+	logger.InfoContext(ctx, "watching for seeding transfers", "transfer_id", t.ID, "polling_interval", pollingInterval)
 
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				logger.Error("watch seeding panic",
+				logger.ErrorContext(ctx, "watch seeding panic",
 					"operation", "watch_seeding",
 					"transfer_id", t.ID,
 					"panic", r,
@@ -251,14 +251,14 @@ func (d *Downloader) WatchForSeeding(ctx context.Context, t *transfer.Transfer, 
 		for {
 			select {
 			case <-ctx.Done():
-				logger.Info("watch seeding shutdown",
+				logger.InfoContext(ctx, "watch seeding shutdown",
 					"operation", "watch_seeding",
 					"transfer_id", t.ID,
 					"reason", "context_cancelled")
 				return
 			case <-ticker.C:
 				if !t.IsSeeding() {
-					logger.Info("transfer stopped seeding",
+					logger.InfoContext(ctx, "transfer stopped seeding",
 						"operation", "watch_seeding",
 						"transfer_id", t.ID,
 						"reason", "seeding_complete")
@@ -267,7 +267,7 @@ func (d *Downloader) WatchForSeeding(ctx context.Context, t *transfer.Transfer, 
 
 					if dc, ok := d.dc.(*putio.Client); ok {
 						if err := dc.RemoveTransfers(ctx, []string{hex.EncodeToString(hash[:])}, true); err != nil {
-							logger.Error("failed to remove transfer", "transfer_id", t.ID, "err", err)
+							logger.ErrorContext(ctx, "failed to remove transfer", "transfer_id", t.ID, "err", err)
 						}
 					}
 
@@ -280,7 +280,7 @@ func (d *Downloader) WatchForSeeding(ctx context.Context, t *transfer.Transfer, 
 
 func (d *Downloader) checkForImported(ctx context.Context, transfer *transfer.Transfer) (bool, error) {
 	logger := logctx.LoggerFromContext(ctx)
-	logger.Debug("checking if transfer has been imported", "transfer_id", transfer.ID, "transfer_name", transfer.Name)
+	logger.DebugContext(ctx, "checking if transfer has been imported", "transfer_id", transfer.ID, "transfer_name", transfer.Name)
 
 	for _, file := range transfer.Files {
 		for _, arrService := range d.arrServices {
@@ -292,13 +292,13 @@ func (d *Downloader) checkForImported(ctx context.Context, transfer *transfer.Tr
 			}
 
 			if imported {
-				logger.Info("transfer has been imported", "transfer_id", transfer.ID, "transfer_name", transfer.Name)
+				logger.InfoContext(ctx, "transfer has been imported", "transfer_id", transfer.ID, "transfer_name", transfer.Name)
 
 				if err := os.RemoveAll(filePath); err != nil {
 					return false, fmt.Errorf("failed to remove file: %w", err)
 				}
 
-				logger.Info("transfer removed", "transfer_id", transfer.ID, "transfer_name", transfer.Name)
+				logger.InfoContext(ctx, "transfer removed", "transfer_id", transfer.ID, "transfer_name", transfer.Name)
 
 				return true, nil
 			}
@@ -308,10 +308,10 @@ func (d *Downloader) checkForImported(ctx context.Context, transfer *transfer.Tr
 	return false, nil
 }
 
-func (d *Downloader) ensureTargetDir(targetPath string, logger *slog.Logger) error {
+func (d *Downloader) ensureTargetDir(ctx context.Context, targetPath string, logger *slog.Logger) error {
 	dir := filepath.Dir(targetPath)
 	if err := os.MkdirAll(dir, dirPerm); err != nil {
-		logger.Error("failed to create target directory", "dir", dir, "err", err)
+		logger.ErrorContext(ctx, "failed to create target directory", "dir", dir, "err", err)
 
 		return fmt.Errorf("failed to create target directory: %w", err)
 	}
@@ -322,18 +322,18 @@ func (d *Downloader) ensureTargetDir(targetPath string, logger *slog.Logger) err
 func (d *Downloader) writeFile(ctx context.Context, out *os.File, reader io.Reader, url, targetPath string, totalBytes int64) error {
 	logger := logctx.LoggerFromContext(ctx)
 
-	logger.Info("downloading file", "file_path", targetPath, "file_size", humanize.Bytes(uint64(totalBytes)))
+	logger.InfoContext(ctx, "downloading file", "file_path", targetPath, "file_size", humanize.Bytes(uint64(totalBytes)))
 
 	progressInterval := int64(100 * 1024 * 1024) // 100MB
 	progressCb := func(written int64, total int64) {
 		if total > 0 {
-			logger.Debug("download progress",
+			logger.DebugContext(ctx, "download progress",
 				"url", url,
 				"downloaded", humanize.Bytes(uint64(written)),
 				"total", humanize.Bytes(uint64(total)),
 				"percent", humanize.FtoaWithDigits(float64(written)*100/float64(total), 2))
 		} else {
-			logger.Debug("download progress", "url", url, "downloaded", humanize.Bytes(uint64(written)))
+			logger.DebugContext(ctx, "download progress", "url", url, "downloaded", humanize.Bytes(uint64(written)))
 		}
 	}
 	pr := progress.NewReader(reader, totalBytes, progressInterval, progressCb)
