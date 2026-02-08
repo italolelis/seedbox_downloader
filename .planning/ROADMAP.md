@@ -175,6 +175,11 @@ Plans:
   3. Peer count and download speed fields are populated from Put.io transfer data (peersConnected, peersSendingToUs, peersGettingFromUs, rateDownload)
   4. The download pipeline does NOT process in-progress transfers -- IsAvailable() and IsDownloadable() filters prevent false positives
   5. Each torrent response includes a labels array populated with the configured proxy label
+**Plans**: 2 plans
+
+Plans:
+- [ ] 12-01-PLAN.md -- Remove FileID filter, conditional file population, DownloadSpeed mapping (TDD)
+- [ ] 12-02-PLAN.md -- Complete status mapping, peer/speed fields, labels in Transmission response (TDD)
 
 ## Progress
 
@@ -194,4 +199,4 @@ Phases execute in numeric order: 11 -> 12
 | 9. Log Level Consistency | v1.2 | 2/2 | Complete | 2026-02-08 |
 | 10. HTTP Request Logging | v1.2 | 2/2 | Complete | 2026-02-08 |
 | 11. SaveParentID Tag Matching | v1.3 | 1/1 | Complete | 2026-02-08 |
-| 12. In-Progress Visibility | v1.3 | 0/TBD | Not started | - |
+| 12. In-Progress Visibility | v1.3 | 0/2 | Not started | - |
