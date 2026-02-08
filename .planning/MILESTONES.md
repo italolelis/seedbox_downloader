@@ -30,6 +30,33 @@
 
 ---
 
+## v1.2 Logging Improvements (Shipped: 2026-02-08)
+
+**Delivered:** Make logs tell the story of what the application is doing during its lifecycle
+
+**Phases completed:** 7-10 (10 plans total)
+
+**Key accomplishments:**
+
+- OpenTelemetry trace/span correlation in all structured logs via TraceHandler wrapper
+- Complete migration to context-aware logging (InfoContext/DebugContext/etc) across all components
+- Phased startup logging with component ready messages and service ready summary
+- Graceful shutdown sequence logging with error context enhancement
+- Silent-when-idle polling (no INFO logs during idle cycles)
+- HTTP request logging middleware with request_id, status codes, and duration_ms
+
+**Stats:**
+
+- 4 phases, 10 plans, 25 requirements
+- Same day implementation (2026-02-08)
+- 25/25 v1.2 requirements satisfied (100%)
+
+**Git range:** v1.2 Logging Improvements phases 7-10
+
+**What's next:** Activity Tab Support (v1.3) to show in-progress downloads in Sonarr/Radarr
+
+---
+
 ## v1 Critical Fixes (Shipped: 2026-01-31)
 
 **Delivered:** Production-ready maintenance release ensuring 24/7 reliability without crashes, resource leaks, or silent failures
@@ -58,3 +85,33 @@
 **What's next:** Continue production operation with improved stability and operational hygiene
 
 ---
+
+## v1.3 Activity Tab Support (Shipped: 2026-02-08)
+
+**Delivered:** Sonarr/Radarr Activity tab shows in-progress downloads with accurate progress, status, peer counts, speed, and labels
+
+**Phases completed:** 11-12 (3 plans total)
+
+**Key accomplishments:**
+
+- Switched to SaveParentID-based tag matching, eliminating FileID dependency for label resolution
+- Removed FileID==0 filter so in-progress transfers appear in torrent-get responses
+- Added conditional file population with triple safety net (IsAvailable + IsDownloadable + conditional files)
+- Complete Put.io status mapping (11 statuses to 7 Transmission codes) with warn-log for unknown statuses
+- Populated peer counts, download speed, and labels in Transmission RPC response
+- TDD approach with 18+ new test cases across Put.io client and Transmission handler
+
+**Stats:**
+
+- 13 files modified
+- +1,968 insertions, -40 deletions
+- 2 phases, 3 plans, 7 requirements
+- Same day implementation (2026-02-08)
+- 7/7 v1.3 requirements satisfied (100%)
+
+**Git range:** `e4160cc` (feat(11-01)) → `7b561c7` (feat(12-02))
+
+**What's next:** Production deployment to verify Activity tab integration with Sonarr/Radarr
+
+---
+

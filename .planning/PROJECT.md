@@ -2,32 +2,22 @@
 
 ## What This Is
 
-A Go-based automated downloader that orchestrates transfers from seedbox/torrent clients (Deluge, Put.io) to local storage, automatically importing media into Sonarr/Radarr. Runs reliably 24/7 with proper error handling, resource cleanup, and operational observability.
+A Go-based automated downloader that orchestrates transfers from seedbox/torrent clients (Deluge, Put.io) to local storage, automatically importing media into Sonarr/Radarr. Runs reliably 24/7 with proper error handling, resource cleanup, and operational observability. Sonarr/Radarr Activity tab integration shows in-progress downloads with accurate status, progress, and peer info.
 
 ## Core Value
 
 The application must run reliably 24/7 without crashes, resource leaks, or silent failures.
 
-## Current Milestone: v1.3 Activity Tab Support
+## Previous Milestone: v1.3 Activity Tab Support (Shipped: 2026-02-08)
 
 **Goal:** Show in-progress downloads in Sonarr/Radarr Activity tab via the Transmission RPC proxy
 
-**Target features:**
-- Return in-progress Put.io transfers (not just completed) from torrent-get RPC endpoint
-- Show accurate download progress, ETA, and status for active transfers
-- Filter in-progress transfers by configured label/tag without requiring FileID
-- Map Put.io download states to correct Transmission statuses for Activity tab display
-
-## Previous Milestone: v1.2 Logging Improvements (Shipped: 2026-02-08)
-
-**Goal:** Enable Sonarr/Radarr to download content from .torrent-only trackers through Put.io proxy
-
 **Delivered:**
-- ✓ Process base64-encoded .torrent file content from Transmission API MetaInfo field
-- ✓ Upload .torrent content directly to Put.io (no file persistence)
-- ✓ Explicit error logging when .torrent files cannot be processed
-- ✓ Test coverage for .torrent file handling (33 tests, 56.2% coverage)
-- ✓ Observability for .torrent vs magnet link usage (structured logs + metrics)
+- ✓ SaveParentID-based tag matching for all transfers (in-progress and completed)
+- ✓ In-progress transfers visible in torrent-get responses alongside completed transfers
+- ✓ Complete Put.io status mapping (11 statuses to 7 Transmission codes)
+- ✓ Peer counts, download speed, and labels populated in Transmission RPC response
+- ✓ Triple safety net prevents download pipeline from processing in-progress transfers
 
 ## Requirements
 
@@ -56,13 +46,14 @@ The application must run reliably 24/7 without crashes, resource leaks, or silen
 - ✓ Log explicit errors when .torrent files cannot be processed — v1.1
 - ✓ Add test coverage for .torrent file handling — v1.1 (33 tests)
 - ✓ Add observability metrics for torrent type (magnet vs file) — v1.1
+- ✓ Return in-progress Put.io transfers from torrent-get endpoint — v1.3
+- ✓ Show download progress, ETA, and peer info for active transfers — v1.3
+- ✓ Filter in-progress transfers by label without requiring FileID — v1.3 (SaveParentID)
+- ✓ Correct Transmission status mapping for all Put.io transfer states — v1.3
 
 ### Active
 
-- [ ] Return in-progress Put.io transfers from torrent-get endpoint
-- [ ] Show download progress, ETA, and peer info for active transfers
-- [ ] Filter in-progress transfers by label without requiring FileID
-- [ ] Correct Transmission status mapping for all Put.io transfer states
+(None — define next milestone with `/gsd:new-milestone`)
 
 ### Out of Scope
 
@@ -77,10 +68,11 @@ The application must run reliably 24/7 without crashes, resource leaks, or silen
 
 ## Context
 
-**Shipped v1.1 (2026-02-01):**
-- 4,558 lines of Go across 32 files (+6,542 insertions from v1)
-- All 17 v1.1 requirements satisfied (.torrent file support)
-- Production-ready with enhanced observability
+**Shipped v1.3 (2026-02-08):**
+- 4 milestones shipped (v1, v1.1, v1.2, v1.3) across 12 phases, 26 plans
+- Full Activity tab integration — Sonarr/Radarr can monitor in-progress downloads
+- Complete structured logging with trace correlation, lifecycle visibility, and HTTP request logging
+- Production-ready with comprehensive observability and reliability
 
 **Architecture:**
 - Event-driven pipeline: TransferOrchestrator → Downloader → Import Monitor → Cleanup
@@ -126,6 +118,11 @@ The application must run reliably 24/7 without crashes, resource leaks, or silen
 | Context-aware panic restart | Only restart goroutines if context not cancelled | ✓ Good - prevents restart loops during shutdown |
 | Log telemetry status at Info level | Operators need visibility, not a warning condition | ✓ Good - silent when enabled, informative when disabled |
 | Database validation with exponential backoff | Fail-fast on critical dependency with retry | ✓ Good - 3 attempts before exit, consistent with HTTP retries |
+| Modify existing GetTaggedTorrents instead of new method | IsAvailable()+IsDownloadable() double safety net is sufficient | ✓ Good - simpler, no code duplication |
+| SaveParentID for tag matching | FileID unavailable during in-progress transfers | ✓ Good - validated with 6 httptest scenarios in Phase 11 |
+| Triple safety net for download pipeline | IsAvailable + IsDownloadable + conditional files | ✓ Good - defense-in-depth prevents false positives |
+| Monitor-first for rate limits | Defer caching until production data shows issues | — Pending - deployed, monitoring |
+| Labels field always present (not omitempty) | Sonarr/Radarr expect field to always be present | ✓ Good - empty array acceptable |
 
 ---
-*Last updated: 2026-02-08 after v1.3 milestone initialization*
+*Last updated: 2026-02-08 after v1.3 milestone completion*
