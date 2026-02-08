@@ -8,18 +8,17 @@ A Go-based automated downloader that orchestrates transfers from seedbox/torrent
 
 The application must run reliably 24/7 without crashes, resource leaks, or silent failures.
 
-## Current Milestone: v1.2 Logging Improvements
+## Current Milestone: v1.3 Activity Tab Support
 
-**Goal:** Make logs tell the story of what the application is doing during its lifecycle
+**Goal:** Show in-progress downloads in Sonarr/Radarr Activity tab via the Transmission RPC proxy
 
 **Target features:**
-- Startup sequence logs that clearly show initialization order and readiness state
-- Normal operation logs that explain what's happening (torrent flow, polling, cleanup)
-- Consistent log levels throughout (INFO for lifecycle events, DEBUG for details, WARN/ERROR for problems)
-- Ability to trace a torrent through the entire pipeline from webhook → download → import → cleanup
-- Remove confusing/redundant log messages that add noise without value
+- Return in-progress Put.io transfers (not just completed) from torrent-get RPC endpoint
+- Show accurate download progress, ETA, and status for active transfers
+- Filter in-progress transfers by configured label/tag without requiring FileID
+- Map Put.io download states to correct Transmission statuses for Activity tab display
 
-## Previous Milestone: v1.1 Torrent File Support (Shipped: 2026-02-01)
+## Previous Milestone: v1.2 Logging Improvements (Shipped: 2026-02-08)
 
 **Goal:** Enable Sonarr/Radarr to download content from .torrent-only trackers through Put.io proxy
 
@@ -60,7 +59,10 @@ The application must run reliably 24/7 without crashes, resource leaks, or silen
 
 ### Active
 
-(None — ready for next milestone planning)
+- [ ] Return in-progress Put.io transfers from torrent-get endpoint
+- [ ] Show download progress, ETA, and peer info for active transfers
+- [ ] Filter in-progress transfers by label without requiring FileID
+- [ ] Correct Transmission status mapping for all Put.io transfer states
 
 ### Out of Scope
 
@@ -126,4 +128,4 @@ The application must run reliably 24/7 without crashes, resource leaks, or silen
 | Database validation with exponential backoff | Fail-fast on critical dependency with retry | ✓ Good - 3 attempts before exit, consistent with HTTP retries |
 
 ---
-*Last updated: 2026-02-01 after v1.2 milestone initialization*
+*Last updated: 2026-02-08 after v1.3 milestone initialization*
