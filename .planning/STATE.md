@@ -9,12 +9,12 @@ See: .planning/PROJECT.md (updated 2026-02-08)
 
 ## Current Position
 
-Phase: 11 of 12 (SaveParentID Tag Matching) -- COMPLETE
-Plan: 1 of 1 in current phase
-Status: Phase 11 complete, ready for Phase 12
-Last activity: 2026-02-08 -- Phase 11 executed and committed
+Phase: 12 of 12 (In-Progress Visibility) -- IN PROGRESS
+Plan: 1 of 2 in current phase -- COMPLETE
+Status: Phase 12 Plan 01 complete, Plan 02 next
+Last activity: 2026-02-08 -- Phase 12 Plan 01 executed and committed
 
-Progress: [█████░░░░░] 50%
+Progress: [█████░░░░░] 58% (11/19 plans complete)
 
 ## Accumulated Context
 
@@ -27,6 +27,7 @@ Recent decisions affecting current work:
 - (v1.3 roadmap): Monitor-first for rate limits -- defer caching until production data shows issues
 - (v1.3 roadmap): Map in_queue/waiting to StatusDownloadWait(3) -- Put.io does have queue states
 - (Phase 11): SaveParentID-based tag matching validated with 6 httptest scenarios -- works correctly
+- [Phase 12-01]: Continue on file fetch errors for completed transfers - transfer still appears in Activity tab
 
 ### Pending Todos
 
@@ -39,6 +40,6 @@ None.
 ## Session Continuity
 
 Last session: 2026-02-08
-Stopped at: Phase 11 complete
+Stopped at: Completed 12-01-PLAN.md
 Resume file: None
-Next step: Plan Phase 12 (In-Progress Visibility)
+Next step: Execute Phase 12 Plan 02 (Activity Tab API)
