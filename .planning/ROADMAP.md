@@ -135,10 +135,11 @@ Plans:
   4. HTTP client errors (4xx) log at WARN level
   5. HTTP success responses (2xx) log at INFO level
   6. HTTP request logs include duration_ms for performance tracking
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 10-01: [Brief description]
+- [ ] 10-01: Create HTTP middleware components (RequestID + HTTPLogging)
+- [ ] 10-02: Integrate middleware into Chi router
 
 ## Progress
 
@@ -156,4 +157,4 @@ Phases execute in numeric order: 7 → 8 → 9 → 10
 | 7. Trace Correlation | v1.2 | 4/4 | Complete | 2026-02-08 |
 | 8. Lifecycle Visibility | v1.2 | 2/2 | Complete | 2026-02-08 |
 | 9. Log Level Consistency | v1.2 | 2/2 | Complete | 2026-02-08 |
-| 10. HTTP Request Logging | v1.2 | 0/TBD | Not started | - |
+| 10. HTTP Request Logging | v1.2 | 0/2 | Not started | - |
