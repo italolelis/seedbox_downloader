@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-01)
 
 **Core value:** The application must run reliably 24/7 without crashes, resource leaks, or silent failures.
-**Current focus:** Phase 10 - HTTP Request Logging (In Progress)
+**Current focus:** Milestone v1.2 Complete - All logging improvements implemented
 
 ## Current Position
 
 Phase: 10 of 10 (HTTP Request Logging)
-Plan: 1 of 2 in current phase
-Status: In progress
-Last activity: 2026-02-08 - Completed 10-01-PLAN.md
+Plan: 2 of 2 in current phase
+Status: Phase complete - Milestone v1.2 complete
+Last activity: 2026-02-08 - Completed 10-02-PLAN.md
 
-Progress: [█████████░] 94% (17 phases total, 16 complete from v1+v1.1+v1.2)
+Progress: [██████████] 100% (20 plans total, 20 complete from v1+v1.1+v1.2)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 19 (across v1, v1.1, and v1.2)
+- Total plans completed: 20 (across v1, v1.1, and v1.2)
 - Average duration: ~17 min (estimated from previous milestones)
-- Total execution time: ~5.6 hours (v1: ~3 hours, v1.1: ~2.5 hours, v1.2 partial: ~24 min)
+- Total execution time: ~5.7 hours (v1: ~3 hours, v1.1: ~2.5 hours, v1.2: ~25 min)
 
 **By Phase:**
 
@@ -36,13 +36,13 @@ Progress: [█████████░] 94% (17 phases total, 16 complete fro
 | 7. Trace Correlation | 4/4 | 14 min | 3.5 min |
 | 8. Lifecycle Visibility | 2/2 | 4 min | 2 min |
 | 9. Log Level Consistency | 2/2 | 4 min | 2 min |
-| 10. HTTP Request Logging | 1/2 | 1 min | 1 min |
+| 10. HTTP Request Logging | 2/2 | 2 min | 1 min |
 
 **Recent Trend:**
-- Last 5 plans: ~2 min average
+- Last 5 plans: ~1.5 min average
 - Trend: Extremely high efficiency on focused refactoring tasks (Phase 7-10)
 
-*Updated after 10-01 completion*
+*Updated after 10-02 completion*
 
 ## Accumulated Context
 
@@ -65,18 +65,28 @@ Recent decisions affecting current work:
 - Authentication success at INFO (v1.2/09-02): Lifecycle events visible to operators with username for traceability
 - Private ctxKey type for context keys (v1.2/10-01): Prevents collisions with other packages using string keys
 - Default status to 200 in wrapper (v1.2/10-01): Handles implicit 200 OK when handler writes without WriteHeader
+- Middleware order: RequestID -> otelhttp -> HTTPLogging (v1.2/10-02): Request ID generated first, trace span second, logging last with all context
 
 ### Pending Todos
 
-None yet.
+None.
 
 ### Blockers/Concerns
 
-None yet.
+None.
 
 ## Session Continuity
 
 Last session: 2026-02-08
-Stopped at: Completed 10-01-PLAN.md
+Stopped at: Completed 10-02-PLAN.md (Milestone v1.2 complete)
 Resume file: None
-Next step: Run `/gsd:execute-phase 10` to continue with 10-02-PLAN.md
+Next step: Milestone v1.2 is complete. All logging improvements implemented.
+
+## Milestone v1.2 Summary
+
+All four phases of v1.2 Logging Improvements are now complete:
+
+1. **Phase 7: Trace Correlation** - TraceHandler automatically injects trace_id/span_id into all logs
+2. **Phase 8: Lifecycle Visibility** - Startup/shutdown phases logged with component initialization status
+3. **Phase 9: Log Level Consistency** - DEBUG for polling, INFO for events, WARN/ERROR for issues
+4. **Phase 10: HTTP Request Logging** - All HTTP requests logged with method, path, status, duration_ms, request_id
