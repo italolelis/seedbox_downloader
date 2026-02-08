@@ -149,8 +149,8 @@ Plans:
 
 **Milestone Goal:** Make Sonarr/Radarr Activity tab show in-progress downloads with accurate progress, status, and peer info by returning all Put.io transfers from the Transmission RPC proxy
 
-- [ ] **Phase 11: SaveParentID Tag Matching** - Validate and switch to SaveParentID-based label matching
-- [ ] **Phase 12: In-Progress Visibility** - Return all transfers with complete status mapping, peer info, and labels
+- [x] **Phase 11: SaveParentID Tag Matching** - Validate and switch to SaveParentID-based label matching
+- [x] **Phase 12: In-Progress Visibility** - Return all transfers with complete status mapping, peer info, and labels
 
 ### Phase 11: SaveParentID Tag Matching
 **Goal**: Tag matching works via SaveParentID for all transfers, validated before removing the FileID filter
@@ -178,8 +178,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 12-01-PLAN.md -- Remove FileID filter, conditional file population, DownloadSpeed mapping (TDD)
-- [ ] 12-02-PLAN.md -- Complete status mapping, peer/speed fields, labels in Transmission response (TDD)
+- [x] 12-01-PLAN.md -- Remove FileID filter, conditional file population, DownloadSpeed mapping (TDD)
+- [x] 12-02-PLAN.md -- Complete status mapping, peer/speed fields, labels in Transmission response (TDD)
 
 ## Progress
 
@@ -199,4 +199,4 @@ Phases execute in numeric order: 11 -> 12
 | 9. Log Level Consistency | v1.2 | 2/2 | Complete | 2026-02-08 |
 | 10. HTTP Request Logging | v1.2 | 2/2 | Complete | 2026-02-08 |
 | 11. SaveParentID Tag Matching | v1.3 | 1/1 | Complete | 2026-02-08 |
-| 12. In-Progress Visibility | v1.3 | 0/2 | Not started | - |
+| 12. In-Progress Visibility | v1.3 | 2/2 | Complete | 2026-02-08 |

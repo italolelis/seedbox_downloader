@@ -9,16 +9,16 @@ Requirements for Activity Tab Support milestone. Each maps to roadmap phases.
 
 ### Core: In-Progress Visibility
 
-- [ ] **ACTIVITY-01**: Return downloading/queued transfers in torrent-get response (remove FileID==0 filter)
-- [ ] **ACTIVITY-02**: Use SaveParentID for label matching on in-progress transfers (FileID unavailable during download)
-- [ ] **ACTIVITY-03**: Conditional file population -- only populate Files array when FileID!=0 (completed transfers)
-- [ ] **ACTIVITY-04**: Double safety net via IsAvailable()+IsDownloadable() prevents download pipeline from processing in-progress transfers
+- [x] **ACTIVITY-01**: Return downloading/queued transfers in torrent-get response (remove FileID==0 filter)
+- [x] **ACTIVITY-02**: Use SaveParentID for label matching on in-progress transfers (FileID unavailable during download)
+- [x] **ACTIVITY-03**: Conditional file population -- only populate Files array when FileID!=0 (completed transfers)
+- [x] **ACTIVITY-04**: Double safety net via IsAvailable()+IsDownloadable() prevents download pipeline from processing in-progress transfers
 
 ### Enhanced: Status, Peers, Labels
 
-- [ ] **ACTIVITY-05**: Map Put.io PeersConnected, PeersSendingToUs, PeersGettingFromUs, DownloadSpeed to TransmissionTorrent response fields (peersConnected, peersSendingToUs, peersGettingFromUs, rateDownload)
-- [ ] **ACTIVITY-06**: Map all Put.io statuses: in_queue/waiting -> StatusDownloadWait(3), finishing/checking -> StatusCheck(2), error -> StatusStopped(0) with ErrorString populated. Add warn-log for unknown statuses.
-- [ ] **ACTIVITY-07**: Add Labels []string to TransmissionTorrent struct, populate with configured label from proxy configuration
+- [x] **ACTIVITY-05**: Map Put.io PeersConnected, PeersSendingToUs, PeersGettingFromUs, DownloadSpeed to TransmissionTorrent response fields (peersConnected, peersSendingToUs, peersGettingFromUs, rateDownload)
+- [x] **ACTIVITY-06**: Map all Put.io statuses: in_queue/waiting -> StatusDownloadWait(3), finishing/checking -> StatusCheck(2), error -> StatusStopped(0) with ErrorString populated. Add warn-log for unknown statuses.
+- [x] **ACTIVITY-07**: Add Labels []string to TransmissionTorrent struct, populate with configured label from proxy configuration
 
 ## Deferred (v2+)
 
@@ -46,13 +46,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| ACTIVITY-01 | Phase 12 | Pending |
-| ACTIVITY-02 | Phase 11 | Pending |
-| ACTIVITY-03 | Phase 12 | Pending |
-| ACTIVITY-04 | Phase 12 | Pending |
-| ACTIVITY-05 | Phase 12 | Pending |
-| ACTIVITY-06 | Phase 12 | Pending |
-| ACTIVITY-07 | Phase 12 | Pending |
+| ACTIVITY-01 | Phase 12 | Complete |
+| ACTIVITY-02 | Phase 11 | Complete |
+| ACTIVITY-03 | Phase 12 | Complete |
+| ACTIVITY-04 | Phase 12 | Complete |
+| ACTIVITY-05 | Phase 12 | Complete |
+| ACTIVITY-06 | Phase 12 | Complete |
+| ACTIVITY-07 | Phase 12 | Complete |
 
 **Coverage:**
 - v1.3 requirements: 7 total
