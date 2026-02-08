@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-02-01)
 ## Current Position
 
 Phase: 7 of 10 (Trace Correlation)
-Plan: 0 of TBD in current phase
-Status: Ready to plan
-Last activity: 2026-02-02 — Roadmap created for v1.2 Logging Improvements
+Plan: 1 of TBD in current phase
+Status: In progress
+Last activity: 2026-02-08 — Completed 07-01-PLAN.md
 
-Progress: [██████░░░░] 60% (13 phases total, 6 complete from v1+v1.1)
+Progress: [██████░░░░] 61% (14 phases total, 7 complete from v1+v1.1+v1.2)
 
 ## Performance Metrics
 
@@ -33,12 +33,13 @@ Progress: [██████░░░░] 60% (13 phases total, 6 complete from
 | 4. Error Handling Foundation | 1/1 | ~15 min | ~15 min |
 | 5. Torrent File Upload | 3/3 | ~75 min | ~25 min |
 | 6. Observability & Testing | 3/3 | ~90 min | ~30 min |
+| 7. Trace Correlation | 1/TBD | 2 min | 2 min |
 
 **Recent Trend:**
-- Last 5 plans: ~25 min average
-- Trend: Stable
+- Last 5 plans: ~20 min average
+- Trend: Improving efficiency
 
-*Will be updated after each plan completion in v1.2*
+*Updated after 07-01 completion*
 
 ## Accumulated Context
 
@@ -50,6 +51,8 @@ Recent decisions affecting current work:
 - Log telemetry status at Info level (v1): Operators need visibility, not a warning condition
 - Database validation with exponential backoff (v1): Fail-fast on critical dependency with retry
 - No file persistence for .torrent files (v1.1): Explicit constraint to avoid disk management complexity
+- Omit trace fields when span invalid (v1.2/07-01): Cleaner log output, easier to detect when tracing is active
+- Use trace.SpanFromContext not otelslog (v1.2/07-01): Preserves JSON stdout requirement
 
 ### Pending Todos
 
@@ -61,7 +64,7 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-02-02
-Stopped at: Roadmap created for v1.2 Logging Improvements milestone
+Last session: 2026-02-08
+Stopped at: Completed 07-01-PLAN.md
 Resume file: None
-Next step: Run `/gsd:plan-phase 7` to create execution plan for Trace Correlation
+Next step: Continue with next plan in Phase 7 (Trace Correlation)
