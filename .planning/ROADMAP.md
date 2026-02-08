@@ -4,7 +4,7 @@
 
 - ✅ **v1 Critical Fixes** - Phases 1-3 (shipped 2026-01-31)
 - ✅ **v1.1 Torrent File Support** - Phases 4-6 (shipped 2026-02-01)
-- 🚧 **v1.2 Logging Improvements** - Phases 7-10 (in progress)
+- ✅ **v1.2 Logging Improvements** - Phases 7-10 (shipped 2026-02-08)
 
 ## Phases
 
@@ -67,11 +67,12 @@ Plans:
 
 </details>
 
-### 🚧 v1.2 Logging Improvements (In Progress)
+<details>
+<summary>✅ v1.2 Logging Improvements (Phases 7-10) - SHIPPED 2026-02-08</summary>
 
 **Milestone Goal:** Make logs tell the story of what the application is doing during its lifecycle
 
-#### Phase 7: Trace Correlation
+### Phase 7: Trace Correlation
 **Goal**: Bridge OpenTelemetry traces with structured logs for end-to-end request correlation
 **Depends on**: Phase 6
 **Requirements**: TRACE-01, TRACE-02, TRACE-03, TRACE-04, TRACE-05, TRACE-06
@@ -89,7 +90,7 @@ Plans:
 - [x] 07-03: Migrate client components (deluge, putio, transmission) to context-aware logging
 - [x] 07-04: [Gap closure] Complete Put.io client migration (8 remaining non-context calls)
 
-#### Phase 8: Lifecycle Visibility
+### Phase 8: Lifecycle Visibility
 **Goal**: Clear visibility into application startup, shutdown, and component initialization
 **Depends on**: Phase 7
 **Requirements**: LIFECYCLE-01, LIFECYCLE-02, LIFECYCLE-03, LIFECYCLE-04, LIFECYCLE-05, LIFECYCLE-06
@@ -106,7 +107,7 @@ Plans:
 - [x] 08-01: Add phased startup logging with component ready messages and service ready
 - [x] 08-02: Add shutdown sequence logging and error context enhancement
 
-#### Phase 9: Log Level Consistency
+### Phase 9: Log Level Consistency
 **Goal**: Consistent log level usage across all components to reduce noise and improve signal
 **Depends on**: Phase 8
 **Requirements**: LEVELS-01, LEVELS-02, LEVELS-03, LEVELS-04, LEVELS-05, LEVELS-06, LEVELS-07
@@ -124,7 +125,7 @@ Plans:
 - [x] 09-01: Apply silent-when-idle and per-file DEBUG to core pipeline
 - [x] 09-02: Ensure consistent authentication logging across clients
 
-#### Phase 10: HTTP Request Logging
+### Phase 10: HTTP Request Logging
 **Goal**: Complete visibility into HTTP API usage with structured request/response logging
 **Depends on**: Phase 9
 **Requirements**: HTTP-01, HTTP-02, HTTP-03, HTTP-04, HTTP-05, HTTP-06
@@ -138,8 +139,10 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 10-01: Create HTTP middleware components (RequestID + HTTPLogging)
-- [ ] 10-02: Integrate middleware into Chi router
+- [x] 10-01: Create HTTP middleware components (RequestID + HTTPLogging)
+- [x] 10-02: Integrate middleware into Chi router
+
+</details>
 
 ## Progress
 
@@ -157,4 +160,4 @@ Phases execute in numeric order: 7 → 8 → 9 → 10
 | 7. Trace Correlation | v1.2 | 4/4 | Complete | 2026-02-08 |
 | 8. Lifecycle Visibility | v1.2 | 2/2 | Complete | 2026-02-08 |
 | 9. Log Level Consistency | v1.2 | 2/2 | Complete | 2026-02-08 |
-| 10. HTTP Request Logging | v1.2 | 0/2 | Not started | - |
+| 10. HTTP Request Logging | v1.2 | 2/2 | Complete | 2026-02-08 |
