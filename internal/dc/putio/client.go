@@ -49,12 +49,6 @@ func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*transfer
 	torrents := make([]*transfer.Transfer, 0, len(transfers))
 
 	for _, t := range transfers {
-		if t.FileID == 0 {
-			logger.DebugContext(ctx, "skipping transfer because it's not a downloadable transfer", "transfer_id", t.ID, "status", t.Status)
-
-			continue
-		}
-
 		// Use SaveParentID for tag matching (works for both in-progress and completed transfers)
 		if t.SaveParentID == 0 {
 			logger.DebugContext(ctx, "skipping transfer with no save parent", "transfer_id", t.ID, "status", t.Status)
@@ -76,13 +70,6 @@ func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*transfer
 			continue
 		}
 
-		file, err := c.putioClient.Files.Get(ctx, t.FileID)
-		if err != nil {
-			logger.ErrorContext(ctx, "failed to get file", "transfer_id", t.ID, "err", err)
-
-			continue
-		}
-
 		// Convert Put.io transfer to our Torrent type
 		torrent := &transfer.Transfer{
 			ID:                 fmt.Sprintf("%d", t.ID),
@@ -99,14 +86,28 @@ func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*transfer
 			PeersGettingFromUs: int64(t.PeersGettingFromUs),
 			PeersSendingToUs:   int64(t.PeersSendingToUs),
 			Downloaded:         int64(t.Downloaded),
+			DownloadSpeed:      int64(t.DownloadSpeed),
 		}
 
-		files, err := c.getFilesRecursively(ctx, file.ID, file.Name)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get files for transfer: %w", err)
-		}
+		// Only fetch file details and populate Files for completed transfers (FileID != 0)
+		if t.FileID != 0 {
+			file, err := c.putioClient.Files.Get(ctx, t.FileID)
+			if err != nil {
+				logger.ErrorContext(ctx, "failed to get file", "transfer_id", t.ID, "err", err)
 
-		torrent.Files = append(torrent.Files, files...)
+				continue
+			}
+
+			files, err := c.getFilesRecursively(ctx, file.ID, file.Name)
+			if err != nil {
+				logger.ErrorContext(ctx, "failed to get files for completed transfer",
+					"transfer_id", t.ID, "file_id", t.FileID, "err", err)
+				// Continue anyway -- transfer visible in Activity tab but without files
+				// Download pipeline will skip it via IsDownloadable() check
+			} else {
+				torrent.Files = append(torrent.Files, files...)
+			}
+		}
 
 		torrents = append(torrents, torrent)
 	}
