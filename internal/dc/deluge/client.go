@@ -85,17 +85,17 @@ func (c *Client) Authenticate(ctx context.Context) error {
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		logger.Error("failed to marshal payload", "err", err)
+		logger.ErrorContext(ctx, "failed to marshal payload", "err", err)
 
 		return err
 	}
 
-	logger.Info("authenticating with deluge", "username", c.Username)
+	logger.InfoContext(ctx, "authenticating with deluge", "username", c.Username)
 
 	// Use http.NewRequest to set headers like requests does
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(body)))
 	if err != nil {
-		logger.Error("request error", "err", err)
+		logger.ErrorContext(ctx, "request error", "err", err)
 
 		return err
 	}
@@ -106,7 +106,7 @@ func (c *Client) Authenticate(ctx context.Context) error {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		logger.Error("HTTP error", "err", err)
+		logger.ErrorContext(ctx, "HTTP error", "err", err)
 
 		return err
 	}
@@ -114,7 +114,7 @@ func (c *Client) Authenticate(ctx context.Context) error {
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
-		logger.Error("non-200 response", "status", resp.StatusCode, "body", string(b))
+		logger.ErrorContext(ctx, "non-200 response", "status", resp.StatusCode, "body", string(b))
 
 		return fmt.Errorf("auth failed: %s", string(b))
 	}
@@ -133,18 +133,18 @@ func (c *Client) Authenticate(ctx context.Context) error {
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
-		logger.Error("decode error", "err", err)
+		logger.ErrorContext(ctx, "decode error", "err", err)
 
 		return err
 	}
 
 	if !rpcResp.Result {
-		logger.Error("login failed", "error", rpcResp.Error)
+		logger.ErrorContext(ctx, "login failed", "error", rpcResp.Error)
 
 		return fmt.Errorf("deluge auth.login failed: %v", rpcResp.Error)
 	}
 
-	logger.Debug("authenticated with deluge")
+	logger.DebugContext(ctx, "authenticated with deluge")
 
 	return nil
 }
@@ -191,7 +191,7 @@ func (c *Client) GrabFile(ctx context.Context, file *transfer.File) (io.ReadClos
 
 	req, url, err := c.buildDownloadRequest(ctx, file)
 	if err != nil {
-		logger.Error("failed to create HTTP request", "url", url, "err", err)
+		logger.ErrorContext(ctx, "failed to create HTTP request", "url", url, "err", err)
 
 		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
 	}
@@ -207,13 +207,13 @@ func (c *Client) GrabFile(ctx context.Context, file *transfer.File) (io.ReadClos
 
 	resp, err := client.Do(req)
 	if err != nil {
-		logger.Error("failed to download file", "url", url, "err", err)
+		logger.ErrorContext(ctx, "failed to download file", "url", url, "err", err)
 
 		return nil, fmt.Errorf("failed to download file: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		logger.Error("failed to download file, bad status", "url", url, "status", resp.Status)
+		logger.ErrorContext(ctx, "failed to download file, bad status", "url", url, "status", resp.Status)
 
 		resp.Body.Close()
 
@@ -237,7 +237,7 @@ func (c *Client) getTaggedTorrentsRaw(ctx context.Context, tag string) ([]*Torre
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(body)))
 	if err != nil {
-		logger.Error("failed to create request", "err", err)
+		logger.ErrorContext(ctx, "failed to create request", "err", err)
 
 		return nil, err
 	}
@@ -250,7 +250,7 @@ func (c *Client) getTaggedTorrentsRaw(ctx context.Context, tag string) ([]*Torre
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		logger.Error("request execution failed", "err", err)
+		logger.ErrorContext(ctx, "request execution failed", "err", err)
 
 		return nil, err
 	}
@@ -258,7 +258,7 @@ func (c *Client) getTaggedTorrentsRaw(ctx context.Context, tag string) ([]*Torre
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
-		logger.Error("non-200 response", "status", resp.StatusCode, "body", string(b))
+		logger.ErrorContext(ctx, "non-200 response", "status", resp.StatusCode, "body", string(b))
 
 		return nil, fmt.Errorf("request failed: %s", string(b))
 	}
@@ -266,13 +266,13 @@ func (c *Client) getTaggedTorrentsRaw(ctx context.Context, tag string) ([]*Torre
 	var delugeResp DelugeResponse
 
 	if err := json.NewDecoder(resp.Body).Decode(&delugeResp); err != nil {
-		logger.Error("decode error", "err", err)
+		logger.ErrorContext(ctx, "decode error", "err", err)
 
 		return nil, err
 	}
 
 	if delugeResp.Error != nil {
-		logger.Error("API error", "error", delugeResp.Error)
+		logger.ErrorContext(ctx, "API error", "error", delugeResp.Error)
 
 		return nil, fmt.Errorf("API error: %v", delugeResp.Error)
 	}
@@ -287,7 +287,7 @@ func (c *Client) getTaggedTorrentsRaw(ctx context.Context, tag string) ([]*Torre
 		}
 	}
 
-	logger.Debug("found torrents to download", "torrent_count", len(torrents))
+	logger.DebugContext(ctx, "found torrents to download", "torrent_count", len(torrents))
 
 	return torrents, nil
 }
