@@ -5,6 +5,7 @@
 - ✅ **v1 Critical Fixes** - Phases 1-3 (shipped 2026-01-31)
 - ✅ **v1.1 Torrent File Support** - Phases 4-6 (shipped 2026-02-01)
 - ✅ **v1.2 Logging Improvements** - Phases 7-10 (shipped 2026-02-08)
+- 🚧 **v1.3 Activity Tab Support** - Phases 11-12 (in progress)
 
 ## Phases
 
@@ -95,7 +96,7 @@ Plans:
 **Depends on**: Phase 7
 **Requirements**: LIFECYCLE-01, LIFECYCLE-02, LIFECYCLE-03, LIFECYCLE-04, LIFECYCLE-05, LIFECYCLE-06
 **Success Criteria** (what must be TRUE):
-  1. Startup logs show initialization phases in order (config → telemetry → database → clients → server)
+  1. Startup logs show initialization phases in order (config -> telemetry -> database -> clients -> server)
   2. Each major component logs "ready" message when initialization complete
   3. Application logs final "service ready" message with port and configured label
   4. Shutdown logs show graceful cleanup sequence
@@ -144,10 +145,38 @@ Plans:
 
 </details>
 
+### v1.3 Activity Tab Support
+
+**Milestone Goal:** Make Sonarr/Radarr Activity tab show in-progress downloads with accurate progress, status, and peer info by returning all Put.io transfers from the Transmission RPC proxy
+
+- [ ] **Phase 11: SaveParentID Tag Matching** - Validate and switch to SaveParentID-based label matching
+- [ ] **Phase 12: In-Progress Visibility** - Return all transfers with complete status mapping, peer info, and labels
+
+### Phase 11: SaveParentID Tag Matching
+**Goal**: Tag matching works via SaveParentID for all transfers, validated before removing the FileID filter
+**Depends on**: Phase 10
+**Requirements**: ACTIVITY-02
+**Success Criteria** (what must be TRUE):
+  1. Completed transfers are matched to their label using SaveParentID instead of the FileID->ParentID lookup chain
+  2. Transfers with SaveParentID==0 are skipped gracefully with a debug log (not an error)
+  3. Existing download pipeline behavior is unchanged -- same transfers returned, same filter logic, no regressions
+**Plans**: TBD
+
+### Phase 12: In-Progress Visibility
+**Goal**: Sonarr/Radarr Activity tab displays in-progress downloads with accurate progress, status, peer counts, speed, and labels
+**Depends on**: Phase 11
+**Requirements**: ACTIVITY-01, ACTIVITY-03, ACTIVITY-04, ACTIVITY-05, ACTIVITY-06, ACTIVITY-07
+**Success Criteria** (what must be TRUE):
+  1. In-progress transfers (downloading, queued, checking) appear in torrent-get responses alongside completed transfers
+  2. In-progress transfers show correct Transmission status: downloading->StatusDownload(4), in_queue/waiting->StatusDownloadWait(3), finishing/checking->StatusCheck(2), error->StatusStopped(0) with ErrorString populated
+  3. Peer count and download speed fields are populated from Put.io transfer data (peersConnected, peersSendingToUs, peersGettingFromUs, rateDownload)
+  4. The download pipeline does NOT process in-progress transfers -- IsAvailable() and IsDownloadable() filters prevent false positives
+  5. Each torrent response includes a labels array populated with the configured proxy label
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 7 → 8 → 9 → 10
+Phases execute in numeric order: 11 -> 12
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
@@ -161,3 +190,5 @@ Phases execute in numeric order: 7 → 8 → 9 → 10
 | 8. Lifecycle Visibility | v1.2 | 2/2 | Complete | 2026-02-08 |
 | 9. Log Level Consistency | v1.2 | 2/2 | Complete | 2026-02-08 |
 | 10. HTTP Request Logging | v1.2 | 2/2 | Complete | 2026-02-08 |
+| 11. SaveParentID Tag Matching | v1.3 | 0/TBD | Not started | - |
+| 12. In-Progress Visibility | v1.3 | 0/TBD | Not started | - |
