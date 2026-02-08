@@ -163,7 +163,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 11-01-PLAN.md -- Test and validate SaveParentID-based tag matching
+- [x] 11-01-PLAN.md -- Test and validate SaveParentID-based tag matching
 
 ### Phase 12: In-Progress Visibility
 **Goal**: Sonarr/Radarr Activity tab displays in-progress downloads with accurate progress, status, peer counts, speed, and labels
@@ -193,5 +193,5 @@ Phases execute in numeric order: 11 -> 12
 | 8. Lifecycle Visibility | v1.2 | 2/2 | Complete | 2026-02-08 |
 | 9. Log Level Consistency | v1.2 | 2/2 | Complete | 2026-02-08 |
 | 10. HTTP Request Logging | v1.2 | 2/2 | Complete | 2026-02-08 |
-| 11. SaveParentID Tag Matching | v1.3 | 0/1 | In progress | - |
+| 11. SaveParentID Tag Matching | v1.3 | 1/1 | Complete | 2026-02-08 |
 | 12. In-Progress Visibility | v1.3 | 0/TBD | Not started | - |
