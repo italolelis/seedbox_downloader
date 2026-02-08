@@ -118,10 +118,11 @@ Plans:
   5. Error conditions log at ERROR level
   6. No INFO-level logs during idle polling (silent when nothing to do)
   7. Multi-file torrents log transfer-level events at INFO, per-file at DEBUG
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 09-01: [Brief description]
+- [ ] 09-01-PLAN.md — Apply silent-when-idle and per-file DEBUG to core pipeline
+- [ ] 09-02-PLAN.md — Ensure consistent authentication logging across clients
 
 #### Phase 10: HTTP Request Logging
 **Goal**: Complete visibility into HTTP API usage with structured request/response logging
@@ -154,5 +155,5 @@ Phases execute in numeric order: 7 → 8 → 9 → 10
 | 6. Observability & Testing | v1.1 | 3/3 | Complete | 2026-02-01 |
 | 7. Trace Correlation | v1.2 | 4/4 | Complete | 2026-02-08 |
 | 8. Lifecycle Visibility | v1.2 | 2/2 | Complete | 2026-02-08 |
-| 9. Log Level Consistency | v1.2 | 0/TBD | Not started | - |
+| 9. Log Level Consistency | v1.2 | 0/2 | Not started | - |
 | 10. HTTP Request Logging | v1.2 | 0/TBD | Not started | - |
