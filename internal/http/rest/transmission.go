@@ -474,20 +474,30 @@ func (h *TransmissionHandler) handleTorrentGet(ctx context.Context) (*Transmissi
 
 		// Map status string to TransmissionTorrentStatus
 		var status TransmissionTorrentStatus
+		var errorString *string
 
 		switch strings.ToLower(transfer.Status) {
-		case "completed", "finished":
-			status = StatusSeed
-		case "seedingwait":
-			status = StatusSeedWait
-		case "seeding":
-			status = StatusSeed
 		case "downloading":
-			status = StatusDownload
-		case "checking":
-			status = StatusCheck
+			status = StatusDownload // 4
+		case "in_queue", "waiting":
+			status = StatusDownloadWait // 3
+		case "finishing", "checking":
+			status = StatusCheck // 2
+		case "completed", "finished":
+			status = StatusSeed // 6
+		case "seeding":
+			status = StatusSeed // 6
+		case "seedingwait":
+			status = StatusSeedWait // 5
+		case "error":
+			status = StatusStopped // 0
+			if transfer.ErrorMessage != "" {
+				errorString = &transfer.ErrorMessage
+			}
 		default:
-			status = StatusStopped
+			logger.WarnContext(ctx, "unknown put.io transfer status, defaulting to stopped",
+				"status", transfer.Status, "transfer_id", transfer.ID)
+			status = StatusStopped // 0
 		}
 
 		hashBytes := sha1.Sum([]byte(transfer.ID))
@@ -499,11 +509,18 @@ func (h *TransmissionHandler) handleTorrentGet(ctx context.Context) (*Transmissi
 			DownloadDir:    transfer.SavePath,
 			TotalSize:      transfer.Size,
 			LeftUntilDone:  transfer.Size - transfer.Downloaded,
-			IsFinished:     strings.ToLower(transfer.Status) == "completed" || strings.ToLower(transfer.Status) == "seeding",
+			IsFinished: strings.ToLower(transfer.Status) == "completed" ||
+				strings.ToLower(transfer.Status) == "seeding" ||
+				strings.ToLower(transfer.Status) == "finished",
 			ETA:            transfer.EstimatedTime,
 			Status:         status,
-			ErrorString:    &transfer.ErrorMessage,
+			ErrorString:    errorString,
 			DownloadedEver: transfer.Downloaded,
+			Labels:         []string{h.label},
+			PeersConnected: transfer.PeersConnected,
+			PeersSendingToUs: transfer.PeersSendingToUs,
+			PeersGettingFromUs: transfer.PeersGettingFromUs,
+			RateDownload:   transfer.DownloadSpeed,
 			FileCount:      uint32(len(transfer.Files)),
 			SeedRatioLimit: 1.0,
 			SeedRatioMode:  1,
