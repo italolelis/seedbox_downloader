@@ -93,20 +93,20 @@ func (o *TransferOrchestrator) Close() {
 func (o *TransferOrchestrator) ProduceTransfers(ctx context.Context) {
 	logger := logctx.LoggerFromContext(ctx)
 
-	logger.Info("checking unfinished transfers", "label", o.label)
+	logger.InfoContext(ctx, "checking unfinished transfers", "label", o.label)
 
 	go func() {
 		// Panic recovery (deferred last, executes first during unwind)
 		defer func() {
 			if r := recover(); r != nil {
-				logger.Error("transfer orchestrator panic",
+				logger.ErrorContext(ctx, "transfer orchestrator panic",
 					"operation", "produce_transfers",
 					"panic", r,
 					"stack", string(debug.Stack()))
 
 				// Restart with clean state if context not cancelled
 				if ctx.Err() == nil {
-					logger.Info("restarting transfer orchestrator after panic",
+					logger.InfoContext(ctx, "restarting transfer orchestrator after panic",
 						"operation", "produce_transfers")
 					time.Sleep(time.Second) // Brief backoff before restart
 					o.ProduceTransfers(ctx)
@@ -121,13 +121,13 @@ func (o *TransferOrchestrator) ProduceTransfers(ctx context.Context) {
 		for {
 			select {
 			case <-ctx.Done():
-				logger.Info("transfer orchestrator shutdown",
+				logger.InfoContext(ctx, "transfer orchestrator shutdown",
 					"operation", "produce_transfers",
 					"reason", "context_cancelled")
 				return
 			case <-ticker.C:
 				if err := o.watchTransfers(ctx); err != nil {
-					logger.Error("failed to watch transfers", "err", err)
+					logger.ErrorContext(ctx, "failed to watch transfers", "err", err)
 				}
 			}
 		}
@@ -137,20 +137,20 @@ func (o *TransferOrchestrator) ProduceTransfers(ctx context.Context) {
 func (o *TransferOrchestrator) watchTransfers(ctx context.Context) error {
 	logger := logctx.LoggerFromContext(ctx)
 
-	logger.Info("watching transfers", "label", o.label)
+	logger.InfoContext(ctx, "watching transfers", "label", o.label)
 
 	transfers, err := o.dc.GetTaggedTorrents(ctx, o.label)
 	if err != nil {
 		return fmt.Errorf("failed to get tagged torrents: %w", err)
 	}
 
-	logger.Info("active transfers", "transfer_count", len(transfers))
+	logger.InfoContext(ctx, "active transfers", "transfer_count", len(transfers))
 
 	for _, transfer := range transfers {
 		transferLogger := logger.With("transfer_id", transfer.ID, "status", transfer.Status)
 
 		if !transfer.IsAvailable() || !transfer.IsDownloadable() {
-			transferLogger.Debug("skipping transfer because it's not available or not downloadable")
+			transferLogger.DebugContext(ctx, "skipping transfer because it's not available or not downloadable")
 
 			continue
 		}
@@ -158,7 +158,7 @@ func (o *TransferOrchestrator) watchTransfers(ctx context.Context) error {
 		claimed, err := o.repo.ClaimTransfer(transfer.ID)
 		if err != nil {
 			if err == storage.ErrDownloaded {
-				transferLogger.Debug("skipping transfer because it's already downloaded")
+				transferLogger.DebugContext(ctx, "skipping transfer because it's already downloaded")
 
 				continue
 			}
@@ -167,12 +167,12 @@ func (o *TransferOrchestrator) watchTransfers(ctx context.Context) error {
 		}
 
 		if !claimed {
-			transferLogger.Debug("skipping transfer because it's already claimed")
+			transferLogger.DebugContext(ctx, "skipping transfer because it's already claimed")
 
 			continue
 		}
 
-		transferLogger.Info("transfer ready for download")
+		transferLogger.InfoContext(ctx, "transfer ready for download")
 
 		o.OnDownloadQueued <- transfer
 	}

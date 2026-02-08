@@ -98,7 +98,7 @@ func run(ctx context.Context) error {
 
 	ctx = logctx.WithLogger(ctx, logger)
 	logger = logger.WithGroup("main")
-	logger.Info("starting...", "log_level", cfg.LogLevel, "version", version)
+	logger.InfoContext(ctx, "starting...", "log_level", cfg.LogLevel, "version", version)
 
 	tel, err := initializeTelemetry(ctx, cfg)
 	if err != nil {
@@ -117,7 +117,7 @@ func run(ctx context.Context) error {
 		return err
 	}
 
-	logger.Info("waiting for downloads...",
+	logger.InfoContext(ctx, "waiting for downloads...",
 		"target_label", cfg.TargetLabel,
 		"download_dir", cfg.DownloadDir,
 		"polling_interval", cfg.PollingInterval.String(),
@@ -226,7 +226,7 @@ func startServers(ctx context.Context, cfg *config, tel *telemetry.Telemetry) (*
 	}
 
 	go func() {
-		logger.Info("initializing API support", "host", cfg.Web.BindAddress)
+		logger.InfoContext(ctx, "initializing API support", "host", cfg.Web.BindAddress)
 		serverErrors <- server.ListenAndServe()
 	}()
 
@@ -244,19 +244,19 @@ func runMainLoop(ctx context.Context, cfg *config, servers *servers) error {
 		case err := <-servers.errors:
 			return fmt.Errorf("server error: %w", err)
 		case <-ctx.Done():
-			logger.Info("start shutdown")
-
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Web.ShutdownTimeout)
 			defer cancel()
 
+			logger.InfoContext(shutdownCtx, "start shutdown")
+
 			if servers.metrics != nil {
 				if err := servers.metrics.Shutdown(shutdownCtx); err != nil {
-					logger.Error("failed to gracefully shutdown metrics server", "err", err)
+					logger.ErrorContext(shutdownCtx, "failed to gracefully shutdown metrics server", "err", err)
 				}
 			}
 
 			if err := servers.api.Shutdown(shutdownCtx); err != nil {
-				logger.Error("failed to gracefully shutdown the server", "err", err)
+				logger.ErrorContext(shutdownCtx, "failed to gracefully shutdown the server", "err", err)
 
 				if err = servers.api.Close(); err != nil {
 					return fmt.Errorf("failed to stop server gracefully: %w", err)
@@ -284,14 +284,14 @@ func setupNotificationForDownloader(
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				logger.Error("notification loop panic",
+				logger.ErrorContext(ctx, "notification loop panic",
 					"operation", "notification_loop",
 					"panic", r,
 					"stack", string(debug.Stack()))
 
 				// Restart with clean state if context not cancelled
 				if ctx.Err() == nil {
-					logger.Info("restarting notification loop after panic",
+					logger.InfoContext(ctx, "restarting notification loop after panic",
 						"operation", "notification_loop")
 					time.Sleep(time.Second) // Brief backoff before restart
 					setupNotificationForDownloader(ctx, repo, downloader, cfg)
@@ -302,7 +302,7 @@ func setupNotificationForDownloader(
 		for {
 			select {
 			case <-ctx.Done():
-				logger.Info("notification loop shutdown",
+				logger.InfoContext(ctx, "notification loop shutdown",
 					"operation", "notification_loop",
 					"reason", "context_cancelled")
 
@@ -310,34 +310,34 @@ func setupNotificationForDownloader(
 			case t := <-downloader.OnTransferDownloadError:
 				err := repo.UpdateTransferStatus(t.ID, "failed")
 				if err != nil {
-					logger.Error("failed to update transfer status", "transfer_id", t.ID, "err", err)
+					logger.ErrorContext(ctx, "failed to update transfer status", "transfer_id", t.ID, "err", err)
 
 					continue
 				}
 
-				logger.Warn("transfer download error", "transfer_id", t.ID, "transfer_name", t.Name)
+				logger.WarnContext(ctx, "transfer download error", "transfer_id", t.ID, "transfer_name", t.Name)
 
 				if notifyErr := notif.Notify(
 					"❌ Download failed for transfer: " + t.Name + " (" + t.ID + ")",
 				); notifyErr != nil {
-					logger.Error("failed to send notification", "err", notifyErr)
+					logger.ErrorContext(ctx, "failed to send notification", "err", notifyErr)
 				}
 			case t := <-downloader.OnTransferDownloadFinished:
 				err := repo.UpdateTransferStatus(t.ID, "downloaded")
 				if err != nil {
-					logger.Error("failed to update transfer status", "transfer_id", t.ID, "err", err)
+					logger.ErrorContext(ctx, "failed to update transfer status", "transfer_id", t.ID, "err", err)
 
 					continue
 				}
 
 				downloader.WatchForImported(ctx, t, cfg.PollingInterval)
 
-				logger.Info("transfer download finished", "transfer_id", t.ID, "transfer_name", t.Name)
+				logger.InfoContext(ctx, "transfer download finished", "transfer_id", t.ID, "transfer_name", t.Name)
 
 				if notifyErr := notif.Notify(
 					"✅ Download finished for transfer: " + t.Name + " (" + t.ID + ")",
 				); notifyErr != nil {
-					logger.Error("failed to send notification", "err", notifyErr)
+					logger.ErrorContext(ctx, "failed to send notification", "err", notifyErr)
 				}
 			case t := <-downloader.OnTransferImported:
 				downloader.WatchForSeeding(ctx, t, cfg.PollingInterval)
@@ -345,7 +345,7 @@ func setupNotificationForDownloader(
 				if notifyErr := notif.Notify(
 					"📪 Transfer imported: " + t.Name + " (" + t.ID + ")",
 				); notifyErr != nil {
-					logger.Error("failed to send notification", "err", notifyErr)
+					logger.ErrorContext(ctx, "failed to send notification", "err", notifyErr)
 				}
 			}
 		}
