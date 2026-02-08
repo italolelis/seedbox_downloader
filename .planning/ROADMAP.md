@@ -100,10 +100,11 @@ Plans:
   4. Shutdown logs show graceful cleanup sequence
   5. Component initialization failures log at ERROR with specific failure reason
   6. Startup logs include key configuration values (label, polling interval, download directory)
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 08-01: [Brief description]
+- [ ] 08-01: Add phased startup logging with component ready messages and service ready
+- [ ] 08-02: Add shutdown sequence logging and error context enhancement
 
 #### Phase 9: Log Level Consistency
 **Goal**: Consistent log level usage across all components to reduce noise and improve signal
@@ -152,6 +153,6 @@ Phases execute in numeric order: 7 → 8 → 9 → 10
 | 5. Torrent File Upload | v1.1 | 3/3 | Complete | 2026-02-01 |
 | 6. Observability & Testing | v1.1 | 3/3 | Complete | 2026-02-01 |
 | 7. Trace Correlation | v1.2 | 4/4 | Complete | 2026-02-08 |
-| 8. Lifecycle Visibility | v1.2 | 0/TBD | Not started | - |
+| 8. Lifecycle Visibility | v1.2 | 0/2 | Not started | - |
 | 9. Log Level Consistency | v1.2 | 0/TBD | Not started | - |
 | 10. HTTP Request Logging | v1.2 | 0/TBD | Not started | - |
