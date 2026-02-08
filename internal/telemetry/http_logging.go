@@ -10,6 +10,7 @@ import (
 // responseWriter wraps http.ResponseWriter to capture the status code.
 type responseWriter struct {
 	http.ResponseWriter
+
 	status      int
 	wroteHeader bool
 }
@@ -24,8 +25,10 @@ func (rw *responseWriter) WriteHeader(code int) {
 	if rw.wroteHeader {
 		return // Prevent multiple WriteHeader calls
 	}
+
 	rw.status = code
 	rw.wroteHeader = true
+
 	rw.ResponseWriter.WriteHeader(code)
 }
 
@@ -34,11 +37,12 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 	if !rw.wroteHeader {
 		rw.WriteHeader(http.StatusOK)
 	}
+
 	return rw.ResponseWriter.Write(b)
 }
 
 // HTTPLogging middleware logs HTTP requests with appropriate level based on status code.
-// Requirements: HTTP-01, HTTP-02, HTTP-03, HTTP-04, HTTP-05, HTTP-06
+// Requirements: HTTP-01, HTTP-02, HTTP-03, HTTP-04, HTTP-05, HTTP-06.
 func HTTPLogging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()

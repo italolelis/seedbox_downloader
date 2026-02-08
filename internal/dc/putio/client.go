@@ -35,7 +35,7 @@ func NewClient(token string, insecure ...bool) *Client {
 	return client
 }
 
-// Update GetTaggedTorrents to match DownloadClient interface.
+// GetTaggedTorrents retrieves torrents matching the given tag from Put.io.
 func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*transfer.Transfer, error) {
 	logger := logctx.LoggerFromContext(ctx).With("tag", tag)
 
@@ -155,6 +155,7 @@ func validateTorrentFilename(filename string) error {
 			Reason:   "file extension must be .torrent (Put.io requires extension for transfer detection)",
 		}
 	}
+
 	return nil
 }
 
@@ -218,8 +219,10 @@ func (c *Client) AddTransferByBytes(ctx context.Context, torrentBytes []byte, fi
 
 	// Resolve directory (same logic as magnet links)
 	var dirID int64
+
 	if downloadDir != "" {
 		var err error
+
 		dirID, err = c.findDirectoryID(ctx, downloadDir)
 		if err != nil {
 			return nil, &transfer.DirectoryError{

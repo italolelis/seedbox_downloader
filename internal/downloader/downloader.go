@@ -212,6 +212,7 @@ func (d *Downloader) WatchForImported(ctx context.Context, t *transfer.Transfer,
 					"operation", "watch_imported",
 					"transfer_id", t.ID,
 					"reason", "context_cancelled")
+
 				return
 			case <-ticker.C:
 				imported, err := d.checkForImported(ctx, t)
@@ -227,6 +228,7 @@ func (d *Downloader) WatchForImported(ctx context.Context, t *transfer.Transfer,
 						"transfer_id", t.ID,
 						"reason", "transfer_imported")
 					d.OnTransferImported <- t
+
 					return
 				}
 			}
@@ -260,6 +262,7 @@ func (d *Downloader) WatchForSeeding(ctx context.Context, t *transfer.Transfer, 
 					"operation", "watch_seeding",
 					"transfer_id", t.ID,
 					"reason", "context_cancelled")
+
 				return
 			case <-ticker.C:
 				if !t.IsSeeding() {

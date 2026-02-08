@@ -19,6 +19,7 @@ func NewTraceHandler(h slog.Handler) *TraceHandler {
 	if h == nil {
 		panic("logctx: NewTraceHandler called with nil handler")
 	}
+
 	return &TraceHandler{inner: h}
 }
 

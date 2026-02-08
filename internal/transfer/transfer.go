@@ -124,6 +124,7 @@ func (o *TransferOrchestrator) ProduceTransfers(ctx context.Context) {
 				logger.InfoContext(ctx, "transfer orchestrator shutdown",
 					"operation", "produce_transfers",
 					"reason", "context_cancelled")
+
 				return
 			case <-ticker.C:
 				if err := o.watchTransfers(ctx); err != nil {

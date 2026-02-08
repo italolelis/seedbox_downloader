@@ -106,7 +106,9 @@ func (c *InstrumentedTransferClient) AddTransfer(ctx context.Context, url string
 }
 
 // AddTransferByBytes adds a transfer from .torrent file bytes with telemetry.
-func (c *InstrumentedTransferClient) AddTransferByBytes(ctx context.Context, torrentBytes []byte, filename string, downloadDir string) (*Transfer, error) {
+func (c *InstrumentedTransferClient) AddTransferByBytes(
+	ctx context.Context, torrentBytes []byte, filename string, downloadDir string,
+) (*Transfer, error) {
 	var result *Transfer
 
 	var err error

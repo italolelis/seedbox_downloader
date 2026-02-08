@@ -116,28 +116,35 @@ func run(ctx context.Context) error {
 	)
 
 	logger.InfoContext(ctx, "initializing telemetry")
+
 	tel, err := initializeTelemetry(ctx, cfg)
 	if err != nil {
 		return err
 	}
+
 	defer tel.Shutdown(ctx)
+
 	logger.InfoContext(ctx, "telemetry ready",
 		"service_name", cfg.Telemetry.ServiceName,
 		"otel_enabled", cfg.Telemetry.Enabled,
 	)
 
 	logger.InfoContext(ctx, "initializing services")
+
 	services, err := initializeServices(ctx, cfg, tel)
 	if err != nil {
 		return err
 	}
+
 	defer services.Close()
 
 	logger.InfoContext(ctx, "starting HTTP server")
+
 	servers, err := startServers(ctx, cfg, tel)
 	if err != nil {
 		return err
 	}
+
 	logger.InfoContext(ctx, "server ready", "bind_address", cfg.Web.BindAddress)
 
 	logger.InfoContext(ctx, "service ready",
@@ -204,6 +211,7 @@ func initializeTelemetry(ctx context.Context, cfg *config) (*telemetry.Telemetry
 			"service_name", cfg.Telemetry.ServiceName,
 			"otel_address", cfg.Telemetry.OTELAddress,
 			"err", err)
+
 		return nil, fmt.Errorf("failed to initialize telemetry: %w", err)
 	}
 
@@ -214,6 +222,7 @@ func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemet
 	logger := logctx.LoggerFromContext(ctx)
 
 	logger.InfoContext(ctx, "initializing database")
+
 	database, err := sqlite.InitDB(ctx, cfg.DBPath, cfg.DBMaxOpenConns, cfg.DBMaxIdleConns)
 	if err != nil {
 		logger.ErrorContext(ctx, "database initialization failed",
@@ -222,8 +231,10 @@ func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemet
 			"max_open_conns", cfg.DBMaxOpenConns,
 			"max_idle_conns", cfg.DBMaxIdleConns,
 			"err", err)
+
 		return nil, fmt.Errorf("failed to initialize the database: %w", err)
 	}
+
 	logger.InfoContext(ctx, "database ready",
 		"db_path", cfg.DBPath,
 		"max_open_conns", cfg.DBMaxOpenConns,
@@ -233,12 +244,14 @@ func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemet
 	dr := sqlite.NewInstrumentedDownloadRepository(database, tel)
 
 	logger.InfoContext(ctx, "initializing download client")
+
 	dc, err := buildDownloadClient(cfg)
 	if err != nil {
 		logger.ErrorContext(ctx, "download client build failed",
 			"component", "download_client",
 			"client_type", cfg.DownloadClient,
 			"err", err)
+
 		return nil, fmt.Errorf("failed to build download client: %w", err)
 	}
 
@@ -248,8 +261,10 @@ func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemet
 			"component", "download_client",
 			"client_type", cfg.DownloadClient,
 			"err", err)
+
 		return nil, fmt.Errorf("failed to authenticate with the download client: %w", err)
 	}
+
 	logger.InfoContext(ctx, "download client ready", "client_type", cfg.DownloadClient)
 
 	arrServices := []*arr.Client{
@@ -290,6 +305,7 @@ func startServers(ctx context.Context, cfg *config, tel *telemetry.Telemetry) (*
 			"component", "http_server",
 			"bind_address", cfg.Web.BindAddress,
 			"err", err)
+
 		return nil, fmt.Errorf("failed to setup server: %w", err)
 	}
 
@@ -321,14 +337,17 @@ func runMainLoop(ctx context.Context, cfg *config, servers *servers) error {
 			// Phase 1: Stop metrics server (if present)
 			if servers.metrics != nil {
 				logger.InfoContext(shutdownCtx, "stopping metrics server")
+
 				if err := servers.metrics.Shutdown(shutdownCtx); err != nil {
 					logger.ErrorContext(shutdownCtx, "failed to gracefully shutdown metrics server", "err", err)
 				}
+
 				logger.InfoContext(shutdownCtx, "metrics server stopped")
 			}
 
 			// Phase 2: Stop HTTP server
 			logger.InfoContext(shutdownCtx, "stopping HTTP server")
+
 			if err := servers.api.Shutdown(shutdownCtx); err != nil {
 				logger.ErrorContext(shutdownCtx, "failed to gracefully shutdown the server", "err", err)
 
@@ -336,6 +355,7 @@ func runMainLoop(ctx context.Context, cfg *config, servers *servers) error {
 					return fmt.Errorf("failed to stop server gracefully: %w", err)
 				}
 			}
+
 			logger.InfoContext(shutdownCtx, "HTTP server stopped")
 
 			// Phase 3: Services are stopped via defer in run() - services.Close() logs its own shutdown
@@ -387,48 +407,81 @@ func setupNotificationForDownloader(
 
 				return
 			case t := <-downloader.OnTransferDownloadError:
-				err := repo.UpdateTransferStatus(t.ID, "failed")
-				if err != nil {
-					logger.ErrorContext(ctx, "failed to update transfer status", "transfer_id", t.ID, "err", err)
-
-					continue
-				}
-
-				logger.WarnContext(ctx, "transfer download error", "transfer_id", t.ID, "transfer_name", t.Name)
-
-				if notifyErr := notif.Notify(
-					"❌ Download failed for transfer: " + t.Name + " (" + t.ID + ")",
-				); notifyErr != nil {
-					logger.ErrorContext(ctx, "failed to send notification", "err", notifyErr)
-				}
+				handleDownloadError(ctx, logger, repo, notif, t)
 			case t := <-downloader.OnTransferDownloadFinished:
-				err := repo.UpdateTransferStatus(t.ID, "downloaded")
-				if err != nil {
-					logger.ErrorContext(ctx, "failed to update transfer status", "transfer_id", t.ID, "err", err)
-
-					continue
-				}
-
-				downloader.WatchForImported(ctx, t, cfg.PollingInterval)
-
-				logger.InfoContext(ctx, "transfer download finished", "transfer_id", t.ID, "transfer_name", t.Name)
-
-				if notifyErr := notif.Notify(
-					"✅ Download finished for transfer: " + t.Name + " (" + t.ID + ")",
-				); notifyErr != nil {
-					logger.ErrorContext(ctx, "failed to send notification", "err", notifyErr)
-				}
+				handleDownloadFinished(ctx, logger, repo, notif, downloader, t, cfg.PollingInterval)
 			case t := <-downloader.OnTransferImported:
-				downloader.WatchForSeeding(ctx, t, cfg.PollingInterval)
-
-				if notifyErr := notif.Notify(
-					"📪 Transfer imported: " + t.Name + " (" + t.ID + ")",
-				); notifyErr != nil {
-					logger.ErrorContext(ctx, "failed to send notification", "err", notifyErr)
-				}
+				handleTransferImported(ctx, logger, notif, downloader, t, cfg.PollingInterval)
 			}
 		}
 	}()
+}
+
+func handleDownloadError(
+	ctx context.Context,
+	logger *slog.Logger,
+	repo storage.DownloadRepository,
+	notif notifier.Notifier,
+	t *transfer.Transfer,
+) {
+	err := repo.UpdateTransferStatus(t.ID, "failed")
+	if err != nil {
+		logger.ErrorContext(ctx, "failed to update transfer status", "transfer_id", t.ID, "err", err)
+
+		return
+	}
+
+	logger.WarnContext(ctx, "transfer download error", "transfer_id", t.ID, "transfer_name", t.Name)
+
+	if notifyErr := notif.Notify(
+		"❌ Download failed for transfer: " + t.Name + " (" + t.ID + ")",
+	); notifyErr != nil {
+		logger.ErrorContext(ctx, "failed to send notification", "err", notifyErr)
+	}
+}
+
+func handleDownloadFinished(
+	ctx context.Context,
+	logger *slog.Logger,
+	repo storage.DownloadRepository,
+	notif notifier.Notifier,
+	dl *downloader.Downloader,
+	t *transfer.Transfer,
+	pollingInterval time.Duration,
+) {
+	err := repo.UpdateTransferStatus(t.ID, "downloaded")
+	if err != nil {
+		logger.ErrorContext(ctx, "failed to update transfer status", "transfer_id", t.ID, "err", err)
+
+		return
+	}
+
+	dl.WatchForImported(ctx, t, pollingInterval)
+
+	logger.InfoContext(ctx, "transfer download finished", "transfer_id", t.ID, "transfer_name", t.Name)
+
+	if notifyErr := notif.Notify(
+		"✅ Download finished for transfer: " + t.Name + " (" + t.ID + ")",
+	); notifyErr != nil {
+		logger.ErrorContext(ctx, "failed to send notification", "err", notifyErr)
+	}
+}
+
+func handleTransferImported(
+	ctx context.Context,
+	logger *slog.Logger,
+	notif notifier.Notifier,
+	dl *downloader.Downloader,
+	t *transfer.Transfer,
+	pollingInterval time.Duration,
+) {
+	dl.WatchForSeeding(ctx, t, pollingInterval)
+
+	if notifyErr := notif.Notify(
+		"📪 Transfer imported: " + t.Name + " (" + t.ID + ")",
+	); notifyErr != nil {
+		logger.ErrorContext(ctx, "failed to send notification", "err", notifyErr)
+	}
 }
 
 // This is an abstract factory for the download client.
@@ -475,6 +528,7 @@ func setupServer(ctx context.Context, cfg *config, tel *telemetry.Telemetry) (*h
 			"expected", "putio",
 			"actual", cfg.DownloadClient,
 			"err", "download client is not a putio client")
+
 		return nil, fmt.Errorf("download client is not a putio client: %s", cfg.DownloadClient)
 	}
 

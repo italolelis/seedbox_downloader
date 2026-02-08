@@ -27,12 +27,15 @@ func InitDB(ctx context.Context, dbPath string, maxOpenConns, maxIdleConns int) 
 		if retryCount > 0 {
 			slog.DebugContext(ctx, "retrying database ping", "attempt", retryCount+1)
 		}
+
 		retryCount++
+
 		return struct{}{}, db.PingContext(ctx)
 	}, backoff.WithMaxTries(3))
 
 	if err != nil {
 		db.Close()
+
 		return nil, err
 	}
 
@@ -45,6 +48,7 @@ func InitDB(ctx context.Context, dbPath string, maxOpenConns, maxIdleConns int) 
 
 	if err != nil {
 		db.Close()
+
 		return nil, err
 	}
 

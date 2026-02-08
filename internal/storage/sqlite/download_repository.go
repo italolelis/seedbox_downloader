@@ -45,7 +45,7 @@ func (r *DownloadRepository) GetDownloads() ([]storage.DownloadRecord, error) {
 	return downloads, nil
 }
 
-// ClaimDownload atomically sets status to 'downloading' and locked_by to instanceID if status is 'pending' or 'failed'.
+// ClaimTransfer atomically sets status to 'downloading' and locked_by to instanceID if status is 'pending' or 'failed'.
 func (r *DownloadRepository) ClaimTransfer(transferID string) (bool, error) {
 	var status string
 
@@ -76,7 +76,7 @@ func (r *DownloadRepository) ClaimTransfer(transferID string) (bool, error) {
 	return affected > 0, nil
 }
 
-// UpdateDownloadStatus sets the status for a download.
+// UpdateTransferStatus sets the status for a download.
 func (r *DownloadRepository) UpdateTransferStatus(transferID, status string) error {
 	_, err := r.db.Exec(`UPDATE downloads SET status = ?, locked_by = NULL WHERE transfer_id = ?`, status, transferID)
 

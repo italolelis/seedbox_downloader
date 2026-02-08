@@ -149,7 +149,7 @@ func (c *Client) Authenticate(ctx context.Context) error {
 	return nil
 }
 
-// Add a conversion method to DownloadClient.Torrent.
+// ToTorrent converts a Deluge Torrent to the internal Transfer type.
 func (t *Torrent) ToTorrent() *transfer.Transfer {
 	files := make([]*transfer.File, 0, len(t.Files))
 	for _, f := range t.Files {
@@ -169,7 +169,7 @@ func (t *Torrent) ToTorrent() *transfer.Transfer {
 	}
 }
 
-// Update GetTaggedTorrents to match DownloadClient interface.
+// GetTaggedTorrents retrieves torrents matching the given tag from Deluge.
 func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*transfer.Transfer, error) {
 	delugeTorrents, err := c.getTaggedTorrentsRaw(ctx, tag)
 	if err != nil {

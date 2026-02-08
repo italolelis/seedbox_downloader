@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -120,7 +121,9 @@ type TransmissionHandler struct {
 }
 
 // NewTransmissionHandler creates a new content handler.
-func NewTransmissionHandler(username, password string, dc DownloadClient, label string, downloadDir string, t *telemetry.Telemetry) *TransmissionHandler {
+func NewTransmissionHandler(
+	username, password string, dc DownloadClient, label string, downloadDir string, t *telemetry.Telemetry,
+) *TransmissionHandler {
 	return &TransmissionHandler{
 		username:    username,
 		password:    password,
@@ -210,11 +213,13 @@ func (h *TransmissionHandler) HandleRPC(w http.ResponseWriter, r *http.Request) 
 		}
 
 		w.Header().Set("Content-Type", "application/json")
+
 		if encodeErr := json.NewEncoder(w).Encode(errorResponse); encodeErr != nil {
 			// Only use HTTP error for server-side failures (encoding)
 			logger.ErrorContext(ctx, "failed to encode error response", "err", encodeErr)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 		}
+
 		return
 	}
 
@@ -292,6 +297,7 @@ func validateBencodeStructure(data []byte) error {
 func generateTorrentFilename(torrentBytes []byte) string {
 	hash := sha1.Sum(torrentBytes)
 	hashStr := hex.EncodeToString(hash[:])
+
 	return fmt.Sprintf("%s.torrent", hashStr[:16])
 }
 
@@ -307,6 +313,7 @@ func (h *TransmissionHandler) handleTorrentAddByMetaInfo(ctx context.Context, re
 			"error_type", "invalid_base64",
 			"metainfo_length", len(req.Arguments.MetaInfo),
 		)
+
 		return nil, &transfer.InvalidContentError{
 			Filename: "metainfo",
 			Reason:   fmt.Sprintf("invalid base64 encoding: %v", err),
@@ -331,6 +338,7 @@ func (h *TransmissionHandler) handleTorrentAddByMetaInfo(ctx context.Context, re
 			"error_type", "invalid_bencode",
 			"size_bytes", len(torrentBytes),
 		)
+
 		return nil, err
 	}
 
@@ -347,6 +355,7 @@ func (h *TransmissionHandler) handleTorrentAddByMetaInfo(ctx context.Context, re
 			"filename", filename,
 			"size_bytes", len(torrentBytes),
 		)
+
 		return nil, err
 	}
 
@@ -358,33 +367,7 @@ func (h *TransmissionHandler) handleTorrentAddByMetaInfo(ctx context.Context, re
 func (h *TransmissionHandler) handleTorrentAdd(ctx context.Context, req *TransmissionRequest) (*TransmissionResponse, error) {
 	logger := logctx.LoggerFromContext(ctx).With("method", "handle_torrent_add")
 
-	var torrent *transfer.Transfer
-	var err error
-
-	// Requirement API-06: Prioritize MetaInfo when both present
-	if req.Arguments.MetaInfo != "" {
-		// Requirement API-01: Detect MetaInfo field
-		logger.DebugContext(ctx, "processing torrent add request", "torrent_type", "metainfo")
-		if h.telemetry != nil {
-			h.telemetry.RecordTorrentType(ctx, "metainfo")
-		}
-		torrent, err = h.handleTorrentAddByMetaInfo(ctx, req)
-	} else if req.Arguments.FileName != "" {
-		// Requirement API-05: Maintain backward compatibility
-		logger.DebugContext(ctx, "processing torrent add request", "torrent_type", "magnet")
-		if h.telemetry != nil {
-			h.telemetry.RecordTorrentType(ctx, "magnet")
-		}
-		magnetLink := req.Arguments.FileName
-		// we use the label as the download directory. When using put.io as a shared download client, we can't use the download directory from the request.
-		torrent, err = h.dc.AddTransfer(ctx, magnetLink, h.label)
-		if err != nil {
-			return nil, fmt.Errorf("failed to add transfer: %w", err)
-		}
-	} else {
-		return nil, fmt.Errorf("either metainfo or filename must be provided")
-	}
-
+	torrent, err := h.resolveTorrent(ctx, req, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -405,6 +388,44 @@ func (h *TransmissionHandler) handleTorrentAdd(ctx context.Context, req *Transmi
 		Result:    "success",
 		Arguments: jsonTorrent,
 	}, nil
+}
+
+// resolveTorrent determines the torrent source (metainfo or magnet) and adds the transfer.
+func (h *TransmissionHandler) resolveTorrent(
+	ctx context.Context, req *TransmissionRequest, logger *slog.Logger,
+) (*transfer.Transfer, error) {
+	// Requirement API-06: Prioritize MetaInfo when both present
+	if req.Arguments.MetaInfo != "" {
+		// Requirement API-01: Detect MetaInfo field
+		logger.DebugContext(ctx, "processing torrent add request", "torrent_type", "metainfo")
+
+		if h.telemetry != nil {
+			h.telemetry.RecordTorrentType(ctx, "metainfo")
+		}
+
+		return h.handleTorrentAddByMetaInfo(ctx, req)
+	}
+
+	if req.Arguments.FileName != "" {
+		// Requirement API-05: Maintain backward compatibility
+		logger.DebugContext(ctx, "processing torrent add request", "torrent_type", "magnet")
+
+		if h.telemetry != nil {
+			h.telemetry.RecordTorrentType(ctx, "magnet")
+		}
+
+		magnetLink := req.Arguments.FileName
+		// we use the label as the download directory. When using put.io as a shared download client,
+		// we can't use the download directory from the request.
+		torrent, err := h.dc.AddTransfer(ctx, magnetLink, h.label)
+		if err != nil {
+			return nil, fmt.Errorf("failed to add transfer: %w", err)
+		}
+
+		return torrent, nil
+	}
+
+	return nil, fmt.Errorf("either metainfo or filename must be provided")
 }
 
 func (h *TransmissionHandler) handleTorrentRemove(ctx context.Context, req *TransmissionRequest) (*TransmissionResponse, error) {

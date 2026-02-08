@@ -87,6 +87,7 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 
 	if cfg.OTELAddress == "" {
 		slog.InfoContext(ctx, "Telemetry disabled - metrics and traces will not be collected")
+
 		meterProvider = noop.NewMeterProvider()
 	} else {
 		// Create OTLP exporter

@@ -32,6 +32,7 @@ func (e *NetworkError) Error() string {
 	if e.StatusCode > 0 {
 		return fmt.Sprintf("network error during %s (HTTP %d): %s", e.Operation, e.StatusCode, e.APIMessage)
 	}
+
 	return fmt.Sprintf("network error during %s: %s", e.Operation, e.APIMessage)
 }
 
