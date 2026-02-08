@@ -148,7 +148,9 @@ func initializeConfig() (*config, *slog.Logger, error) {
 		return nil, nil, fmt.Errorf("failed to load the env vars: %w", err)
 	}
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
+	jsonHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel})
+	traceHandler := logctx.NewTraceHandler(jsonHandler)
+	logger := slog.New(traceHandler)
 
 	slog.SetDefault(logger)
 
