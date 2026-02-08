@@ -446,7 +446,16 @@ func buildDownloadClient(cfg *config) (transfer.DownloadClient, error) {
 // setupServer prepares the handlers and services to create the http rest server.
 func setupServer(ctx context.Context, cfg *config, tel *telemetry.Telemetry) (*http.Server, error) {
 	r := chi.NewRouter()
+
+	// Middleware order is critical:
+	// 1. RequestID - generates request_id, stores in context
+	r.Use(telemetry.RequestID)
+
+	// 2. otelhttp - creates span, adds trace context to r.Context()
 	r.Use(telemetry.NewHTTPMiddleware(cfg.Telemetry.ServiceName))
+
+	// 3. HTTPLogging - logs after handler completes with request_id, trace_id, span_id
+	r.Use(telemetry.HTTPLogging)
 
 	var tHandler *rest.TransmissionHandler
 
