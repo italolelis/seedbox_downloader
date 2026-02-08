@@ -41,7 +41,7 @@ func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*transfer
 
 	transfers, err := c.putioClient.Transfers.List(ctx)
 	if err != nil {
-		logger.Error("failed to get transfers", "err", err)
+		logger.ErrorContext(ctx, "failed to get transfers", "err", err)
 
 		return nil, fmt.Errorf("failed to get transfers: %w", err)
 	}
@@ -50,27 +50,27 @@ func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*transfer
 
 	for _, t := range transfers {
 		if t.FileID == 0 {
-			logger.Debug("skipping transfer because it's not a downloadable transfer", "transfer_id", t.ID, "status", t.Status)
+			logger.DebugContext(ctx, "skipping transfer because it's not a downloadable transfer", "transfer_id", t.ID, "status", t.Status)
 
 			continue
 		}
 
 		file, err := c.putioClient.Files.Get(ctx, t.FileID)
 		if err != nil {
-			logger.Error("failed to get file", "transfer_id", t.ID, "err", err)
+			logger.ErrorContext(ctx, "failed to get file", "transfer_id", t.ID, "err", err)
 
 			continue
 		}
 
 		parent, err := c.putioClient.Files.Get(ctx, file.ParentID)
 		if err != nil {
-			logger.Error("failed to get parent file", "file_id", file.ID, "err", err)
+			logger.ErrorContext(ctx, "failed to get parent file", "file_id", file.ID, "err", err)
 
 			continue
 		}
 
 		if parent.IsDir() && parent.Name != tag {
-			logger.Debug("skipping file", "file_id", file.ID, "file_name", file.Name, "parent_name", parent.Name)
+			logger.DebugContext(ctx, "skipping file", "file_id", file.ID, "file_name", file.Name, "parent_name", parent.Name)
 
 			continue
 		}
@@ -103,7 +103,7 @@ func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*transfer
 		torrents = append(torrents, torrent)
 	}
 
-	logger.Debug("found torrents to download", "torrent_count", len(torrents))
+	logger.DebugContext(ctx, "found torrents to download", "torrent_count", len(torrents))
 
 	return torrents, nil
 }
@@ -114,14 +114,14 @@ func (c *Client) GrabFile(ctx context.Context, file *transfer.File) (io.ReadClos
 
 	url, err := c.putioClient.Files.URL(ctx, file.ID, false)
 	if err != nil {
-		logger.Error("failed to get file download url", "file_id", file.ID, "err", err)
+		logger.ErrorContext(ctx, "failed to get file download url", "file_id", file.ID, "err", err)
 
 		return nil, fmt.Errorf("failed to get file download url: %w", err)
 	}
 
 	resp, err := http.Get(url)
 	if err != nil {
-		logger.Error("failed to get file", "file_id", file.ID, "err", err)
+		logger.ErrorContext(ctx, "failed to get file", "file_id", file.ID, "err", err)
 
 		return nil, fmt.Errorf("failed to get file: %w", err)
 	}
