@@ -27,13 +27,13 @@ Requirements for logging improvements milestone. Each maps to roadmap phases.
 
 ### Log Level Consistency
 
-- [ ] **LEVELS-01**: Lifecycle events (startup, shutdown, component ready) log at INFO level
-- [ ] **LEVELS-02**: Normal operations (transfer discovered, download started, import detected) log at INFO level
-- [ ] **LEVELS-03**: Detailed progress (file downloaded, bytes transferred, polling tick) logs at DEBUG level
-- [ ] **LEVELS-04**: Warning conditions (retries, slow operations, unexpected but handled errors) log at WARN level
-- [ ] **LEVELS-05**: Error conditions (failed operations, panics, unhandled errors) log at ERROR level
-- [ ] **LEVELS-06**: No INFO-level logs during idle polling (only when transfers found)
-- [ ] **LEVELS-07**: Multi-file torrents don't log each file at INFO (only transfer-level events at INFO, files at DEBUG)
+- [x] **LEVELS-01**: Lifecycle events (startup, shutdown, component ready) log at INFO level
+- [x] **LEVELS-02**: Normal operations (transfer discovered, download started, import detected) log at INFO level
+- [x] **LEVELS-03**: Detailed progress (file downloaded, bytes transferred, polling tick) logs at DEBUG level
+- [x] **LEVELS-04**: Warning conditions (retries, slow operations, unexpected but handled errors) log at WARN level
+- [x] **LEVELS-05**: Error conditions (failed operations, panics, unhandled errors) log at ERROR level
+- [x] **LEVELS-06**: No INFO-level logs during idle polling (only when transfers found)
+- [x] **LEVELS-07**: Multi-file torrents don't log each file at INFO (only transfer-level events at INFO, files at DEBUG)
 
 ### HTTP Request Logging
 
@@ -93,13 +93,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 | LIFECYCLE-04 | Phase 8 | Complete |
 | LIFECYCLE-05 | Phase 8 | Complete |
 | LIFECYCLE-06 | Phase 8 | Complete |
-| LEVELS-01 | Phase 9 | Pending |
-| LEVELS-02 | Phase 9 | Pending |
-| LEVELS-03 | Phase 9 | Pending |
-| LEVELS-04 | Phase 9 | Pending |
-| LEVELS-05 | Phase 9 | Pending |
-| LEVELS-06 | Phase 9 | Pending |
-| LEVELS-07 | Phase 9 | Pending |
+| LEVELS-01 | Phase 9 | Complete |
+| LEVELS-02 | Phase 9 | Complete |
+| LEVELS-03 | Phase 9 | Complete |
+| LEVELS-04 | Phase 9 | Complete |
+| LEVELS-05 | Phase 9 | Complete |
+| LEVELS-06 | Phase 9 | Complete |
+| LEVELS-07 | Phase 9 | Complete |
 | HTTP-01 | Phase 10 | Pending |
 | HTTP-02 | Phase 10 | Pending |
 | HTTP-03 | Phase 10 | Pending |
