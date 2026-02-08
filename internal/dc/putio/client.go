@@ -98,12 +98,12 @@ func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*transfer
 				continue
 			}
 
+			// Populate files for completed transfers. On error, continue anyway --
+			// transfer stays visible in Activity tab, download pipeline skips via IsDownloadable().
 			files, err := c.getFilesRecursively(ctx, file.ID, file.Name)
 			if err != nil {
 				logger.ErrorContext(ctx, "failed to get files for completed transfer",
 					"transfer_id", t.ID, "file_id", t.FileID, "err", err)
-				// Continue anyway -- transfer visible in Activity tab but without files
-				// Download pipeline will skip it via IsDownloadable() check
 			} else {
 				torrent.Files = append(torrent.Files, files...)
 			}

@@ -474,6 +474,7 @@ func (h *TransmissionHandler) handleTorrentGet(ctx context.Context) (*Transmissi
 
 		// Map status string to TransmissionTorrentStatus
 		var status TransmissionTorrentStatus
+
 		var errorString *string
 
 		switch strings.ToLower(transfer.Status) {
@@ -491,12 +492,14 @@ func (h *TransmissionHandler) handleTorrentGet(ctx context.Context) (*Transmissi
 			status = StatusSeedWait // 5
 		case "error":
 			status = StatusStopped // 0
+
 			if transfer.ErrorMessage != "" {
 				errorString = &transfer.ErrorMessage
 			}
 		default:
 			logger.WarnContext(ctx, "unknown put.io transfer status, defaulting to stopped",
 				"status", transfer.Status, "transfer_id", transfer.ID)
+
 			status = StatusStopped // 0
 		}
 
