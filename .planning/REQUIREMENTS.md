@@ -18,12 +18,12 @@ Requirements for logging improvements milestone. Each maps to roadmap phases.
 
 ### Lifecycle Visibility
 
-- [ ] **LIFECYCLE-01**: Startup logs show clear initialization phases in order (config → telemetry → database → clients → server)
-- [ ] **LIFECYCLE-02**: Each major component logs "ready" message when initialization complete
-- [ ] **LIFECYCLE-03**: Application logs final "service ready" message with port and configured label
-- [ ] **LIFECYCLE-04**: Shutdown logs show graceful cleanup sequence (server stop → downloads finish → cleanup → database close)
-- [ ] **LIFECYCLE-05**: Component initialization failures log at ERROR with specific failure reason
-- [ ] **LIFECYCLE-06**: Startup logs include key configuration values (label, polling interval, download directory)
+- [x] **LIFECYCLE-01**: Startup logs show clear initialization phases in order (config → telemetry → database → clients → server)
+- [x] **LIFECYCLE-02**: Each major component logs "ready" message when initialization complete
+- [x] **LIFECYCLE-03**: Application logs final "service ready" message with port and configured label
+- [x] **LIFECYCLE-04**: Shutdown logs show graceful cleanup sequence (server stop → downloads finish → cleanup → database close)
+- [x] **LIFECYCLE-05**: Component initialization failures log at ERROR with specific failure reason
+- [x] **LIFECYCLE-06**: Startup logs include key configuration values (label, polling interval, download directory)
 
 ### Log Level Consistency
 
@@ -87,12 +87,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TRACE-04 | Phase 7 | Complete |
 | TRACE-05 | Phase 7 | Complete |
 | TRACE-06 | Phase 7 | Complete |
-| LIFECYCLE-01 | Phase 8 | Pending |
-| LIFECYCLE-02 | Phase 8 | Pending |
-| LIFECYCLE-03 | Phase 8 | Pending |
-| LIFECYCLE-04 | Phase 8 | Pending |
-| LIFECYCLE-05 | Phase 8 | Pending |
-| LIFECYCLE-06 | Phase 8 | Pending |
+| LIFECYCLE-01 | Phase 8 | Complete |
+| LIFECYCLE-02 | Phase 8 | Complete |
+| LIFECYCLE-03 | Phase 8 | Complete |
+| LIFECYCLE-04 | Phase 8 | Complete |
+| LIFECYCLE-05 | Phase 8 | Complete |
+| LIFECYCLE-06 | Phase 8 | Complete |
 | LEVELS-01 | Phase 9 | Pending |
 | LEVELS-02 | Phase 9 | Pending |
 | LEVELS-03 | Phase 9 | Pending |
