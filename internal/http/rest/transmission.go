@@ -143,12 +143,13 @@ func (h *TransmissionHandler) Routes() http.Handler {
 
 // HandleRPC responsible to receive the callback from a webhook.
 func (h *TransmissionHandler) HandleRPC(w http.ResponseWriter, r *http.Request) {
-	logger := logctx.LoggerFromContext(r.Context())
-	logger.Debug("received post rpc request")
+	ctx := r.Context()
+	logger := logctx.LoggerFromContext(ctx)
+	logger.DebugContext(ctx, "received post rpc request")
 
 	var req TransmissionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		logger.Error("failed to decode request", "err", err)
+		logger.ErrorContext(ctx, "failed to decode request", "err", err)
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 
 		return
@@ -166,7 +167,7 @@ func (h *TransmissionHandler) HandleRPC(w http.ResponseWriter, r *http.Request) 
 
 		jsonConfig, err := json.Marshal(tConfig)
 		if err != nil {
-			logger.Error("failed to marshal config", "err", err)
+			logger.ErrorContext(ctx, "failed to marshal config", "err", err)
 			http.Error(w, "failed to marshal config", http.StatusInternalServerError)
 
 			return
@@ -177,7 +178,7 @@ func (h *TransmissionHandler) HandleRPC(w http.ResponseWriter, r *http.Request) 
 			Arguments: jsonConfig,
 		}
 	case "torrent-get":
-		response, err = h.handleTorrentGet(r.Context())
+		response, err = h.handleTorrentGet(ctx)
 	case "torrent-set":
 		// Nothing to do here
 		response = &TransmissionResponse{
@@ -189,18 +190,18 @@ func (h *TransmissionHandler) HandleRPC(w http.ResponseWriter, r *http.Request) 
 			Result: "success",
 		}
 	case "torrent-remove":
-		response, err = h.handleTorrentRemove(r.Context(), &req)
+		response, err = h.handleTorrentRemove(ctx, &req)
 	case "torrent-add":
-		response, err = h.handleTorrentAdd(r.Context(), &req)
+		response, err = h.handleTorrentAdd(ctx, &req)
 	default:
-		logger.Error("unknown method", "method", req.Method)
+		logger.ErrorContext(ctx, "unknown method", "method", req.Method)
 		http.Error(w, fmt.Sprintf("unknown method %s", req.Method), http.StatusBadRequest)
 
 		return
 	}
 
 	if err != nil {
-		logger.Error("failed to handle request", "method", req.Method, "err", err)
+		logger.ErrorContext(ctx, "failed to handle request", "method", req.Method, "err", err)
 
 		// Transmission RPC returns HTTP 200 with error in result field
 		// This allows clients to display specific error messages
@@ -211,7 +212,7 @@ func (h *TransmissionHandler) HandleRPC(w http.ResponseWriter, r *http.Request) 
 		w.Header().Set("Content-Type", "application/json")
 		if encodeErr := json.NewEncoder(w).Encode(errorResponse); encodeErr != nil {
 			// Only use HTTP error for server-side failures (encoding)
-			logger.Error("failed to encode error response", "err", encodeErr)
+			logger.ErrorContext(ctx, "failed to encode error response", "err", encodeErr)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 		}
 		return
@@ -220,7 +221,7 @@ func (h *TransmissionHandler) HandleRPC(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "application/json")
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		logger.Error("failed to encode response", "err", err)
+		logger.ErrorContext(ctx, "failed to encode response", "err", err)
 		http.Error(w, "failed to encode response", http.StatusInternalServerError)
 
 		return
@@ -301,7 +302,7 @@ func (h *TransmissionHandler) handleTorrentAddByMetaInfo(ctx context.Context, re
 	// Decode base64 content (requirement API-02)
 	torrentBytes, err := base64.StdEncoding.DecodeString(req.Arguments.MetaInfo)
 	if err != nil {
-		logger.Error("failed to decode base64 metainfo",
+		logger.ErrorContext(ctx, "failed to decode base64 metainfo",
 			"err", err,
 			"error_type", "invalid_base64",
 			"metainfo_length", len(req.Arguments.MetaInfo),
@@ -313,7 +314,7 @@ func (h *TransmissionHandler) handleTorrentAddByMetaInfo(ctx context.Context, re
 		}
 	}
 
-	logger.Debug("decoded metainfo", "size_bytes", len(torrentBytes))
+	logger.DebugContext(ctx, "decoded metainfo", "size_bytes", len(torrentBytes))
 
 	// Check size BEFORE bencode validation (prevent memory exhaustion)
 	if len(torrentBytes) > maxTorrentSize {
@@ -325,7 +326,7 @@ func (h *TransmissionHandler) handleTorrentAddByMetaInfo(ctx context.Context, re
 
 	// Validate bencode structure (requirement API-03)
 	if err := validateBencodeStructure(torrentBytes); err != nil {
-		logger.Error("bencode validation failed",
+		logger.ErrorContext(ctx, "bencode validation failed",
 			"err", err,
 			"error_type", "invalid_bencode",
 			"size_bytes", len(torrentBytes),
@@ -335,12 +336,12 @@ func (h *TransmissionHandler) handleTorrentAddByMetaInfo(ctx context.Context, re
 
 	// Generate filename for Put.io (requires .torrent extension)
 	filename := generateTorrentFilename(torrentBytes)
-	logger.Debug("generated filename", "filename", filename)
+	logger.DebugContext(ctx, "generated filename", "filename", filename)
 
 	// Upload to Put.io using Phase 4 client method
 	torrent, err := h.dc.AddTransferByBytes(ctx, torrentBytes, filename, h.label)
 	if err != nil {
-		logger.Error("failed to add transfer by bytes",
+		logger.ErrorContext(ctx, "failed to add transfer by bytes",
 			"err", err,
 			"error_type", "api_error",
 			"filename", filename,
@@ -349,7 +350,7 @@ func (h *TransmissionHandler) handleTorrentAddByMetaInfo(ctx context.Context, re
 		return nil, err
 	}
 
-	logger.Info("transfer created from metainfo", "transfer_id", torrent.ID, "name", torrent.Name)
+	logger.InfoContext(ctx, "transfer created from metainfo", "transfer_id", torrent.ID, "name", torrent.Name)
 
 	return torrent, nil
 }
@@ -363,14 +364,14 @@ func (h *TransmissionHandler) handleTorrentAdd(ctx context.Context, req *Transmi
 	// Requirement API-06: Prioritize MetaInfo when both present
 	if req.Arguments.MetaInfo != "" {
 		// Requirement API-01: Detect MetaInfo field
-		logger.Debug("processing torrent add request", "torrent_type", "metainfo")
+		logger.DebugContext(ctx, "processing torrent add request", "torrent_type", "metainfo")
 		if h.telemetry != nil {
 			h.telemetry.RecordTorrentType(ctx, "metainfo")
 		}
 		torrent, err = h.handleTorrentAddByMetaInfo(ctx, req)
 	} else if req.Arguments.FileName != "" {
 		// Requirement API-05: Maintain backward compatibility
-		logger.Debug("processing torrent add request", "torrent_type", "magnet")
+		logger.DebugContext(ctx, "processing torrent add request", "torrent_type", "magnet")
 		if h.telemetry != nil {
 			h.telemetry.RecordTorrentType(ctx, "magnet")
 		}
@@ -408,7 +409,7 @@ func (h *TransmissionHandler) handleTorrentAdd(ctx context.Context, req *Transmi
 
 func (h *TransmissionHandler) handleTorrentRemove(ctx context.Context, req *TransmissionRequest) (*TransmissionResponse, error) {
 	logger := logctx.LoggerFromContext(ctx)
-	logger.Debug("received torrent remove request")
+	logger.DebugContext(ctx, "received torrent remove request")
 
 	if err := h.dc.RemoveTransfers(ctx, req.Arguments.IDs, req.Arguments.DeleteLocalData); err != nil {
 		return nil, fmt.Errorf("failed to remove transfers: %w", err)
@@ -422,7 +423,7 @@ func (h *TransmissionHandler) handleTorrentRemove(ctx context.Context, req *Tran
 func (h *TransmissionHandler) handleTorrentGet(ctx context.Context) (*TransmissionResponse, error) {
 	logger := logctx.LoggerFromContext(ctx).With("method", "handle_torrent_get")
 
-	logger.Debug("fetching torrents from download client")
+	logger.DebugContext(ctx, "fetching torrents from download client")
 
 	transfers, err := h.dc.GetTaggedTorrents(ctx, h.label)
 	if err != nil {
@@ -430,9 +431,9 @@ func (h *TransmissionHandler) handleTorrentGet(ctx context.Context) (*Transmissi
 	}
 
 	torrentsCount := len(transfers)
-	logger.Debug("fetched torrents from download client", "count", torrentsCount)
+	logger.DebugContext(ctx, "fetched torrents from download client", "count", torrentsCount)
 
-	logger.Debug("converting torrents to transmission format")
+	logger.DebugContext(ctx, "converting torrents to transmission format")
 
 	transmissionTorrents := make([]TransmissionTorrent, torrentsCount)
 
@@ -440,7 +441,7 @@ func (h *TransmissionHandler) handleTorrentGet(ctx context.Context) (*Transmissi
 		// Convert string ID to int64
 		id, err := strconv.ParseInt(transfer.ID, 10, 64)
 		if err != nil {
-			logger.Error("failed to parse transfer ID", "id", transfer.ID, "err", err)
+			logger.ErrorContext(ctx, "failed to parse transfer ID", "id", transfer.ID, "err", err)
 
 			continue
 		}
@@ -485,7 +486,7 @@ func (h *TransmissionHandler) handleTorrentGet(ctx context.Context) (*Transmissi
 		}
 	}
 
-	logger.Debug("converted torrents to transmission format", "count", len(transmissionTorrents))
+	logger.DebugContext(ctx, "converted torrents to transmission format", "count", len(transmissionTorrents))
 
 	jsonTorrents, err := json.Marshal(map[string]interface{}{
 		"torrents": transmissionTorrents,
