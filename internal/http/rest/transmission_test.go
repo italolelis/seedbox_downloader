@@ -20,6 +20,7 @@ import (
 type mockPutioClient struct {
 	addTransferFunc          func(ctx context.Context, magnetLink, parentName string) (*transfer.Transfer, error)
 	addTransferByBytesFunc   func(ctx context.Context, content []byte, filename, parentName string) (*transfer.Transfer, error)
+	getTaggedTorrentsFunc    func(ctx context.Context, label string) ([]*transfer.Transfer, error)
 	addTransferCalled        bool
 	addTransferByBytesCalled bool
 	lastMagnetLink           string
@@ -48,6 +49,9 @@ func (m *mockPutioClient) AddTransferByBytes(ctx context.Context, content []byte
 }
 
 func (m *mockPutioClient) GetTaggedTorrents(ctx context.Context, label string) ([]*transfer.Transfer, error) {
+	if m.getTaggedTorrentsFunc != nil {
+		return m.getTaggedTorrentsFunc(ctx, label)
+	}
 	return []*transfer.Transfer{}, nil
 }
 
@@ -564,4 +568,222 @@ func TestHandleTorrentAdd_RealTorrentFile(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Equal(t, "success", resp.Result, "should successfully process real torrent file")
 	require.True(t, mockClient.addTransferByBytesCalled, "AddTransferByBytes should be called")
+}
+
+func TestHandleTorrentGet_StatusMapping(t *testing.T) {
+	tests := []struct {
+		name           string
+		putioStatus    string
+		expectedStatus TransmissionTorrentStatus
+		expectedCode   int
+	}{
+		{"downloading", "DOWNLOADING", StatusDownload, 4},
+		{"in_queue", "IN_QUEUE", StatusDownloadWait, 3},
+		{"waiting", "WAITING", StatusDownloadWait, 3},
+		{"finishing", "FINISHING", StatusCheck, 2},
+		{"checking", "CHECKING", StatusCheck, 2},
+		{"completed", "COMPLETED", StatusSeed, 6},
+		{"finished", "FINISHED", StatusSeed, 6},
+		{"seeding", "SEEDING", StatusSeed, 6},
+		{"seedingwait", "SEEDINGWAIT", StatusSeedWait, 5},
+		{"error", "ERROR", StatusStopped, 0},
+		{"unknown", "UNKNOWN_NEW_STATUS", StatusStopped, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := &mockPutioClient{
+				getTaggedTorrentsFunc: func(ctx context.Context, label string) ([]*transfer.Transfer, error) {
+					return []*transfer.Transfer{
+						{
+							ID:     "1",
+							Name:   "test",
+							Size:   1000,
+							Status: tt.putioStatus,
+						},
+					}, nil
+				},
+			}
+
+			handler := NewTransmissionHandler("testuser", "testpass", mockClient, "test-label", "/downloads", nil)
+
+			reqBody := `{"method": "torrent-get", "arguments": {"fields": ["status"]}}`
+			req := httptest.NewRequest(http.MethodPost, "/transmission/rpc", strings.NewReader(reqBody))
+			req.SetBasicAuth("testuser", "testpass")
+
+			w := httptest.NewRecorder()
+			handler.Routes().ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusOK, w.Code)
+
+			var resp TransmissionResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			require.Equal(t, "success", resp.Result)
+
+			var args struct {
+				Torrents []TransmissionTorrent `json:"torrents"`
+			}
+			require.NoError(t, json.Unmarshal(resp.Arguments, &args))
+			require.Len(t, args.Torrents, 1)
+			require.Equal(t, tt.expectedStatus, args.Torrents[0].Status)
+			require.Equal(t, tt.expectedCode, int(args.Torrents[0].Status))
+		})
+	}
+}
+
+func TestHandleTorrentGet_ErrorStringPopulated(t *testing.T) {
+	tests := []struct {
+		name               string
+		status             string
+		errorMessage       string
+		expectErrorString  bool
+		expectedErrorValue string
+	}{
+		{
+			name:               "error status with message",
+			status:             "ERROR",
+			errorMessage:       "tracker unreachable",
+			expectErrorString:  true,
+			expectedErrorValue: "tracker unreachable",
+		},
+		{
+			name:              "completed status with no error",
+			status:            "COMPLETED",
+			errorMessage:      "",
+			expectErrorString: false,
+		},
+		{
+			name:              "error status with empty message",
+			status:            "ERROR",
+			errorMessage:      "",
+			expectErrorString: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := &mockPutioClient{
+				getTaggedTorrentsFunc: func(ctx context.Context, label string) ([]*transfer.Transfer, error) {
+					return []*transfer.Transfer{
+						{
+							ID:           "1",
+							Name:         "test",
+							Size:         1000,
+							Status:       tt.status,
+							ErrorMessage: tt.errorMessage,
+						},
+					}, nil
+				},
+			}
+
+			handler := NewTransmissionHandler("testuser", "testpass", mockClient, "test-label", "/downloads", nil)
+
+			reqBody := `{"method": "torrent-get", "arguments": {}}`
+			req := httptest.NewRequest(http.MethodPost, "/transmission/rpc", strings.NewReader(reqBody))
+			req.SetBasicAuth("testuser", "testpass")
+
+			w := httptest.NewRecorder()
+			handler.Routes().ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusOK, w.Code)
+
+			var resp TransmissionResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+			var args struct {
+				Torrents []TransmissionTorrent `json:"torrents"`
+			}
+			require.NoError(t, json.Unmarshal(resp.Arguments, &args))
+			require.Len(t, args.Torrents, 1)
+
+			if tt.expectErrorString {
+				require.NotNil(t, args.Torrents[0].ErrorString)
+				require.Equal(t, tt.expectedErrorValue, *args.Torrents[0].ErrorString)
+			} else {
+				require.Nil(t, args.Torrents[0].ErrorString)
+			}
+		})
+	}
+}
+
+func TestHandleTorrentGet_PeerAndSpeedFields(t *testing.T) {
+	mockClient := &mockPutioClient{
+		getTaggedTorrentsFunc: func(ctx context.Context, label string) ([]*transfer.Transfer, error) {
+			return []*transfer.Transfer{
+				{
+					ID:                 "1",
+					Name:               "test",
+					Size:               1000,
+					Status:             "DOWNLOADING",
+					PeersConnected:     10,
+					PeersSendingToUs:   5,
+					PeersGettingFromUs: 3,
+					DownloadSpeed:      5242880, // 5MB/s
+				},
+			}, nil
+		},
+	}
+
+	handler := NewTransmissionHandler("testuser", "testpass", mockClient, "test-label", "/downloads", nil)
+
+	reqBody := `{"method": "torrent-get", "arguments": {}}`
+	req := httptest.NewRequest(http.MethodPost, "/transmission/rpc", strings.NewReader(reqBody))
+	req.SetBasicAuth("testuser", "testpass")
+
+	w := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp TransmissionResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	var args struct {
+		Torrents []TransmissionTorrent `json:"torrents"`
+	}
+	require.NoError(t, json.Unmarshal(resp.Arguments, &args))
+	require.Len(t, args.Torrents, 1)
+
+	torrent := args.Torrents[0]
+	require.Equal(t, int64(10), torrent.PeersConnected)
+	require.Equal(t, int64(5), torrent.PeersSendingToUs)
+	require.Equal(t, int64(3), torrent.PeersGettingFromUs)
+	require.Equal(t, int64(5242880), torrent.RateDownload)
+}
+
+func TestHandleTorrentGet_LabelsPopulated(t *testing.T) {
+	mockClient := &mockPutioClient{
+		getTaggedTorrentsFunc: func(ctx context.Context, label string) ([]*transfer.Transfer, error) {
+			return []*transfer.Transfer{
+				{
+					ID:     "1",
+					Name:   "test",
+					Size:   1000,
+					Status: "DOWNLOADING",
+				},
+			}, nil
+		},
+	}
+
+	handler := NewTransmissionHandler("testuser", "testpass", mockClient, "mytag", "/downloads", nil)
+
+	reqBody := `{"method": "torrent-get", "arguments": {}}`
+	req := httptest.NewRequest(http.MethodPost, "/transmission/rpc", strings.NewReader(reqBody))
+	req.SetBasicAuth("testuser", "testpass")
+
+	w := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp TransmissionResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	var args struct {
+		Torrents []TransmissionTorrent `json:"torrents"`
+	}
+	require.NoError(t, json.Unmarshal(resp.Arguments, &args))
+	require.Len(t, args.Torrents, 1)
+
+	require.Equal(t, []string{"mytag"}, args.Torrents[0].Labels)
 }

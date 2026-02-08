@@ -58,6 +58,11 @@ type TransmissionTorrent struct {
 	SecondsDownloading int64                     `json:"secondsDownloading"`
 	ErrorString        *string                   `json:"errorString,omitempty"`
 	DownloadedEver     int64                     `json:"downloadedEver"`
+	Labels             []string                  `json:"labels"`
+	PeersConnected     int64                     `json:"peersConnected"`
+	PeersSendingToUs   int64                     `json:"peersSendingToUs"`
+	PeersGettingFromUs int64                     `json:"peersGettingFromUs"`
+	RateDownload       int64                     `json:"rateDownload"`
 	SeedRatioLimit     float32                   `json:"seedRatioLimit"`
 	SeedRatioMode      uint32                    `json:"seedRatioMode"`
 	SeedIdleLimit      uint64                    `json:"seedIdleLimit"`
