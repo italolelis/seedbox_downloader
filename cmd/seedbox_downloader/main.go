@@ -198,6 +198,12 @@ func initializeTelemetry(ctx context.Context, cfg *config) (*telemetry.Telemetry
 		OTELAddress:    cfg.Telemetry.OTELAddress,
 	})
 	if err != nil {
+		logger := logctx.LoggerFromContext(ctx)
+		logger.ErrorContext(ctx, "telemetry initialization failed",
+			"component", "telemetry",
+			"service_name", cfg.Telemetry.ServiceName,
+			"otel_address", cfg.Telemetry.OTELAddress,
+			"err", err)
 		return nil, fmt.Errorf("failed to initialize telemetry: %w", err)
 	}
 
@@ -210,6 +216,12 @@ func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemet
 	logger.InfoContext(ctx, "initializing database")
 	database, err := sqlite.InitDB(ctx, cfg.DBPath, cfg.DBMaxOpenConns, cfg.DBMaxIdleConns)
 	if err != nil {
+		logger.ErrorContext(ctx, "database initialization failed",
+			"component", "database",
+			"db_path", cfg.DBPath,
+			"max_open_conns", cfg.DBMaxOpenConns,
+			"max_idle_conns", cfg.DBMaxIdleConns,
+			"err", err)
 		return nil, fmt.Errorf("failed to initialize the database: %w", err)
 	}
 	logger.InfoContext(ctx, "database ready",
@@ -223,11 +235,19 @@ func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemet
 	logger.InfoContext(ctx, "initializing download client")
 	dc, err := buildDownloadClient(cfg)
 	if err != nil {
+		logger.ErrorContext(ctx, "download client build failed",
+			"component", "download_client",
+			"client_type", cfg.DownloadClient,
+			"err", err)
 		return nil, fmt.Errorf("failed to build download client: %w", err)
 	}
 
 	instrumentedDC := transfer.NewInstrumentedDownloadClient(dc, tel, cfg.DownloadClient)
 	if err := instrumentedDC.Authenticate(ctx); err != nil {
+		logger.ErrorContext(ctx, "download client authentication failed",
+			"component", "download_client",
+			"client_type", cfg.DownloadClient,
+			"err", err)
 		return nil, fmt.Errorf("failed to authenticate with the download client: %w", err)
 	}
 	logger.InfoContext(ctx, "download client ready", "client_type", cfg.DownloadClient)
@@ -266,6 +286,10 @@ func startServers(ctx context.Context, cfg *config, tel *telemetry.Telemetry) (*
 
 	server, err := setupServer(ctx, cfg, tel)
 	if err != nil {
+		logger.ErrorContext(ctx, "server setup failed",
+			"component", "http_server",
+			"bind_address", cfg.Web.BindAddress,
+			"err", err)
 		return nil, fmt.Errorf("failed to setup server: %w", err)
 	}
 
@@ -436,6 +460,12 @@ func setupServer(ctx context.Context, cfg *config, tel *telemetry.Telemetry) (*h
 		tHandler = rest.NewTransmissionHandler(cfg.Transmission.Username, cfg.Transmission.Password, putioClient, cfg.TargetLabel, cfg.PutioBaseDir, tel)
 		r.Mount("/", tHandler.Routes())
 	} else {
+		logger := logctx.LoggerFromContext(ctx)
+		logger.ErrorContext(ctx, "invalid download client type",
+			"component", "http_server",
+			"expected", "putio",
+			"actual", cfg.DownloadClient,
+			"err", "download client is not a putio client")
 		return nil, fmt.Errorf("download client is not a putio client: %s", cfg.DownloadClient)
 	}
 
