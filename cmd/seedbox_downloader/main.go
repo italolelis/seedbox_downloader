@@ -155,8 +155,19 @@ type services struct {
 }
 
 func (s *services) Close() {
+	// Use default logger with shutdown group since context may be cancelled
+	logger := slog.Default().WithGroup("shutdown")
+
+	logger.Info("stopping services")
+	logger.Info("stopping downloader")
 	s.downloader.Close()
+	logger.Info("downloader stopped")
+
+	logger.Info("stopping transfer orchestrator")
 	s.transferOrchestrator.Close()
+	logger.Info("transfer orchestrator stopped")
+
+	logger.Info("services stopped")
 }
 
 type servers struct {
@@ -280,14 +291,20 @@ func runMainLoop(ctx context.Context, cfg *config, servers *servers) error {
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Web.ShutdownTimeout)
 			defer cancel()
 
-			logger.InfoContext(shutdownCtx, "start shutdown")
+			logger.InfoContext(shutdownCtx, "starting graceful shutdown",
+				"shutdown_timeout", cfg.Web.ShutdownTimeout.String())
 
+			// Phase 1: Stop metrics server (if present)
 			if servers.metrics != nil {
+				logger.InfoContext(shutdownCtx, "stopping metrics server")
 				if err := servers.metrics.Shutdown(shutdownCtx); err != nil {
 					logger.ErrorContext(shutdownCtx, "failed to gracefully shutdown metrics server", "err", err)
 				}
+				logger.InfoContext(shutdownCtx, "metrics server stopped")
 			}
 
+			// Phase 2: Stop HTTP server
+			logger.InfoContext(shutdownCtx, "stopping HTTP server")
 			if err := servers.api.Shutdown(shutdownCtx); err != nil {
 				logger.ErrorContext(shutdownCtx, "failed to gracefully shutdown the server", "err", err)
 
@@ -295,6 +312,11 @@ func runMainLoop(ctx context.Context, cfg *config, servers *servers) error {
 					return fmt.Errorf("failed to stop server gracefully: %w", err)
 				}
 			}
+			logger.InfoContext(shutdownCtx, "HTTP server stopped")
+
+			// Phase 3: Services are stopped via defer in run() - services.Close() logs its own shutdown
+
+			logger.InfoContext(shutdownCtx, "graceful shutdown complete")
 
 			return ctx.Err()
 		}
