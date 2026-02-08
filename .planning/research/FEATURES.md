@@ -1,240 +1,275 @@
-# Feature Research: Logging Improvements
+# Feature Landscape: Sonarr/Radarr Activity Tab via Transmission RPC
 
-**Domain:** Production Go service observability (24/7 operations)
-**Researched:** 2026-02-01
-**Confidence:** HIGH
+**Domain:** Transmission RPC proxy for Sonarr/Radarr Activity tab monitoring
+**Researched:** 2026-02-08
+**Confidence:** MEDIUM (verified via official sources and Sonarr source code inspection)
 
-## Feature Landscape
+## Context
 
-### Table Stakes (Users Expect These)
+Sonarr and Radarr poll the Transmission RPC `torrent-get` endpoint to populate their Activity tab with in-progress downloads. The Activity tab shows download progress, ETA, speed, and status for active transfers. Our proxy currently returns only completed/seeding transfers, causing the Activity tab to appear empty or show only post-download activity.
 
-Features operators assume exist in a production service. Missing these = service is hard to operate.
+This research identifies what fields and behaviors Sonarr/Radarr expect from `torrent-get` for the Activity tab to function correctly.
+
+## Table Stakes
+
+Features that Sonarr/Radarr absolutely require for the Activity tab to display in-progress downloads. Missing any of these = broken Activity tab.
 
 | Feature | Why Expected | Complexity | Notes |
 |---------|--------------|------------|-------|
-| Structured JSON logging | Standard for production systems, machine-parseable, integrates with log aggregators (Datadog, Grafana, etc.) | LOW | **Already implemented** via slog with JSONHandler |
-| Consistent log levels | Operators filter by severity; inconsistent levels create noise and hide signals | MEDIUM | Partial - needs audit of existing log.Info/Debug/Warn/Error usage |
-| Lifecycle logging | Operators need to see: startup sequence, readiness, shutdown gracefully | MEDIUM | Partial - main.go has basic startup, needs clear component initialization order |
-| Error context | Every error needs: what failed, why, what was being attempted | LOW | Present but inconsistent - some errors have transfer_id, some don't |
-| Request correlation | Follow a single entity (torrent/transfer) through entire pipeline | HIGH | Missing - no request_id or correlation_id for torrent flow tracking |
-| Trace context in logs | Logs should include trace_id/span_id from OpenTelemetry spans for cross-system correlation | MEDIUM | Missing - existing OTel integration lacks slog bridge |
-| Log level configurability | Change verbosity at runtime or via env var without restart | LOW | **Already implemented** via LOG_LEVEL env var and slog.LevelVar |
-| Operation logging | Key operations (download start, import complete, cleanup) must be visible at INFO | LOW | Partial - exists but mixed with noise |
-| Error stack traces | Critical errors (panics) need stack traces; regular errors don't | LOW | **Already implemented** for panics via debug.Stack() |
+| **Return in-progress transfers from torrent-get** | Activity tab queries all torrents; if only completed transfers returned, in-progress downloads invisible | Low | Current code filters to completed only; need to include "downloading" status |
+| **percentDone or calculated progress** | Progress bar display requires completion percentage | Low | Calculate from `(totalSize - leftUntilDone) / totalSize` if `percentDone` not directly available |
+| **leftUntilDone field** | Used with totalSize to calculate progress and display remaining data | Low | Put.io provides `size - downloaded`; map to `leftUntilDone` |
+| **totalSize field** | Required for progress calculation and size display | Low | Already implemented; Put.io `size` field maps directly |
+| **status field (0-6)** | Determines Activity tab status text and icon | Medium | Must map Put.io states to Transmission status codes correctly |
+| **eta field** | Shows estimated time remaining in Activity tab | Low | Put.io provides `estimated_time`; already mapped in current code |
+| **name field** | Display torrent name in Activity list | Low | Already implemented |
+| **id and hashString fields** | Identify torrents for subsequent operations (remove, set) | Low | Already implemented (hashString from SHA1 of ID) |
+| **downloadDir field** | Shows download location in Activity details | Low | Already implemented; maps to Put.io save path |
 
-### Differentiators (Competitive Advantage)
+## Differentiators
 
-Features that make logs **excellent** for operators. Not required, but transform debugging experience.
+Features that enhance the Activity tab experience but aren't strictly required for basic functionality.
 
 | Feature | Value Proposition | Complexity | Notes |
 |---------|-------------------|------------|-------|
-| Transfer lifecycle narrative | Single grep for transfer_id shows complete story: discovered → claimed → downloading → imported → cleaned up | MEDIUM | Requires consistent transfer_id logging across all components |
-| Startup sequence reporting | Clear phases: "Config loaded → Database validated → Client authenticated → Server listening → Ready" | LOW | Makes troubleshooting startup failures trivial |
-| Operation grouping | Logs use consistent "operation" field (e.g., "produce_transfers", "watch_imported") to group related log lines | LOW | Partially exists in panic handlers, needs expansion |
-| Progress indicators | Long operations (file downloads, polling) log periodic progress | LOW | Partially exists - download progress at DEBUG level |
-| State transitions | Explicit logs when transfers change state (queued → downloading → downloaded → imported) | LOW | Exists via channels, could be more explicit |
-| Resource utilization | Log active download count, goroutine count at intervals | MEDIUM | Metrics exist via OTel, could add periodic INFO logs |
-| Silent operations visibility | Periodic "heartbeat" log shows service is alive even when idle | LOW | No polling activity logged at INFO when no transfers found |
-| Component readiness | Each component logs when ready: "TransferOrchestrator ready", "Downloader ready", "API server listening" | LOW | Missing explicit readiness logs |
-| Dependency health checks | Log success/failure of external dependencies: Deluge/Put.io, Sonarr/Radarr, Database | MEDIUM | Auth logs exist, ongoing health unclear |
-| Log sampling for high-volume | Debug logs that fire per-file should be sampled to avoid noise | MEDIUM | Currently no sampling - could flood at DEBUG level |
+| **rateDownload field** | Shows current download speed (B/s) | Medium | Put.io may provide download rate; verify API availability |
+| **rateUpload field** | Shows current upload speed (B/s) | Medium | Put.io tracks upload in seeding transfers; may be 0 during download |
+| **secondsDownloading field** | Shows time spent downloading | Low | Can calculate from transfer start time if Put.io provides it |
+| **uploadedEver field** | Shows total uploaded data for seeding ratio | Medium | Put.io may track uploads; verify API availability |
+| **isStalled field** | Indicates if download has stalled (no progress) | Medium | Requires tracking progress over time; may need state |
+| **errorString field** | Shows specific error messages in Activity tab | Low | Already implemented; populate with Put.io error messages |
+| **peersConnected field** | Shows peer count for active transfers | Medium | Put.io may provide peer/seed counts; verify API availability |
+| **metadataPercentComplete field** | Shows metadata download progress (magnet links) | Low | Likely not applicable to Put.io; can omit or always return 1.0 |
+| **recheckProgress field** | Shows file verification progress | Low | Not applicable to Put.io (no local rechecking); can omit |
 
-### Anti-Features (Commonly Requested, Often Problematic)
+## Anti-Features
 
-Features that seem good but create problems in production.
+Features to explicitly NOT implement. These would cause confusion, incorrect behavior, or maintenance burden.
 
-| Feature | Why Requested | Why Problematic | Alternative |
-|---------|---------------|-----------------|-------------|
-| Log every file download at INFO | "I want to see progress" | Generates 100+ logs per transfer for multi-file torrents, drowns signal in noise | Log transfer-level events at INFO (start, complete), per-file at DEBUG |
-| Log every polling tick | "I want to know service is working" | Creates noise every 10 minutes even when nothing happens, obscures real events | Log "watching transfers" at INFO only when transfers found; heartbeat log every hour when idle |
-| Duplicate logs in multiple formats | "I want human-readable AND JSON" | Doubles log volume, complicates aggregation, slows I/O | Use JSON in production (betterstack.com best practice), text locally via LOG_LEVEL |
-| Log request/response bodies | "I want to debug API issues" | Exposes credentials (API keys, tokens), massive log volume, PII concerns | Log operation metadata (method, status, duration) not payloads; use sampling for debugging |
-| WARN level for expected conditions | "I want to highlight important info" | Triggers false alerts, creates alarm fatigue, WARN should mean action needed | Use INFO for normal operations, WARN only for conditions requiring investigation |
-| Pass loggers in context.Context | "I want logger available everywhere" | Creates implicit runtime dependency, tight coupling, not compiler-enforced (Dave Cheney anti-pattern) | Inject logger as explicit dependency, use logctx only for enrichment |
-| log.Fatal in libraries/components | "I want to stop on error" | Prevents graceful shutdown, no cleanup, same as panic (Dave Cheney warning) | Return errors, let main() decide to exit |
+| Anti-Feature | Why Avoid | What to Do Instead |
+|--------------|-----------|-------------------|
+| **Return transfers without configured label** | Sonarr/Radarr use labels to filter their torrents; returning unlabeled transfers pollutes Activity tab | Always filter `torrent-get` by label (current behavior correct) |
+| **Implement percentDone separately from leftUntilDone** | Transmission uses both fields; inconsistency breaks progress display | Calculate percentDone from leftUntilDone/totalSize; keep them synchronized |
+| **Return transfers from all users (shared Put.io)** | Multi-user Put.io accounts would leak transfer visibility | Filter by label/parent directory (current behavior correct) |
+| **Implement real-time WebSocket updates** | Sonarr/Radarr poll on 60-90 second intervals; WebSocket adds complexity without value | Stick to stateless HTTP polling (current approach correct) |
+| **Cache torrent-get responses** | Stale data breaks Activity tab accuracy; polling interval already conservative | Return fresh data on every request (current behavior correct) |
+| **Implement fields argument filtering** | Sonarr requests specific fields via "fields" array; returning all fields is simpler and bandwidth-negligible | Return all supported fields on every request; ignore "fields" argument |
+| **Support Transmission queue states** | Put.io doesn't have queue; mapping queue states (StatusDownloadWait) would be misleading | Only use active states: StatusDownload, StatusSeed, StatusStopped, StatusCheck |
+
+## Status Code Mapping
+
+Transmission status codes and their meaning for Activity tab display.
+
+| Status Code | Transmission Meaning | Sonarr/Radarr Display | When to Use |
+|-------------|---------------------|----------------------|-------------|
+| 0 (StatusStopped) | Torrent paused/stopped | "Paused" or no display | Put.io transfer paused or errored |
+| 1 (StatusCheckWait) | Queued for verification | "Queued" | Not applicable to Put.io; avoid |
+| 2 (StatusCheck) | Verifying local files | "Verifying" | Not applicable to Put.io; avoid |
+| 3 (StatusDownloadWait) | Queued for download | "Queued" | Not applicable to Put.io; avoid |
+| 4 (StatusDownload) | Actively downloading | "Downloading" with progress bar | Put.io status: "DOWNLOADING" |
+| 5 (StatusSeedWait) | Queued for seeding | "Queued" | Not applicable to Put.io; avoid |
+| 6 (StatusSeed) | Actively seeding | "Seeding" or "Completed" | Put.io status: "COMPLETED", "SEEDING" |
+
+**Current mapping (from transmission.go lines 473-486):**
+- "completed", "finished" → StatusSeed (6) ✓ Correct
+- "seedingwait" → StatusSeedWait (5) - Not used by Put.io
+- "seeding" → StatusSeed (6) ✓ Correct
+- "downloading" → StatusDownload (4) ✓ Correct
+- "checking" → StatusCheck (2) - Not used by Put.io
+- Default → StatusStopped (0) ✓ Correct fallback
+
+**Gap:** Put.io likely provides additional status strings not yet mapped. Need to verify Put.io API documentation for complete status enum.
+
+## Progress Calculation
+
+Sonarr/Radarr Activity tab calculates and displays progress using:
+
+**Method 1: percentDone (preferred)**
+- Field: `percentDone` (float, 0.0 to 1.0)
+- Display: `percentDone * 100` = progress percentage
+- Current implementation: Not provided in current TransmissionTorrent struct
+
+**Method 2: leftUntilDone (fallback)**
+- Fields: `totalSize` (int64) and `leftUntilDone` (int64)
+- Calculation: `((totalSize - leftUntilDone) / totalSize) * 100`
+- Current implementation: ✓ Both fields provided (lines 495-496)
+
+**Recommendation:** Continue using Method 2 (leftUntilDone). Put.io provides `size` and `downloaded`, which map cleanly to `totalSize` and `totalSize - leftUntilDone`. Adding `percentDone` is optional but would be redundant.
+
+**Activity tab uses:**
+- Progress bar width: `percentDone * 100` or calculated from leftUntilDone
+- Remaining size display: `leftUntilDone` formatted as GB/MB
+- Total size display: `totalSize` formatted as GB/MB
+- Progress text: "{downloaded} / {total} ({percent}%)"
+
+## Polling Behavior
+
+**Sonarr/Radarr polling characteristics:**
+
+| Characteristic | Value | Source |
+|---------------|-------|--------|
+| Polling interval | 60-90 seconds | Servarr forums, GitHub issues |
+| Task name | "Check For Finished Downloads" | Sonarr source code |
+| Interval variance | ±30 seconds depending on task execution time | User reports |
+| Fields requested | Specific field list via "fields" argument | Sonarr TransmissionProxy.cs |
+| Response format | JSON with "torrents" array | Transmission RPC spec |
+
+**Fields requested by Sonarr (from source inspection):**
+
+Based on [Sonarr TransmissionProxy.cs](https://github.com/Sonarr/Sonarr/blob/develop/src/NzbDrone.Core/Download/Clients/Transmission/TransmissionProxy.cs), Sonarr requests these fields:
+
+- `id` - Torrent ID
+- `hashString` - Torrent info hash
+- `name` - Torrent name
+- `downloadDir` - Download directory path
+- `totalSize` - Total size in bytes
+- `leftUntilDone` - Bytes remaining
+- `isFinished` - Boolean completion flag
+- `eta` - Estimated time remaining (seconds, -1 = unknown, -2 = unavailable)
+- `status` - Status code (0-6)
+- `secondsDownloading` - Time spent downloading (seconds)
+- `secondsSeeding` - Time spent seeding (seconds)
+- `errorString` - Error message (empty string if no error)
+- `uploadedEver` - Total uploaded bytes
+- `downloadedEver` - Total downloaded bytes (can differ from progress if restarted)
+- `seedRatioLimit` - Seed ratio limit
+- `seedRatioMode` - Seed ratio mode (0=global, 1=single, 2=unlimited)
+- `seedIdleLimit` - Idle time limit (minutes)
+- `seedIdleMode` - Idle time mode (0=global, 1=single, 2=unlimited)
+- `fileCount` or `file-count` - Number of files in torrent
+- `labels` - Array of label strings (Transmission 3.x+)
+
+**Current implementation status:**
+- ✓ Implemented: id, hashString, name, downloadDir, totalSize, leftUntilDone, isFinished, eta, status, errorString, downloadedEver, fileCount, seedRatioLimit, seedRatioMode, seedIdleLimit, seedIdleMode
+- ✗ Missing: secondsDownloading, secondsSeeding, uploadedEver, labels
+- ✗ Missing: rateDownload, rateUpload (not in requested fields but useful for speed display)
+
+## Error Handling
+
+Sonarr/Radarr Activity tab handles these error states:
+
+| Field | Value | Activity Tab Behavior |
+|-------|-------|----------------------|
+| `errorString` | Non-empty string | Shows warning icon with error message on hover |
+| `errorString` | Empty or null | No error displayed |
+| `isStalled` | true | May show "Stalled" warning (client-dependent) |
+| `status` | 0 (Stopped) | Shows "Paused" or grays out entry |
+| `eta` | -1 | Shows "Unknown" for ETA |
+| `eta` | -2 | Shows "N/A" for ETA |
+| `leftUntilDone` | 0 but isFinished=false | May show as stalled or checking |
+
+**Current implementation:**
+- ✓ errorString populated from Put.io transfer.ErrorMessage (line 500)
+- ✗ isStalled not implemented (differentiator, not required)
+- ✓ eta mapped from Put.io estimated_time (line 498)
+- ✓ status mapped correctly for stopped state (line 485)
 
 ## Feature Dependencies
 
 ```
-Trace Context in Logs
-    └──requires──> OpenTelemetry spans (already exists)
-    └──requires──> slog handler wrapper (otelslog bridge)
+Core Activity Display
+├── Return in-progress transfers (BLOCKS all other features)
+├── status field (REQUIRES status mapping logic)
+├── Progress calculation
+│   ├── totalSize (ALREADY IMPLEMENTED)
+│   └── leftUntilDone (ALREADY IMPLEMENTED)
+├── ETA display (ALREADY IMPLEMENTED)
+└── Error display (ALREADY IMPLEMENTED)
 
-Request Correlation
-    └──requires──> Trace Context in Logs
-    └──enhances──> Transfer lifecycle narrative
-
-Transfer Lifecycle Narrative
-    └──requires──> Consistent log levels
-    └──requires──> Transfer_id in all logs
-    └──enhances──> Operation grouping
-
-Startup Sequence Reporting
-    └──requires──> Component readiness
-    └──conflicts──> Silent operations (startup should be explicit)
-
-Log Sampling
-    └──requires──> Consistent log levels (only sample DEBUG)
-    └──conflicts──> Transfer lifecycle narrative (don't sample correlation logs)
+Enhanced Activity Display (optional)
+├── Speed display
+│   ├── rateDownload (REQUIRES Put.io API verification)
+│   └── rateUpload (REQUIRES Put.io API verification)
+├── Time tracking
+│   ├── secondsDownloading (REQUIRES start time or duration from Put.io)
+│   └── secondsSeeding (REQUIRES seeding duration from Put.io)
+└── Stall detection
+    └── isStalled (REQUIRES progress tracking state)
 ```
 
-### Dependency Notes
+## MVP Recommendation
 
-- **Trace Context requires OpenTelemetry spans:** Already exists, just need bridge handler (go.opentelemetry.io/contrib/bridges/otelslog)
-- **Request Correlation enhances Transfer lifecycle narrative:** Adding trace_id/span_id to logs makes grep-ability even better
-- **Transfer Lifecycle Narrative requires consistent transfer_id:** Must ensure every log from discovery → cleanup includes transfer_id
-- **Startup Sequence conflicts with Silent operations:** Startup should be explicit and verbose (INFO level), normal operations should be quiet unless action required
-- **Log Sampling conflicts with lifecycle narrative:** Don't sample logs that have transfer_id correlation - operators need complete narrative
+For MVP (minimal Activity tab functionality), prioritize:
 
-## MVP Definition
+1. **Return in-progress transfers** - Currently filtered out; must include downloading status
+2. **Verify status mapping** - Current mapping looks correct but needs Put.io status enum verification
+3. **Verify progress fields** - totalSize and leftUntilDone already implemented; validate calculation
 
-### Launch With (v1.2 - This Milestone)
+**Reasoning:** These three changes enable basic Activity tab display. Current code already has 90% of required fields implemented.
 
-Minimum viable improvement to make logs tell the application's story.
+## Post-MVP Enhancements
 
-- [x] **Consistent log levels audit** - Review all existing logs, ensure INFO = lifecycle events, DEBUG = details, WARN/ERROR = problems
-- [x] **Startup sequence narrative** - Clear initialization order: config → telemetry → database → client auth → server → ready
-- [x] **Transfer lifecycle logging** - Ensure transfer_id appears in every log from discovery → cleanup
-- [x] **Component readiness logs** - Each major component logs "ready" at INFO level after initialization
-- [x] **Trace context in logs** - Add OpenTelemetry trace_id/span_id to logs via otelslog bridge
-- [x] **Operation field consistency** - Add "operation" field to all logs (already in panic handlers, expand)
-- [x] **Remove noise** - Eliminate redundant/confusing logs that don't add value
+Defer to future milestones:
 
-### Add After Validation (v1.3+)
+1. **Speed display** (rateDownload, rateUpload) - Requires Put.io API research; nice-to-have
+2. **Time tracking** (secondsDownloading, secondsSeeding) - Requires state persistence; nice-to-have
+3. **Stall detection** (isStalled) - Requires progress monitoring; nice-to-have
+4. **Upload tracking** (uploadedEver) - Requires Put.io API research; needed for seeding ratio display
+5. **Labels array** - Transmission 3.x+ feature; verify if Sonarr uses for filtering
 
-Features to add once core logging improvements are validated.
+## Research Confidence Assessment
 
-- [ ] **Periodic heartbeat logs** - Log "idle, watching for transfers" every hour when no activity (trigger: first week of operation)
-- [ ] **Resource utilization logs** - Periodic INFO log with active downloads, goroutines, memory (trigger: production monitoring gaps identified)
-- [ ] **Dependency health checks** - Periodic validation of Sonarr/Radarr/seedbox connectivity (trigger: operational need)
-- [ ] **State transition logs** - Explicit "transfer state changed: downloading → downloaded" logs (trigger: state machine debugging)
+| Area | Confidence | Evidence | Gaps |
+|------|------------|----------|------|
+| Required fields | HIGH | Sonarr source code inspection, Transmission RPC spec | None |
+| Status code mapping | HIGH | Transmission RPC spec, Sonarr source code | Put.io status enum verification needed |
+| Progress calculation | HIGH | Transmission RPC spec, multiple sources agree | None |
+| Polling interval | MEDIUM | User reports, Sonarr forum discussions | No official documentation found |
+| Speed fields (rate*) | LOW | Transmission RPC spec only; Put.io API not verified | Put.io API documentation needed |
+| Time tracking fields | LOW | Transmission RPC spec only; Put.io API not verified | Put.io API documentation needed |
 
-### Future Consideration (v2+)
+## Open Questions
 
-Features to defer until production experience guides priorities.
+1. **What is the complete Put.io transfer status enum?** - Current mapping handles common states but may miss edge cases
+2. **Does Put.io provide download/upload rate?** - Would enable speed display in Activity tab
+3. **Does Put.io provide transfer start time or duration?** - Would enable secondsDownloading/secondsSeeding
+4. **Does Put.io track uploaded bytes during seeding?** - Would enable uploadedEver and seed ratio display
+5. **Should we implement the "fields" argument?** - Sonarr passes specific field list; currently ignored and all fields returned
+6. **Does Sonarr/Radarr use the labels array?** - Transmission 3.x added labels; verify if Sonarr filters by labels or just checks category
 
-- [ ] **Log sampling** - Sample per-file DEBUG logs to reduce volume (why defer: wait to see if DEBUG volume is actually problematic)
-- [ ] **Dynamic log levels** - Change log level at runtime via HTTP API or signal (why defer: no operational need yet, adds complexity)
-- [ ] **Structured error taxonomy** - Error codes/types for programmatic alerting (why defer: need production experience to identify error patterns)
+## Next Steps for Implementation
 
-## Feature Prioritization Matrix
+1. **Verify Put.io API** - Research Put.io API documentation for:
+   - Complete status enum
+   - Download/upload rate availability
+   - Transfer duration/start time
+   - Upload byte tracking
 
-| Feature | User Value | Implementation Cost | Priority |
-|---------|------------|---------------------|----------|
-| Consistent log levels audit | HIGH | LOW | P1 |
-| Startup sequence narrative | HIGH | LOW | P1 |
-| Transfer lifecycle logging | HIGH | MEDIUM | P1 |
-| Trace context in logs | HIGH | MEDIUM | P1 |
-| Component readiness logs | MEDIUM | LOW | P1 |
-| Operation field consistency | MEDIUM | LOW | P1 |
-| Remove noise | HIGH | LOW | P1 |
-| Periodic heartbeat logs | MEDIUM | LOW | P2 |
-| Resource utilization logs | MEDIUM | MEDIUM | P2 |
-| Dependency health checks | MEDIUM | HIGH | P2 |
-| State transition logs | LOW | MEDIUM | P2 |
-| Log sampling | LOW | MEDIUM | P3 |
-| Dynamic log levels | LOW | HIGH | P3 |
-| Structured error taxonomy | MEDIUM | HIGH | P3 |
+2. **Modify GetTaggedTorrents filter** - Currently filters to completed only; must include in-progress
 
-**Priority key:**
-- P1: Must have for milestone - makes logs tell the story
-- P2: Should have - adds operational value but not critical for narrative
-- P3: Nice to have - defer until production need identified
+3. **Add missing fields** - If Put.io provides:
+   - secondsDownloading (from transfer duration)
+   - uploadedEver (from seeding stats)
+   - rateDownload / rateUpload (from current speeds)
 
-## Current State Analysis
+4. **Test with Sonarr/Radarr** - Verify Activity tab displays correctly with test transfers
 
-Based on codebase examination:
-
-**What's good:**
-- ✓ Structured JSON logging via slog (log/slog package)
-- ✓ Log level configuration via env var (LOG_LEVEL)
-- ✓ Transfer_id in most logs (downloader.go, transfer.go)
-- ✓ Panic recovery with stack traces (all goroutines)
-- ✓ Context-aware logging (logctx.LoggerFromContext)
-- ✓ OpenTelemetry metrics instrumentation exists
-
-**What needs improvement:**
-- ✗ No trace_id/span_id in logs (OTel exists but not bridged to slog)
-- ✗ Inconsistent log levels (mixing INFO/DEBUG for similar events)
-- ✗ Startup sequence is implicit, not narrative ("starting..." then jumps to "waiting for downloads")
-- ✗ No explicit component readiness logs
-- ✗ "operation" field only in panic logs, not consistent
-- ✗ Some logs lack transfer_id context (notification loop, main.go)
-- ✗ Polling activity logged at INFO even when no transfers found (noise)
-
-## Observability Patterns from Research
-
-### Production Best Practices (2026)
-
-1. **Use JSON format in production** - TextHandler for development, JSONHandler for production (Better Stack, go.dev)
-2. **Add contextual information** - Common attributes (trace_id, transfer_id) should appear in all related logs (go.dev blog)
-3. **Include stack traces for errors** - Only for unexpected failures, not business errors (Better Stack)
-4. **Maintain consistency** - Standard format across application (Better Stack)
-5. **Test before production** - Verify logs contain necessary info, not too verbose (Better Stack)
-
-### Lifecycle Logging Patterns
-
-1. **Component ordering** - Shutdown in reverse order from startup (Kubernetes graceful shutdown)
-2. **Readiness indicators** - Each component explicitly logs ready state (go-lifecycle pattern)
-3. **Health checks** - Validate dependencies on startup with retry (github.com/g4s8/go-lifecycle)
-4. **Graceful shutdown** - Log shutdown phases: stopping accepting work → draining → cleanup → exit (fx.Lifecycle pattern)
-
-### Trace Correlation Patterns
-
-1. **OpenTelemetry bridge** - Use otelslog to inject trace_id/span_id automatically (go.opentelemetry.io/contrib/bridges/otelslog)
-2. **Context propagation** - Use InfoContext(ctx, ...) not Info(...) to preserve trace context (OpenTelemetry docs)
-3. **Unified naming** - Consistent field names (trace_id, span_id) across all logs (oneuptime.com guide)
-4. **Cross-system correlation** - Logs + traces combined enable full request lifecycle (OpenTelemetry concepts)
-
-### Anti-Patterns to Avoid
-
-1. **Package-level loggers** - Creates tight coupling, breaks dependency injection (Dave Cheney)
-2. **Logger in context** - Implicit runtime dependency, not compiler-enforced (Dave Cheney)
-3. **Excessive WARN level** - WARN should mean action needed, not "interesting info" (Dave Cheney)
-4. **log.Fatal in libraries** - Prevents graceful shutdown, equivalent to panic (Dave Cheney)
-5. **Excessive verbosity** - High signal-to-noise ratio obscures problems (Better Stack, Datadog)
-6. **Unsampled high-volume** - Per-file logs at INFO create noise (Better Stack sampling guidance)
-
-## Competitor Analysis
-
-While this is an internal service, comparable production systems (monitoring agents, data pipelines, long-running workers) demonstrate these patterns:
-
-| Pattern | Datadog Agent | Prometheus Exporter | This Service |
-|---------|---------------|---------------------|--------------|
-| Startup narrative | Yes - component init sequence logged | Yes - config → validation → ready | Partial - needs explicit phases |
-| Trace correlation | Yes - trace_id in all logs | N/A (metrics-only) | No - missing otelslog bridge |
-| Component readiness | Yes - "datadog-agent is ready" | Yes - "exporter started successfully" | No - implicit readiness |
-| Heartbeat logs | Yes - periodic health at INFO | Yes - scrape success logged | No - silent when idle |
-| Operation grouping | Yes - consistent operation tags | Yes - collector component tags | Partial - only in panic handlers |
+5. **Handle edge cases** - Verify status mapping for:
+   - Paused transfers
+   - Failed/errored transfers
+   - Magnet link metadata download phase
 
 ## Sources
 
-**Go slog Best Practices:**
-- [Logging in Go with Slog: The Ultimate Guide | Better Stack Community](https://betterstack.com/community/guides/logging/logging-in-go/)
-- [Structured Logging with slog - The Go Programming Language](https://go.dev/blog/slog)
-- [Logging in Go with Slog: A Practitioner's Guide · Dash0](https://www.dash0.com/guides/logging-in-go-with-slog)
-- [Effective Logging in Go: Best Practices and Implementation Guide - DEV Community](https://dev.to/fazal_mansuri_/effective-logging-in-go-best-practices-and-implementation-guide-23hp)
+### HIGH Confidence Sources (Official/Authoritative)
 
-**Lifecycle & Graceful Shutdown:**
-- [How to shutdown a Go application gracefully | Josemy's blog](https://josemyduarte.github.io/2023-04-24-golang-lifecycle/)
-- [How to Implement Graceful Shutdown in Go for Kubernetes](https://oneuptime.com/blog/post/2026-01-07-go-graceful-shutdown-kubernetes/view)
-- [lifecycle package - github.com/g4s8/go-lifecycle](https://pkg.go.dev/github.com/g4s8/go-lifecycle)
+- [Transmission RPC Specification](https://github.com/transmission/transmission/blob/main/docs/rpc-spec.md) - Official RPC protocol documentation
+- [Sonarr TransmissionProxy.cs](https://github.com/Sonarr/Sonarr/blob/develop/src/NzbDrone.Core/Download/Clients/Transmission/TransmissionProxy.cs) - Sonarr source code for Transmission integration
+- [Transmission RPC Status Codes Discussion](https://github.com/transmission/transmission/discussions/5343) - Official status code meanings
+- [Transmission-RPC Python Documentation](https://transmission-rpc.readthedocs.io/en/v3.4.0/torrent.html) - Field definitions and descriptions
 
-**Trace Context & Correlation:**
-- [How to Set Up Structured Logging in Go with OpenTelemetry](https://oneuptime.com/blog/post/2026-01-07-go-structured-logging-opentelemetry/view)
-- [OpenTelemetry Slog [otelslog]: Golang Bridge Setup & Examples | Uptrace](https://uptrace.dev/guides/opentelemetry-slog)
-- [Context propagation | OpenTelemetry](https://opentelemetry.io/docs/concepts/context-propagation/)
-- [Traces | OpenTelemetry](https://opentelemetry.io/docs/concepts/signals/traces/)
+### MEDIUM Confidence Sources (Community/Wiki)
 
-**Anti-Patterns:**
-- [The package level logger anti pattern | Dave Cheney](https://dave.cheney.net/2017/01/23/the-package-level-logger-anti-pattern)
-- [Logging Best Practices: 12 Dos and Don'ts | Better Stack Community](https://betterstack.com/community/guides/logging/logging-best-practices/)
+- [Sonarr Activity Wiki](https://wiki.servarr.com/sonarr/activity) - Official Servarr wiki for Activity tab
+- [Sonarr Activity Queue Refresh Discussion](https://forums.sonarr.tv/t/activity-queue-refresh-time/21798) - Polling interval information
+- [Transmission RPC Markdown Spec](https://gist.github.com/RobertAudi/807ec699037542646584) - Community-formatted RPC spec
 
-**Signal-to-Noise Ratio:**
-- [How to Optimize Log Volume and Reduce Noise at Scale | Datadog](https://www.datadoghq.com/knowledge-center/log-optimization/)
-- [Monitoring: Turning Noise into Signal](https://accu.org/journals/overload/26/144/oldwood_2488/)
+### LOW Confidence Sources (Unverified)
+
+- Various Sonarr/Radarr GitHub issues mentioning Activity tab behavior
+- Forum discussions about Transmission integration challenges
 
 ---
-*Feature research for: Logging Improvements (v1.2)*
-*Researched: 2026-02-01*
-*Confidence: HIGH (verified with authoritative sources + codebase analysis)*
+*Feature research for: Activity Tab Support (v1.3)*
+*Researched: 2026-02-08*
+*Confidence: MEDIUM (verified via source code + official specs; Put.io API details needed)*

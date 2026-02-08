@@ -1,249 +1,531 @@
-# Pitfalls Research
+# Domain Pitfalls: Activity Tab Support
 
-**Domain:** Improving logging in production Go services (24/7 operation with existing slog + OpenTelemetry)
-**Researched:** 2026-02-01
+**Domain:** Adding in-progress download visibility to Transmission RPC proxy (Put.io → Transmission)
+**Researched:** 2026-02-08
 **Confidence:** HIGH
 
 ## Critical Pitfalls
 
-### Pitfall 1: Breaking Log Schema for Existing Consumers
+Mistakes that cause rewrites, data corruption, or breaking existing functionality.
+
+### Pitfall 1: Breaking Existing Download Pipeline by Changing GetTaggedTorrents Filter
 
 **What goes wrong:**
-Changing log field names, removing fields, or restructuring JSON log output breaks dashboards, alerts, and log aggregation pipelines that depend on the current schema. Dashboard queries fail silently, alerts stop firing, and log parsers break with obscure errors.
+The existing download pipeline (TransferOrchestrator → Downloader → Import Monitor → Cleanup) depends on `GetTaggedTorrents()` returning **only completed transfers** via the `IsAvailable()` filter. This filter currently checks `status == "completed" || status == "seeding" || status == "seedingwait"`. If you modify this method to also return in-progress transfers (status == "downloading"), the download orchestrator will attempt to download incomplete files from Put.io, resulting in:
+- Partial file downloads that fail import
+- Database corruption (transfers marked as downloaded when they aren't)
+- Duplicate download attempts when the transfer actually completes
+- Sonarr/Radarr rejecting imports due to incomplete files
 
 **Why it happens:**
-Teams focus on "improving" the logging code without recognizing that log output is an API contract. The temptation to rename `request_id` to `requestId` or consolidate `user_id` and `userId` into a single convention feels like "cleanup" but creates a breaking change downstream.
+The Transmission RPC proxy and the internal download pipeline both call the same `GetTaggedTorrents()` method. Developers see "we need in-progress transfers for the Activity tab" and modify the filter without realizing the download orchestrator also uses this method. The temptation is to change the shared filter because it's the simplest code path, avoiding duplication.
 
-**How to avoid:**
-- Treat log field names as a stable API contract
-- Use additive changes only: add new fields, never remove or rename existing fields
-- Maintain a log schema registry documenting all field names and types
-- Test log output against existing dashboard queries before deploying
-- Use deprecation periods: add new field, keep old field for 2-4 weeks, then remove old field
+**Consequences:**
+- Download orchestrator processes incomplete transfers → partial downloads → failed imports
+- Database contains wrong state (transfer marked "downloaded" but file incomplete)
+- Transfer completes later → orchestrator sees it again → duplicate download attempt
+- Sonarr/Radarr show import failures in Activity tab
+- Cleanup logic may delete in-progress transfers from Put.io
 
-**Warning signs:**
-- Dashboards showing "No data" after deployment
-- Alert channels going silent
-- Log aggregation tools reporting parsing errors
-- Support team asking "where did the logs go?"
+**Prevention:**
+1. **Create separate methods:** Keep `GetTaggedTorrents()` for completed-only (download pipeline), add `GetAllTransfersByTag()` for Transmission proxy (includes in-progress)
+2. **Document method contracts:** Add godoc comments specifying which callers depend on completed-only behavior
+3. **Add integration tests:** Verify download orchestrator only processes completed transfers
+4. **Review all call sites:** Before changing a filter, grep for all callers and understand their requirements
 
-**Phase to address:**
-Phase 1 (Log Schema Audit) - Document existing log consumers and establish schema contract
+**Detection (warning signs):**
+- Download orchestrator logs showing "transfer ready for download" for transfers with status != "completed"
+- Import failures in Sonarr/Radarr Activity tab
+- Database queries showing transfers in "pending" state that have been "downloaded"
+- Put.io transfers disappearing before completion (cleanup ran prematurely)
+- Trace logs showing `IsAvailable() = true` for transfers with status "downloading"
+
+**Which phase should address this:**
+Phase 1 (Design & Contracts) - Define interface contracts before implementation
 
 ---
 
-### Pitfall 2: The `!BADKEY` Footgun with slog
+### Pitfall 2: Incorrect Status Mapping Between Put.io and Transmission State Machines
 
 **What goes wrong:**
-Using alternating key-value pairs `logger.Info("msg", "key", value)` instead of `slog.Attr` helpers creates silent corruption. If you provide an odd number of arguments, slog doesn't fail - it creates broken log entries with `"!BADKEY": "value"` instead of the intended key-value pair. This corruption can go undetected for weeks until someone needs those specific log fields during an incident.
+Put.io and Transmission use different status vocabularies and state machines. Put.io uses status strings like "DOWNLOADING", "SEEDING", "COMPLETING", "ERROR", "WAITING", while Transmission uses integer codes 0-6 (stopped, check wait, check, download wait, download, seed wait, seed). The existing proxy maps only completed states:
+```go
+case "completed", "finished": status = StatusSeed
+case "seeding": status = StatusSeed
+case "downloading": status = StatusDownload
+default: status = StatusStopped
+```
+
+This creates several failure modes:
+1. **Put.io "COMPLETING" → Transmission "stopped":** Transfer is finishing (writing to storage) but shows as stopped in Sonarr/Radarr Activity tab
+2. **Put.io "WAITING" → Transmission "stopped":** Transfer is queued but shows as stopped, making it look like it failed
+3. **Put.io "ERROR" → Transmission "stopped":** Transfer failed but shows as stopped, hiding the error state
+4. **No queue states:** Transmission has dedicated queue states (StatusDownloadWait = 3, StatusSeedWait = 5) which are never used
 
 **Why it happens:**
-The loose key-value API is convenient and shorter to type than `slog.String("key", value)`. Developers copy this pattern from existing code without understanding the type safety tradeoff. When refactoring removes one argument, the count becomes odd and the silent failure begins.
+The developer doesn't understand both state machines completely. Put.io's API documentation may not list all possible status values, so the mapping is based on observed states. The default case catches unmapped states and assigns StatusStopped, which is incorrect for transient states like "COMPLETING" or "WAITING".
 
-**How to avoid:**
-- **Enforce `sloglint` in CI/CD with `attr-only: true`** - prevents the footgun company-wide
-- Use only strongly-typed helpers: `slog.String()`, `slog.Int()`, `slog.Any()`
-- Never use the loose `key, value, key, value` syntax
-- Add pre-commit hooks that reject commits containing loose key-value pairs
+**Consequences:**
+- Sonarr/Radarr Activity tab shows misleading status ("stopped" when actually downloading)
+- Operators can't distinguish between queued, downloading, completing, and errored transfers
+- Error states are hidden (transfer shows "stopped" instead of error message)
+- No visual feedback for queue position in Activity tab
 
-**Warning signs:**
-- Log entries containing `"!BADKEY": "something"` in production logs
-- Missing expected log fields during incident investigation
-- Log queries returning fewer results than expected
+**Prevention:**
+1. **Document all Put.io status values:** Research complete list from API docs, go-putio source, or by logging observed values
+2. **Map to appropriate Transmission states:**
+   - "DOWNLOADING" → StatusDownload (4)
+   - "SEEDING" → StatusSeed (6)
+   - "WAITING", "IN_QUEUE" → StatusDownloadWait (3)
+   - "COMPLETING", "FINISHING" → StatusSeedWait (5) or StatusCheck (2)
+   - "ERROR" → StatusStopped (0) BUT with ErrorString populated
+   - "COMPLETED" → StatusSeed (6)
+3. **Log unmapped states:** Add warning log when default case is hit with the actual status value
+4. **Add telemetry:** Track frequency of each Put.io status to discover unmapped states
 
-**Phase to address:**
-Phase 2 (Code Audit) - Scan codebase for loose key-value pairs and convert to slog.Attr helpers
+**Detection (warning signs):**
+- Activity tab showing "stopped" for transfers that are actively downloading in Put.io UI
+- Log warnings: "unknown status encountered: COMPLETING"
+- Telemetry showing high counts for default status mapping case
+- User reports: "Sonarr says download is stopped but it's still downloading"
+
+**Which phase should address this:**
+Phase 1 (Design & Contracts) - Complete status mapping matrix before implementation
 
 ---
 
-### Pitfall 3: Missing Trace Context in Logs (Context-Awareness Gap)
+### Pitfall 3: Progress Calculation Mismatch Between Put.io PercentDone and Transmission leftUntilDone
 
 **What goes wrong:**
-Using `logger.Info()` instead of `logger.InfoContext(ctx)` means logs lack trace IDs and span IDs, breaking correlation between logs and distributed traces. During production incidents, you can't link log messages to the OpenTelemetry traces, making it nearly impossible to reconstruct what happened across the request lifecycle.
+Put.io provides `PercentDone` (0-100 float) while Transmission uses `leftUntilDone` (bytes remaining). The current proxy calculates:
+```go
+LeftUntilDone: transfer.Size - transfer.Downloaded
+```
+
+This creates accuracy problems:
+1. **Negative values:** If `Downloaded > Size` (happens when Put.io reports compressed vs uncompressed), `leftUntilDone` becomes negative, breaking Activity tab UI
+2. **Rounding errors:** Put.io's `PercentDone` (e.g., 53.7%) doesn't align with byte-level `Downloaded` value, showing inconsistent progress
+3. **No verification:** Put.io transfers include verification after download, but `Downloaded` reaches `Size` before verification completes, showing 100% when still verifying
+4. **Missing relationship:** Transmission expects `percentDone = (sizeWhenDone - leftUntilDone) / sizeWhenDone`, but Put.io's PercentDone may calculate differently
 
 **Why it happens:**
-Developers forget to pass context through function calls, or use the simpler non-context logging methods. The code compiles and logs appear normal, so the problem goes unnoticed until an incident requires trace correlation. Context propagation discipline is hard to maintain across a codebase.
+The proxy tries to synthesize Transmission fields from Put.io fields without understanding their precise definitions. The assumption is simple arithmetic: "if 1GB total and 500MB downloaded, then 500MB left" but this doesn't account for:
+- Compression ratios (reported size vs actual download size)
+- Verification phase (download complete but transfer not finished)
+- Put.io's internal calculation of PercentDone (may include verification time)
 
-**How to avoid:**
-- **Always use context-aware logging methods**: `InfoContext(ctx)`, `WarnContext(ctx)`, `ErrorContext(ctx)`
-- Thread context through all function signatures (accept `context.Context` as first parameter)
-- Use linters to enforce context-aware logging (ban non-context log methods)
-- Verify logs contain `trace_id` and `span_id` fields in integration tests
-- Use `otelslog` bridge to automatically inject trace context into logs
+**Consequences:**
+- Activity tab showing negative progress (e.g., "-50% remaining")
+- Progress jumping backwards (verification phase shows as incomplete)
+- Sonarr/Radarr removing transfers from queue when progress appears invalid
+- Inconsistent ETA calculations (based on incorrect remaining bytes)
 
-**Warning signs:**
-- Logs missing `trace_id` or `span_id` fields
-- Inability to filter logs by trace ID during incident response
-- Logs showing activity but corresponding traces are empty
-- Debug sessions requiring manual timestamp correlation instead of trace linking
+**Prevention:**
+1. **Use Put.io's PercentDone as source of truth:** Calculate `leftUntilDone = size * (1 - percentDone/100)`
+2. **Clamp to valid range:** Ensure `leftUntilDone >= 0` and `leftUntilDone <= size`
+3. **Handle edge cases explicitly:**
+   - If PercentDone == 100 but status != "completed", set leftUntilDone = 0
+   - If Downloaded > Size, use PercentDone for calculation instead of Downloaded
+4. **Add validation:** Assert relationships in tests: `percentDone = 100 * (size - leftUntilDone) / size`
+5. **Log discrepancies:** When Downloaded and PercentDone disagree significantly, log for investigation
 
-**Phase to address:**
-Phase 2 (Context Propagation Audit) - Verify all logging calls use InfoContext and all functions accept context
+**Detection (warning signs):**
+- Activity tab showing negative progress values
+- Progress jumping from 100% back to 95% (verification phase)
+- Logs showing: `Downloaded=1100MB Size=1000MB` (impossible state)
+- Transfers showing "completed" in Transmission but still downloading in Put.io
+
+**Which phase should address this:**
+Phase 2 (Implementation) - Progress calculation with validation and edge case handling
 
 ---
 
-### Pitfall 4: Log Cardinality Explosion Driving Cost and Performance Degradation
+### Pitfall 4: Excessive Polling Frequency Hitting Put.io Rate Limits
 
 **What goes wrong:**
-Adding high-cardinality fields (unique request IDs, timestamps with milliseconds, user-specific tokens, UUIDs) to every log entry creates millions of unique log entries. This drives up log storage costs exponentially (from $200/month to $4,000/month), slows down log queries, and overwhelms observability platforms causing ingestion throttling and dashboard performance degradation.
+Adding in-progress transfer visibility means Sonarr/Radarr will poll the Transmission proxy more frequently (every 1-2 seconds for Activity tab updates) instead of the current 10-minute interval (only when checking for completion). Each proxy request calls `GetTaggedTorrents()` which makes:
+1. `Transfers.List()` API call to Put.io
+2. For each transfer with FileID: `Files.Get(fileID)` to get file metadata
+3. For each file: `Files.Get(parentID)` to check parent folder name
+
+With 5 active transfers, this is 11 API calls per poll. At 2-second intervals, that's **330 API calls per minute** just for the Activity tab. Put.io's rate limit is typically 100-200 requests per minute per account.
 
 **Why it happens:**
-The goal is "better observability" so teams add every possible detail to logs. Each additional field seems harmless in isolation: "let's add request_id", "let's add correlation_id", "let's add session_token". Combined with high log volume (INFO level on hot paths), cardinality explodes. In cloud-native environments, cardinality can jump from 20,000 unique metrics in monoliths to 800 million in microservices deployments.
+The existing polling architecture was designed for low-frequency checks (every 10 minutes). The code makes synchronous API calls without caching or batching. Developers don't realize Sonarr/Radarr poll the Activity tab endpoint much more aggressively than the periodic checks. The problem surfaces only in production when rate limit errors start appearing.
 
-**How to avoid:**
-- **Limit high-cardinality fields to ERROR and WARN levels only**
-- Use sampling: log 1% of INFO messages on hot paths, 100% of WARN/ERROR
-- Set up cardinality monitoring alerts (warn when unique field combinations exceed thresholds)
-- Use fixed log levels per component (HTTP handler at INFO, DB queries at DEBUG)
-- Aggregate before shipping: summarize metrics instead of logging every event
-- Implement log dropping rules for low-value high-volume logs
+**Consequences:**
+- HTTP 429 (Too Many Requests) responses from Put.io
+- Activity tab showing stale data or "connection failed"
+- Other Put.io integrations (web UI, mobile app) also hit rate limits
+- Exponential backoff causing longer delays between updates
+- Account temporarily blocked if rate limit violations are severe
 
-**Warning signs:**
-- Log platform bill increasing 20%+ month-over-month without traffic increase
-- Query timeouts in log dashboards
-- Ingestion lag or dropped logs
-- Observability platform sending "approaching quota" warnings
-- Log storage growing faster than request volume
+**Prevention:**
+1. **Implement response caching:** Cache `GetTaggedTorrents()` response for 5-10 seconds, serve cached data to multiple clients
+2. **Batch API calls:** Use `Files.List(parentID)` instead of individual `Files.Get()` calls when fetching multiple files
+3. **Rate limit protection:** Track API calls per minute, reject requests if approaching limit (return cached data instead)
+4. **Add metrics:** Track `api_calls_per_minute` counter, alert when approaching rate limit
+5. **Optimize FileID check:** Skip File API calls for transfers without FileID (currently filtered but still requires API call)
+6. **Use conditional requests:** If Put.io supports ETags, use If-None-Match headers to skip unchanged responses
 
-**Phase to address:**
-Phase 3 (Cardinality Analysis) - Audit log fields for cardinality, implement sampling strategy
+**Detection (warning signs):**
+- HTTP 429 errors in logs from Put.io API
+- Activity tab showing "Failed to load queue" intermittently
+- Logs showing `api_calls_per_minute > 150`
+- Put.io web UI becoming slow or unresponsive
+- Exponential backoff delays in logs
+
+**Which phase should address this:**
+Phase 2 (Implementation) - Add caching layer before exposing to Activity tab
 
 ---
 
-### Pitfall 5: Context Propagation Failure in Goroutines
+### Pitfall 5: FileID Requirement Creates Timing Gap for Fresh Transfers
 
 **What goes wrong:**
-Starting goroutines without propagating context means logs from background operations lack trace correlation and context cancellation signals are ignored. When parent request completes, goroutines continue running with orphaned context, leaking goroutines and logging with disconnected trace IDs. In a production incident, a 24/7 service reached 50,847 goroutines, 47GB memory, and 32-second response times.
+The current filter skips transfers with `FileID == 0`:
+```go
+if t.FileID == 0 {
+    logger.DebugContext(ctx, "skipping transfer because it's not a downloadable transfer")
+    continue
+}
+```
+
+When Sonarr/Radarr adds a new transfer via `torrent-add`, Put.io creates the transfer immediately but doesn't assign a FileID until the transfer starts downloading. This creates a timing gap (5-30 seconds) where:
+1. Sonarr/Radarr adds torrent → receives success response with transfer ID
+2. Sonarr polls Activity tab → transfer has FileID == 0 → filtered out
+3. Activity tab shows "queue is empty" despite transfer existing
+4. Transfer starts downloading → FileID assigned → appears in Activity tab
 
 **Why it happens:**
-Developers launch goroutines with `go func() {}` and either forget to pass context or use `context.Background()` thinking it's safer for "background work". Async operations feel independent, so context propagation seems unnecessary. The problem is subtle: the service works fine, goroutines complete eventually, but during high load or when parent contexts cancel quickly, goroutines accumulate.
+Put.io's transfer creation is asynchronous. The transfer enters a "WAITING" state while Put.io fetches metadata, finds peers, and allocates storage. Only when download begins does Put.io create the file structure and assign FileID. The filter was designed to skip stuck transfers (those that never get FileID) but it also filters fresh transfers.
 
-**How to avoid:**
-- **Always pass context to goroutines**: `go func(ctx context.Context) { ... }(ctx)`
-- For operations that must outlive request: use `context.WithoutCancel(ctx)` (Go 1.21+) to preserve trace context while preventing cancellation propagation
-- Check `ctx.Done()` in goroutine loops and exit gracefully when context cancels
-- Use `context.WithTimeout()` for goroutines that might hang
-- Monitor goroutine count in production: alert when `runtime.NumGoroutine()` exceeds baseline
+**Consequences:**
+- Activity tab shows "queue is empty" immediately after adding torrent
+- User confusion: "I just added it, where is it?"
+- GitHub issues: "Activity tab not showing in-progress downloads"
+- Race condition: If transfer starts quickly (<2 seconds), it might appear immediately; if slow (>10 seconds), it disappears temporarily
+- Inconsistent UX between fast and slow trackers
 
-**Warning signs:**
-- Goroutine count steadily increasing over hours/days
-- Memory usage growing without corresponding traffic increase
-- Logs from background operations missing trace IDs
-- Operations continuing after request timeout/cancellation
-- Background task logs appearing without corresponding request logs
+**Prevention:**
+1. **Remove FileID == 0 filter for in-progress status:** Allow transfers with status "WAITING" or "DOWNLOADING" even if FileID == 0
+2. **Keep FileID filter for completed status:** Only completed transfers must have FileID (because download orchestrator needs files)
+3. **Add status-based filtering:**
+   ```go
+   if t.FileID == 0 && (status == "completed" || status == "seeding") {
+       continue // Completed without files = stuck transfer
+   }
+   // Allow FileID == 0 for "waiting" and "downloading" states
+   ```
+4. **Populate Files array conditionally:** If FileID == 0, set `Files: []*File{}` (empty array, not nil)
+5. **Add logging:** Log when FileID == 0 transfers are included, track how long they stay in that state
 
-**Phase to address:**
-Phase 2 (Context Propagation Audit) - Review all goroutine launches for context propagation
+**Detection (warning signs):**
+- User reports: "Activity tab empty after adding torrent"
+- Logs showing: "skipping transfer because it's not a downloadable transfer" for transfers in "WAITING" status
+- Telemetry showing high count of FileID == 0 transfers in first 30 seconds after creation
+- Activity tab flickering (transfer appears, disappears, reappears as FileID is assigned)
+
+**Which phase should address this:**
+Phase 2 (Implementation) - Status-aware FileID filtering logic
 
 ---
 
-### Pitfall 6: Performance Degradation from Synchronous Logging on Hot Paths
+## Moderate Pitfalls
+
+Mistakes that cause delays, confusion, or workarounds but don't break core functionality.
+
+### Pitfall 6: Sonarr/Radarr Queue Filter Expects Category/Label Matching
 
 **What goes wrong:**
-Adding detailed logging to hot paths (request handlers, tight loops, high-frequency operations) causes measurable throughput degradation. Benchmarks show 20% throughput reduction when adding structured logging (191k to 152k req/sec). At scale, this means needing extra servers to handle the same load, directly increasing infrastructure costs and potentially causing latency spikes during traffic peaks.
+Sonarr/Radarr filter the Activity queue by the download client's "category" or "label" setting. If the Transmission proxy returns torrents without matching labels, or if the label doesn't match the configured value in Sonarr/Radarr settings, the Activity tab shows "queue is empty" even though torrents are returned.
+
+The current proxy uses the configured label for filtering Put.io transfers (via parent folder name) but doesn't set the `Labels` field in the Transmission response:
+```go
+TransmissionTorrent{
+    // ... other fields
+    // Missing: Labels field
+}
+```
 
 **Why it happens:**
-The goal is better observability, so logging is added to "see what's happening". Logging feels cheap because individual calls are microseconds. The team doesn't run load tests to measure aggregate impact. Production traffic reveals the problem: hot paths executing 10,000 times per second with 5 log statements each means 50,000 log writes per second consuming significant CPU, memory allocations, and I/O.
+The Transmission RPC spec includes a `labels` field (array of strings) that clients use for categorization. The proxy developer focuses on getting the status, progress, and name correct but overlooks the labels field. Transmission itself doesn't heavily use labels, so it's easy to miss. Sonarr/Radarr's category matching is documented but not enforced by the proxy (it will work without labels if category matching is disabled).
 
-**How to avoid:**
-- **Use DEBUG level for hot path logs, INFO only for lifecycle events**
-- Implement sampling: log 1 in every 100 iterations on tight loops
-- Use async logging handlers with buffering for high-throughput scenarios
-- Profile before and after adding logging: measure req/sec, p99 latency, CPU usage
-- Reserve ERROR/WARN for actual problems, not normal operation
-- Consider metrics instead of logs for high-frequency events (use counters, not log lines)
+**Consequences:**
+- Activity tab showing "queue is empty" despite torrents being returned
+- Filtering not working (all downloads shown instead of just the configured category)
+- User must disable category matching in Sonarr/Radarr settings (non-obvious workaround)
+- Multiple Sonarr/Radarr instances can't share same proxy (can't filter by category)
 
-**Warning signs:**
-- P99 latency increasing after logging improvements deployed
-- CPU usage increase disproportionate to traffic increase
-- Throughput regression in load tests
-- Increased allocation rates visible in pprof
-- Services requiring more instances to handle same load
+**Prevention:**
+1. **Add labels to TransmissionTorrent struct:**
+   ```go
+   type TransmissionTorrent struct {
+       // ... existing fields
+       Labels []string `json:"labels"`
+   }
+   ```
+2. **Set label from proxy configuration:**
+   ```go
+   transmissionTorrents[i] = TransmissionTorrent{
+       // ... other fields
+       Labels: []string{h.label}, // Use configured label
+   }
+   ```
+3. **Validate in tests:** Check that returned torrents have labels matching configuration
+4. **Document limitation:** If proxy serves multiple clients, they must use same label
 
-**Phase to address:**
-Phase 3 (Performance Testing) - Load test with new logging, benchmark hot paths, implement sampling
+**Detection (warning signs):**
+- Activity tab empty despite log showing "fetched torrents from download client, count: 5"
+- Forum posts: "Transmission activity tab not showing, need to disable category filter"
+- Debug logs from Sonarr showing: "Category mismatch, skipping torrent"
+
+**Which phase should address this:**
+Phase 2 (Implementation) - Add labels field to response struct
 
 ---
 
-### Pitfall 7: Missing AddSource Performance Cost Understanding
+### Pitfall 7: Race Condition When Transfers Complete Between Polls
 
 **What goes wrong:**
-Enabling `AddSource: true` in slog handlers to include file name and line numbers in every log entry adds measurable overhead by calling `runtime.Caller()` for every log statement. In high-throughput services, this causes CPU usage increases and throughput degradation. The source information is helpful during development but rarely needed in production where traces and correlation IDs provide better context.
+Sonarr/Radarr polls the Activity tab every 1-2 seconds. If a transfer completes between two polls:
+1. Poll #1: Transfer shows in queue at 99%, status "downloading"
+2. **Transfer completes on Put.io**
+3. **Download orchestrator processes it, marks as downloaded, removes from Put.io**
+4. Poll #2: Transfer no longer in Put.io (404 or missing from list)
+5. Sonarr/Radarr sees transfer disappeared without reaching "completed" status
+6. Activity tab shows "import failed" or "connection error"
+
+This is especially problematic for small files that complete quickly (<2 seconds) or when the download orchestrator polling interval aligns with Sonarr polling.
 
 **Why it happens:**
-Source information (file and line number) is useful for quickly finding log statements in code during development. Teams enable `AddSource` globally thinking it's harmless. The `runtime.Caller()` cost seems small per-call but accumulates significantly at scale. When logging 10,000 times per second, the repeated stack walking becomes measurable overhead.
+There's no synchronization between:
+- The download orchestrator (polls every 10 minutes, processes completed transfers)
+- The Transmission proxy (polled every 1-2 seconds by Sonarr/Radarr)
+- Put.io cleanup (transfers may be removed immediately after download)
 
-**How to avoid:**
-- **Disable `AddSource` in production**, enable only in development/staging
-- Use environment variables to control AddSource based on deployment environment
-- If source info is needed, include it only for ERROR level logs
-- Use trace IDs and span names for context instead of file/line numbers
-- Profile with and without AddSource to measure actual impact on your workload
+The proxy expects transfers to follow a linear progression (queued → downloading → seeding → removed) but the download orchestrator can skip the "seeding" state by removing transfers immediately.
 
-**Warning signs:**
-- `runtime.Caller()` appearing high in CPU profiles
-- Increased CPU usage after enabling source information
-- Logs becoming noticeably slower to write
-- pprof showing time spent in runtime package during logging
+**Consequences:**
+- Activity tab showing "import failed" for successfully downloaded transfers
+- Confusion: Transfer disappeared from queue but did import correctly
+- Users report: "Activity tab unreliable for small files"
+- False negative alerts (transfer succeeded but shown as failed)
 
-**Phase to address:**
-Phase 3 (Performance Testing) - Measure AddSource impact, disable in production config
+**Prevention:**
+1. **Check database before reporting missing:** If transfer not in Put.io, check if it's in database as "downloaded" before returning error
+2. **Cache recently completed transfers:** Keep 5-minute cache of completed transfer IDs, return cached status even after removal from Put.io
+3. **Add transition state:** When transfer reaches 100%, set status to "seeding" briefly before orchestrator processes
+4. **Coordinate polling:** Align orchestrator and proxy polling (e.g., orchestrator checks at :00, :10, :20; proxy caches for 2 minutes)
+5. **Return completed status from database:** If transfer in database with status "downloaded", synthesize completed Transmission torrent
+
+**Detection (warning signs):**
+- Activity tab showing "import failed" but History showing successful import
+- Logs: "transfer not found in Put.io list" for recently completed transfers
+- Small files (<10MB) more likely to trigger this race
+- Timing correlation: Issues occur within 10 seconds of orchestrator poll time
+
+**Which phase should address this:**
+Phase 3 (Integration) - Add database lookup for missing transfers
 
 ---
 
-### Pitfall 8: No Graceful Log Level Change Mechanism (Requires Redeploy for Debugging)
+### Pitfall 8: Missing Peer Information Fields for In-Progress Downloads
 
 **What goes wrong:**
-When production incidents occur requiring DEBUG logs to diagnose, the service requires a redeploy to change log level from INFO to DEBUG. This adds 5-15 minutes to incident response time, during which the issue may resolve itself (making reproduction impossible) or cause continued user impact. Without dynamic log level control, teams are forced to choose between permanently verbose logging (high cost) or blind debugging (slow incident response).
+Sonarr/Radarr Activity tab displays peer information (seeds/peers connected, upload/download rates) to show download health. The Transmission RPC spec includes these fields, but the current proxy only populates basic fields:
+- ✓ Populated: `totalSize`, `leftUntilDone`, `name`, `status`
+- ✗ Missing: `rateDownload`, `rateUpload`, `peersConnected`, `peersGettingFromUs`, `peersSendingToUs`
+
+Put.io provides this data in the Transfer struct: `PeersConnected`, `PeersGettingFromUs`, `PeersSendingToUs` but the proxy doesn't map them.
 
 **Why it happens:**
-Log level is configured via environment variable or config file at startup, with no runtime update mechanism. This is simplest to implement - read config once, never change it. The limitation isn't discovered until a production incident when "just enable DEBUG logging" becomes "deploy a new version with DEBUG enabled, wait 10 minutes, then hope the problem reproduces".
+The proxy was initially built for completed-only transfers where peer info is irrelevant. When adding in-progress support, developers focus on progress and status but overlook the peer fields because Transmission's API has many optional fields and it's unclear which are essential for Activity tab display.
 
-**How to avoid:**
-- **Implement dynamic log level control via HTTP endpoint or signal handling**
-- Use `/admin/loglevel` endpoint with POST to change level without restart
-- Support `kill -SIGUSR1 <pid>` to toggle DEBUG mode on/off
-- Use feature flags or remote config to change log level for specific modules/paths
-- Monitor log level changes: log when level changes and who requested it
-- Implement temporary DEBUG mode: auto-revert to INFO after 15 minutes
+**Consequences:**
+- Activity tab shows "0 of 0 peers connected" for active downloads
+- No download/upload rate displayed
+- Can't distinguish between healthy download (50 peers) and stalled download (0 peers)
+- Users can't diagnose slow downloads ("is it slow because few peers or network issue?")
 
-**Warning signs:**
-- Incident response requiring service restarts to enable debugging
-- Complaints from ops team about needing redeploys for diagnostics
-- Repeated "we need more logging in this area" after incidents
-- DEBUG logging permanently enabled because changing it requires redeployment
+**Prevention:**
+1. **Map peer fields from Put.io to Transmission:**
+   ```go
+   transmissionTorrents[i] = TransmissionTorrent{
+       // ... existing fields
+       PeersConnected:     transfer.PeersConnected,
+       PeersGettingFromUs: transfer.PeersGettingFromUs,
+       PeersSendingToUs:   transfer.PeersSendingToUs,
+   }
+   ```
+2. **Calculate rates if not provided:** If Put.io doesn't provide rates, estimate from progress deltas between polls
+3. **Add to TransmissionTorrent struct if missing:**
+   ```go
+   type TransmissionTorrent struct {
+       // ... existing fields
+       RateDownload       int64 `json:"rateDownload"`       // bytes/sec
+       RateUpload         int64 `json:"rateUpload"`         // bytes/sec
+       PeersConnected     int64 `json:"peersConnected"`
+       PeersSendingToUs   int64 `json:"peersSendingToUs"`
+       PeersGettingFromUs int64 `json:"peersGettingFromUs"`
+   }
+   ```
 
-**Phase to address:**
-Phase 4 (Dynamic Controls) - Add runtime log level change endpoint with authentication
+**Detection (warning signs):**
+- Activity tab always shows "0 of 0 peers" for active downloads
+- Download rate column empty or showing "0 KB/s"
+- User complaints: "Can't see download speed in Activity tab"
+- Comparison with real Transmission shows rich peer data, proxy shows minimal
+
+**Which phase should address this:**
+Phase 2 (Implementation) - Map all relevant Transfer fields to Transmission response
+
+---
+
+### Pitfall 9: No Error State Visibility When Put.io Transfer Fails
+
+**What goes wrong:**
+When Put.io transfers fail (invalid torrent, no peers, storage quota exceeded), the status changes to "ERROR" but the current status mapping sets:
+```go
+default: status = StatusStopped
+```
+
+Transmission uses `StatusStopped` for user-initiated pauses, not errors. The `ErrorString` field is set but:
+1. Not populated in the current mapping (always `&transfer.ErrorMessage`, which may be empty)
+2. Transmission's error field semantics differ from Put.io's
+
+This means failed transfers look identical to stopped transfers in the Activity tab, hiding critical failures.
+
+**Why it happens:**
+Error state handling requires understanding both Put.io's error model and Transmission's error representation. The default case in the status mapping is a catch-all that treats unknown states as "stopped" instead of checking if it's an error condition.
+
+**Consequences:**
+- Failed transfers appear as "stopped" in Activity tab
+- No visible error message explaining why transfer failed
+- User assumes transfer was manually paused, doesn't investigate
+- Accumulation of stuck transfers in "stopped" state
+- Support burden: "Why did my download stop?"
+
+**Prevention:**
+1. **Explicitly handle ERROR status:**
+   ```go
+   case "error":
+       status = StatusStopped // Keep stopped status
+       // But ensure ErrorString is populated
+   ```
+2. **Populate ErrorString field:**
+   ```go
+   var errorString *string
+   if transfer.Status == "ERROR" || transfer.ErrorMessage != "" {
+       errorString = &transfer.ErrorMessage
+   }
+   ```
+3. **Log error states prominently:** When ERROR status detected, log at WARN level with transfer details
+4. **Add telemetry:** Track error_count metric by error type
+
+**Detection (warning signs):**
+- Transfers stuck in "stopped" state indefinitely
+- Put.io UI shows errors but Activity tab shows "stopped"
+- ErrorString field always nil/empty even for failed transfers
+- User reports: "Transfer stopped, don't know why"
+
+**Which phase should address this:**
+Phase 2 (Implementation) - Explicit error state handling
+
+---
+
+## Minor Pitfalls
+
+Mistakes that cause minor annoyance or confusion but don't significantly impact functionality.
+
+### Pitfall 10: Inconsistent Time Unit Between ETA Fields
+
+**What goes wrong:**
+Put.io returns `EstimatedTime` in seconds, Transmission expects `eta` in seconds, but the mapping might misinterpret the units or apply timezone conversions incorrectly. Additionally, when a transfer is near completion, ETA can show invalid values (negative numbers, overflow).
+
+**Why it happens:**
+Time fields are easy to misconfigure. Developer might assume EstimatedTime is milliseconds or minutes without checking Put.io docs. Edge cases (ETA when transfer is paused, ETA when no peers) are not tested.
+
+**Prevention:**
+1. **Verify Put.io EstimatedTime units from docs:** Confirm it's seconds, not milliseconds
+2. **Direct mapping if units match:**
+   ```go
+   ETA: transfer.EstimatedTime
+   ```
+3. **Handle edge cases:**
+   ```go
+   eta := transfer.EstimatedTime
+   if eta < 0 {
+       eta = -1 // Transmission uses -1 for "unknown"
+   }
+   ```
+4. **Test with stalled transfers:** Verify ETA shows -1 when transfer has no peers
+
+**Detection (warning signs):**
+- ETA showing "5000 hours" for small files (milliseconds interpreted as seconds)
+- Negative ETA values in Activity tab
+- ETA not updating as download progresses
+
+**Which phase should address this:**
+Phase 2 (Implementation) - Field mapping with unit validation
+
+---
+
+### Pitfall 11: SecondsDownloading vs SecondsSeeding Confusion
+
+**What goes wrong:**
+The Transmission response includes `secondsDownloading` (time spent downloading) but the proxy might populate it incorrectly for seeding transfers or not populate it at all for in-progress transfers.
+
+**Why it happens:**
+Put.io doesn't track "time spent downloading" separately from "total transfer time". The proxy needs to calculate this or leave it as 0.
+
+**Prevention:**
+1. **Set to 0 for in-progress transfers if exact value unavailable:**
+   ```go
+   SecondsDownloading: 0 // Put.io doesn't provide this
+   ```
+2. **Document limitation:** Note in comments that SecondsDownloading is not available
+3. **Use transfer age as approximation if needed:**
+   ```go
+   SecondsDownloading: time.Since(transfer.CreatedAt).Seconds()
+   ```
+
+**Detection (warning signs):**
+- Activity tab showing incorrect time values
+- Users reporting: "Says downloading for 3 days but I just added it"
+
+**Which phase should address this:**
+Phase 2 (Implementation) - Document and handle unavailable fields
 
 ---
 
 ## Technical Debt Patterns
 
-Shortcuts that seem reasonable but create long-term problems.
+Shortcuts that seem reasonable now but create long-term maintenance burden.
 
 | Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
 |----------|-------------------|----------------|-----------------|
-| Using loose key-value pairs instead of slog.Attr | Less typing, more concise code | Silent `!BADKEY` corruption when argument count is odd | **Never** - use sloglint to enforce |
-| Skipping context propagation in goroutines | Simpler function signatures | Logs lack trace correlation, goroutine leaks | **Never** - context discipline is essential |
-| Using `context.Background()` in async operations | Avoids context threading complexity | Loses trace correlation, no cancellation propagation | Only when using `context.WithoutCancel(ctx)` to preserve trace while decoupling lifecycle |
-| Logging at INFO on hot paths | Complete visibility into operations | Performance degradation, high cardinality costs | Only with sampling (log 1% of operations) |
-| Enabling AddSource in production | Helpful file/line info in logs | CPU overhead from runtime.Caller() | Only for ERROR level logs in low-traffic services |
-| Renaming log fields for consistency | Cleaner, more consistent schema | Breaks existing dashboards and alerts | Only with deprecation period (keep both fields for 4+ weeks) |
-| Using `context.TODO()` placeholder | Unblocks development without context plumbing | Logs missing trace IDs, linters complain | Only temporarily during migration, never commit |
+| Reuse GetTaggedTorrents for both pipelines | Less code, no duplication | Breaking download pipeline when Activity tab needs change | **Never** - separate concerns |
+| Map all unknown statuses to "stopped" | Simple default case, no crashes | Hides errors, confuses users | Only with warning log and telemetry |
+| Skip FileID == 0 check for in-progress | Simpler logic | Fresh transfers invisible for 5-30 seconds | **Never** - breaks user experience |
+| No caching, always poll Put.io | Real-time data, no staleness | Rate limit violations, API overuse | Only for completed-only queries (<1 req/min) |
+| Calculate leftUntilDone from Downloaded | Direct arithmetic | Negative values when compression mismatches | Only if clamped to [0, size] range |
+| Set ErrorString to empty for all statuses | Avoid nil pointer issues | Error states invisible | Only if explicit ERROR status check added |
+| Use 0 for all peer/rate fields | Faster implementation | Users can't diagnose stalled downloads | Only temporarily, document in TODO comments |
 
 ## Integration Gotchas
 
-Common mistakes when connecting logs to external services.
+Common mistakes when connecting Transmission proxy to Sonarr/Radarr.
 
 | Integration | Common Mistake | Correct Approach |
 |-------------|----------------|------------------|
-| OpenTelemetry traces | Using `slog.Info()` instead of `slog.InfoContext(ctx)` | Always use context-aware logging methods to inject trace context automatically |
-| Log aggregation platforms | Changing field names without versioning | Treat log schema as API contract, use additive changes only |
-| Dashboards and alerts | Assuming logs are only for humans | Document log fields consumed by dashboards, test changes against queries |
-| Discord webhooks | Logging webhook failures at ERROR level | Use WARN for webhook failures (external service, not application error) |
-| Database query logging | Logging full SQL with parameter values | Redact sensitive parameters, log query patterns not full text |
-| HTTP request logging | Logging request/response bodies | Log metadata only (method, path, status, duration), bodies at DEBUG with size limits |
+| Activity tab polling | Assume low frequency (10 min intervals) | Design for 1-2 second intervals with caching |
+| Category/label filtering | Return torrents without labels field | Always populate labels array with configured label |
+| Status interpretation | Use StatusStopped for everything non-completed | Map to appropriate queue states (DownloadWait, SeedWait, Check) |
+| Progress tracking | Trust Downloaded field exclusively | Prefer PercentDone, validate consistency, clamp to [0, 100] |
+| Error reporting | Return nil ErrorString | Populate ErrorString when status is ERROR |
+| Transfer disappearance | Assume transfer exists in Put.io | Check database for recently completed transfers |
+| Peer information | Omit peer/rate fields | Map PeersConnected, RateDownload from Put.io |
 
 ## Performance Traps
 
@@ -251,52 +533,26 @@ Patterns that work at small scale but fail as usage grows.
 
 | Trap | Symptoms | Prevention | When It Breaks |
 |------|----------|------------|----------------|
-| Logging every operation at INFO | Service works fine initially | Use DEBUG for detailed traces, INFO for lifecycle only | 100+ req/sec or 10k+ log entries/hour |
-| High-cardinality fields everywhere | Logs are detailed and searchable | Limit UUIDs, timestamps, unique IDs to ERROR/WARN only | 1M+ unique field combinations, log bill >$1k/month |
-| Synchronous log writes on hot paths | Simple, reliable logging | Use async handlers with buffering, implement sampling | 1000+ req/sec, p99 latency >100ms |
-| AddSource enabled globally | Helpful file/line info | Disable in production, enable per-environment | 10k+ log entries/sec, CPU >50% |
-| No log level sampling | Complete visibility | Implement probabilistic sampling (1% at INFO, 100% at ERROR) | 100k+ log entries/min, ingestion throttling |
-| Logging in tight loops | Visibility into iterations | Move to metrics (counters), log every Nth iteration | Loop >1000 iterations/sec |
-
-## Security Mistakes
-
-Domain-specific security issues beyond general web security.
-
-| Mistake | Risk | Prevention |
-|---------|------|------------|
-| Logging authentication tokens | Credentials leak into log aggregation platforms, accessible to many engineers | Implement `LogValuer` interface to redact sensitive fields automatically |
-| Including raw request bodies | PII leakage (passwords, SSNs, credit cards) | Log metadata only, bodies only at DEBUG with explicit redaction |
-| Logging database connection strings | Credentials exposed in logs | Use `[REDACTED]` placeholder, log only host/database name |
-| User IDs in INFO logs without consent | GDPR/privacy violations | Hash user IDs, log only at WARN/ERROR when necessary for debugging |
-| Exception stack traces with local variables | Secrets in environment variables visible in traces | Sanitize stack traces, avoid logging full exception details |
-| Trace IDs without rate limiting | Trace ID enumeration attacks | Use random UUIDs, implement rate limiting on trace queries |
-
-## UX Pitfalls
-
-Common user experience mistakes in this domain (operations/debugging perspective).
-
-| Pitfall | User Impact | Better Approach |
-|---------|-------------|-----------------|
-| Inconsistent log levels | Operators can't filter effectively | Establish level contract: DEBUG=trace, INFO=lifecycle, WARN=unusual, ERROR=failure |
-| Missing correlation IDs | Impossible to trace request across components | Include `trace_id`, `span_id`, `request_id` in every log entry |
-| No structured context | Grep-driven debugging, slow incident response | Use structured fields consistently, avoid string interpolation |
-| Overly verbose DEBUG logs | Can't find important information | Reserve DEBUG for detailed traces, not normal operations |
-| Error logs without actionable info | Engineer must add more logging and redeploy | Include error cause, context (what was attempted), suggested remediation |
-| No log timestamps in structured output | Can't correlate with metrics | Always include RFC3339 timestamp in UTC |
-| Mixing stdout and stderr | Logs interleaved unpredictably | Use stdout for all logs, configure handler to emit JSON to stdout |
+| No caching on Activity tab polls | Excessive API calls to Put.io | Cache responses for 5-10 seconds | >5 active transfers + 2 second poll interval |
+| Synchronous File API calls for each transfer | Slow response times, rate limits | Batch File.List instead of individual File.Get | >10 active transfers |
+| Fresh database queries on every poll | Database lock contention | Cache recent completions in memory | >100 req/min to proxy |
+| Unlimited concurrency for Put.io calls | Rate limit violations | Semaphore limiting concurrent API calls | >50 transfers in list |
+| No rate limit tracking | Sudden 429 errors without warning | Track calls/min, proactive throttling | Approaching Put.io limit (100-200 req/min) |
 
 ## "Looks Done But Isn't" Checklist
 
 Things that appear complete but are missing critical pieces.
 
-- [ ] **Context propagation:** Often missing in goroutines — verify `go func(ctx context.Context)` pattern and `InfoContext()` usage
-- [ ] **Trace correlation:** Often missing trace_id/span_id fields — verify otelslog bridge is configured and logs include trace context
-- [ ] **Log schema documentation:** Often undocumented — verify .planning/schemas/logs.md documents all field names and types
-- [ ] **Consumer impact testing:** Often skipped — verify dashboards, alerts, and log queries still work with new schema
-- [ ] **Performance testing:** Often assumed negligible — verify load tests with new logging, measure throughput and latency impact
-- [ ] **Dynamic log level control:** Often hardcoded at startup — verify runtime change mechanism (HTTP endpoint or signal)
-- [ ] **Log sampling on hot paths:** Often "we'll add it later" — verify sampling strategy implemented for high-frequency operations
-- [ ] **Sensitive data redaction:** Often "we'll be careful" — verify LogValuer implementations for credentials, tokens, PII
+- [ ] **Status mapping completeness:** Did you map ALL Put.io statuses? (WAITING, ERROR, COMPLETING, not just completed/downloading)
+- [ ] **FileID == 0 handling:** Does it work for fresh transfers before FileID is assigned?
+- [ ] **Progress calculation validation:** Are leftUntilDone values always in [0, totalSize] range? Tested with compression?
+- [ ] **Caching implementation:** Is there a cache to prevent rate limit violations? (Critical for Activity tab)
+- [ ] **Labels field population:** Does TransmissionTorrent include labels array for category filtering?
+- [ ] **Error state visibility:** Are ERROR status transfers distinguished from stopped transfers?
+- [ ] **Peer information:** Are peersConnected and rate fields populated from Put.io data?
+- [ ] **Race condition handling:** What happens when transfer completes between polls? Database lookup implemented?
+- [ ] **Pipeline separation:** Is there a separate method for Activity tab vs download orchestrator? (Critical!)
+- [ ] **Integration testing:** Have you tested with real Sonarr/Radarr instances polling every 2 seconds?
 
 ## Recovery Strategies
 
@@ -304,14 +560,14 @@ When pitfalls occur despite prevention, how to recover.
 
 | Pitfall | Recovery Cost | Recovery Steps |
 |---------|---------------|----------------|
-| Breaking log schema | MEDIUM | Deploy new version with both old and new fields, wait 4 weeks for consumers to migrate, remove old fields in subsequent release |
-| `!BADKEY` corruption in logs | LOW | Convert loose key-value pairs to slog.Attr helpers, deploy new version, corrupted logs remain but stop accumulating |
-| Missing trace context | MEDIUM | Add context parameters to functions, change Info() to InfoContext(), deploy new version — old logs lack correlation forever |
-| Cardinality explosion | HIGH | Implement sampling immediately (emergency hotfix), analyze high-cardinality fields, remove from INFO logs, move to ERROR only |
-| Context propagation failure in goroutines | MEDIUM | Add context parameters to goroutine functions, verify Done() checks, deploy new version — monitor goroutine count decrease |
-| Performance degradation | LOW | Change log level from INFO to DEBUG for hot paths, deploy hotfix, implement sampling in next release |
-| No dynamic log level control | HIGH | Implement /admin/loglevel endpoint, requires code change and deployment — can't fix retroactively |
-| Log consumer dashboards broken | LOW | Revert log format changes immediately, plan deprecation strategy with both old and new fields |
+| Broke download pipeline by changing filter | **HIGH** | Immediately revert filter change, add integration tests for orchestrator, create separate method for Activity tab |
+| Incorrect status mapping | **LOW** | Add missing status cases to switch statement, deploy hotfix, log unmapped statuses |
+| Progress calculation errors | **MEDIUM** | Switch from Downloaded-based to PercentDone-based calculation, add clamping, validate in tests |
+| Rate limit violations | **MEDIUM** | Add response caching immediately (emergency), implement batching and rate limiting in next release |
+| FileID == 0 filtering too strict | **LOW** | Add status check to filter logic, allow FileID == 0 for WAITING/DOWNLOADING statuses |
+| Missing race condition handling | **MEDIUM** | Add database lookup for missing transfers, cache recently completed transfers |
+| No error visibility | **LOW** | Add explicit ERROR case to status mapping, populate ErrorString field, deploy update |
+| Activity tab empty (labels missing) | **LOW** | Add labels field to struct, populate with configured label, redeploy proxy |
 
 ## Pitfall-to-Phase Mapping
 
@@ -319,55 +575,54 @@ How roadmap phases should address these pitfalls.
 
 | Pitfall | Prevention Phase | Verification |
 |---------|------------------|--------------|
-| Breaking log schema for consumers | Phase 1: Log Schema Audit | Document existing consumers, run dashboard queries against test logs |
-| `!BADKEY` footgun with slog | Phase 2: Code Audit | Run sloglint with attr-only: true, zero violations in CI |
-| Missing trace context in logs | Phase 2: Context Propagation Audit | grep for `\.Info\(` and `\.Error\(` (non-context variants), verify trace_id in logs |
-| Log cardinality explosion | Phase 3: Cardinality Analysis | Monitor unique field combinations, verify sampling on hot paths |
-| Context propagation failure in goroutines | Phase 2: Context Propagation Audit | Review all `go func()` launches, verify context parameter |
-| Performance degradation from logging | Phase 3: Performance Testing | Load test before/after, benchmark hot paths, measure req/sec delta |
-| Missing AddSource performance cost | Phase 3: Performance Testing | Profile with/without AddSource, verify disabled in prod config |
-| No graceful log level change | Phase 4: Dynamic Controls | Test /admin/loglevel endpoint, verify signal handling |
+| Breaking download pipeline | Phase 1: Design & Contracts | Create separate GetAllTransfersByTag method, integration tests verify orchestrator behavior unchanged |
+| Incorrect status mapping | Phase 1: Design & Contracts | Document complete Put.io → Transmission status matrix, unit test each mapping |
+| Progress calculation errors | Phase 2: Implementation | Unit tests for edge cases (compression, negative values), validation assertions |
+| Rate limit violations | Phase 2: Implementation | Add caching layer, load test with 2-second polls, monitor api_calls_per_minute metric |
+| FileID == 0 filtering | Phase 2: Implementation | Test with fresh transfers, verify they appear in Activity tab within 2 seconds |
+| Race condition on completion | Phase 3: Integration | Test small file completion during poll, verify no "import failed" false positives |
+| Missing error visibility | Phase 2: Implementation | Test ERROR status transfers, verify ErrorString appears in Activity tab |
+| Labels missing | Phase 2: Implementation | Verify labels field populated, test category filtering in Sonarr/Radarr |
 
 ## Sources
 
-### High Confidence (Official Documentation & Recent 2025-2026 Articles)
+### High Confidence (Official Documentation)
 
-**slog Best Practices & Pitfalls:**
-- [Logging in Go with Slog: A Practitioner's Guide](https://www.dash0.com/guides/logging-in-go-with-slog)
-- [Logging in Go with Slog: The Ultimate Guide](https://betterstack.com/community/guides/logging/logging-in-go/)
-- [Structured Logging with slog](https://go.dev/blog/slog)
-- [OpenTelemetry Slog Integration](https://uptrace.dev/guides/opentelemetry-slog)
+**Transmission RPC Specification:**
+- [Transmission RPC Status Codes](https://transmission-rpc.readthedocs.io/en/v3.2.7/torrent.html) - Status codes 0-6 definitions
+- [Transmission RPC torrent-get fields](https://pythonhosted.org/transmissionrpc/reference/transmissionrpc.html) - leftUntilDone, percentDone, ETA field definitions
+- [GitHub transmission/transmission RPC spec](https://github.com/transmission/transmission/blob/main/docs/rpc-spec.md) - Official RPC protocol specification
 
-**Production Logging Best Practices:**
-- [Logging Best Practices: 12 Dos and Don'ts](https://betterstack.com/community/guides/logging/logging-best-practices/)
-- [9 Logging Best Practices](https://www.dash0.com/guides/logging-best-practices)
-- [How to Set Up Structured Logging in Go with OpenTelemetry](https://oneuptime.com/blog/post/2026-01-07-go-structured-logging-opentelemetry/view)
+**Sonarr/Radarr Activity Tab:**
+- [Radarr Activity Documentation](https://wiki.servarr.com/radarr/activity) - Queue vs History behavior
+- [Sonarr Activity tab empty with Transmission](https://forums.sonarr.tv/t/activity-queue-is-suddenly-completely-empty-transmission-downloads-dont-move-when-finished/23288) - Category filtering issues
 
-**Context Propagation & Goroutine Issues:**
-- [Propagating an Inappropriate Context in Go: Pitfalls and Solutions](https://medium.com/@marcianojosepaulo/propagating-an-inappropriate-context-in-go-pitfalls-and-solutions-531b6cc692ad)
-- [Mastering Goroutines in Go: Common Pitfalls](https://dev.to/mx_tech/mastering-goroutines-in-go-common-pitfalls-and-how-to-avoid-them-3j25)
-- [Goroutines and OpenTelemetry: Avoiding Common Pitfalls](https://medium.com/@veyselsahin/goroutines-and-opentelemetry-avoiding-common-pitfalls-538688f10b68)
+**Put.io API:**
+- [go-putio package documentation](https://pkg.go.dev/github.com/putdotio/go-putio) - Transfer struct fields
+- [Put.io "Finishing" status explanation](https://help.put.io/en/articles/8005984-what-does-finishing-mean) - Transfer state when writing to storage
+- [Put.io API documentation](https://api.put.io/) - Official API reference
 
-**Cardinality & Cost Management:**
-- [Understanding High Cardinality in Observability](https://www.observeinc.com/blog/understanding-high-cardinality-in-observability)
-- [How to Wrangle Metric Data Explosions](https://chronosphere.io/learn/wrangle-metric-data-explosions-with-chronosphere-profiler/)
-- [Cardinality Metrics for Monitoring and Observability](https://www.splunk.com/en_us/blog/devops/high-cardinality-monitoring-is-a-must-have-for-microservices-and-containers.html)
+**Similar Proxy Implementations:**
+- [plundrio - Put.io Transmission RPC proxy](https://github.com/elsbrock/plundrio) - Reference implementation
+- [transmissio - Put.io download service](https://github.com/anonfunc/transmissio) - Alternative proxy approach
 
-**Goroutine & Memory Leaks (Recent 2025-2026):**
-- [Understanding and Debugging Goroutine Leaks in Go Web Servers](https://leapcell.io/blog/understanding-and-debugging-goroutine-leaks-in-go-web-servers) (Oct 2025)
-- [Finding and Fixing a 50,000 Goroutine Leak](https://skoredin.pro/blog/golang/goroutine-leak-debugging) (Dec 2025)
-- [Detecting Goroutine Leaks via the Go Garbage Collector](https://medium.com/@aman.kohli1/detecting-goroutine-leaks-via-the-go-garbage-collector-deep-dive-180128dd81cc) (Jan 2026)
-- [Go Memory Leak: How One Line Drained Memory](https://www.harness.io/blog/the-silent-leak) (Oct 2025)
+### Medium Confidence (API Best Practices)
 
-**Incident Response & Debugging:**
-- [Debugging Microservices: How Trace IDs Saved My Production Incident](https://dev.to/nishantmodak/debugging-microservices-like-a-pro-how-trace-ids-saved-my-production-incident-7o6)
-- [Debugging Production Issues: Complete Enterprise Methodology](https://logit.io/blog/post/debugging-production-issues-enterprise-guide/)
+**API Polling Best Practices:**
+- [7 Best Practices for API Polling](https://www.merge.dev/blog/api-polling-best-practices) - Exponential backoff, caching strategies
+- [API Rate Limiting Best Practices](https://testfully.io/blog/api-rate-limit/) - Request throttling, monitoring
+- [Webhooks vs Polling](https://zapier.com/blog/api-rate-limiting/) - When to cache vs real-time
 
-**Migration & Schema Evolution:**
-- [Deep Dive and Migration Guide to Go 1.21+ slog](https://leapcell.io/blog/deep-dive-and-migration-guide-to-go-1-21-s-structured-logging-with-slog)
-- [A Beginner's Guide to JSON Logging](https://betterstack.com/community/guides/logging/json-logging/)
-- [Runtime Log Level Change using Golang](https://dev.to/aryanmehrotra/remote-runtime-log-level-change-using-golang-gofr-54d8)
+**Progress Calculation Issues:**
+- [Transmission percentDone inaccuracies](https://trac.transmissionbt.com/ticket/2299) - Known issue with percent done calculation
+- [Transmission progress calculation](https://transmission-rpc.readthedocs.io/en/v3.3.2/_modules/transmission_rpc/torrent.html) - Fallback formula: 100.0 * (sizeWhenDone - leftUntilDone) / sizeWhenDone
+
+**Activity Tab Issues:**
+- [Downloads not appearing in Activity Queue](https://forums.sonarr.tv/t/downloads-in-transmission-not-appearing-in-activity-queue/21656) - Common category mismatch issue
+- [Activity Queue showing empty](https://forums.sonarr.tv/t/transmission-activity-queue-empty/10867) - Connection and filtering problems
 
 ---
-*Pitfalls research for: Logging improvements in production Go service*
-*Researched: 2026-02-01*
+
+*Pitfalls research for: Activity Tab Support (in-progress download visibility)*
+*Researched: 2026-02-08*
+*Confidence: HIGH - Based on codebase analysis, official docs, and similar proxy implementations*
