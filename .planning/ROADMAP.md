@@ -160,7 +160,10 @@ Plans:
   1. Completed transfers are matched to their label using SaveParentID instead of the FileID->ParentID lookup chain
   2. Transfers with SaveParentID==0 are skipped gracefully with a debug log (not an error)
   3. Existing download pipeline behavior is unchanged -- same transfers returned, same filter logic, no regressions
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [ ] 11-01-PLAN.md -- Test and validate SaveParentID-based tag matching
 
 ### Phase 12: In-Progress Visibility
 **Goal**: Sonarr/Radarr Activity tab displays in-progress downloads with accurate progress, status, peer counts, speed, and labels
@@ -190,5 +193,5 @@ Phases execute in numeric order: 11 -> 12
 | 8. Lifecycle Visibility | v1.2 | 2/2 | Complete | 2026-02-08 |
 | 9. Log Level Consistency | v1.2 | 2/2 | Complete | 2026-02-08 |
 | 10. HTTP Request Logging | v1.2 | 2/2 | Complete | 2026-02-08 |
-| 11. SaveParentID Tag Matching | v1.3 | 0/TBD | Not started | - |
+| 11. SaveParentID Tag Matching | v1.3 | 0/1 | In progress | - |
 | 12. In-Progress Visibility | v1.3 | 0/TBD | Not started | - |
