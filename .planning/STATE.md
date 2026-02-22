@@ -2,19 +2,19 @@
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-02-08)
+See: .planning/PROJECT.md (updated 2026-02-22)
 
 **Core value:** The application must run reliably 24/7 without crashes, resource leaks, or silent failures.
-**Current focus:** All milestones complete through v1.3 — planning next milestone
+**Current focus:** v1.4 Download Pipeline Fixes — folder naming, transfer cleanup, missing transfer handling
 
 ## Current Position
 
-Phase: 12 of 12 (In-Progress Visibility) -- COMPLETE
-Plan: 2 of 2 in current phase -- COMPLETE
-Status: v1.3 Activity Tab Support milestone shipped
-Last activity: 2026-02-08 -- v1.3 milestone archived
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-02-22 — Milestone v1.4 started
 
-Progress: [██████████] 100%
+Progress: [░░░░░░░░░░] 0%
 
 ## Accumulated Context
 
@@ -32,7 +32,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-02-08
-Stopped at: v1.3 milestone complete and archived
+Last session: 2026-02-22
+Stopped at: Defining v1.4 milestone requirements
 Resume file: None
-Next step: /gsd:new-milestone to define next milestone
+Next step: Define requirements and create roadmap

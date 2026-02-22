@@ -8,6 +8,15 @@ A Go-based automated downloader that orchestrates transfers from seedbox/torrent
 
 The application must run reliably 24/7 without crashes, resource leaks, or silent failures.
 
+## Current Milestone: v1.4 Download Pipeline Fixes
+
+**Goal:** Fix download folder naming for single-file transfers, ensure Put.io transfer cleanup after import, and handle missing transfers gracefully
+
+**Target fixes:**
+- Single-file transfers create folders with file extension in name (e.g., `the_movie.mkv/`) — Sonarr/Radarr can't import
+- Put.io transfers stay forever after Sonarr/Radarr import — cleanup never fires
+- Missing/deleted Put.io transfers not handled — need log warning + Discord notification
+
 ## Previous Milestone: v1.3 Activity Tab Support (Shipped: 2026-02-08)
 
 **Goal:** Show in-progress downloads in Sonarr/Radarr Activity tab via the Transmission RPC proxy
@@ -53,7 +62,9 @@ The application must run reliably 24/7 without crashes, resource leaks, or silen
 
 ### Active
 
-(None — define next milestone with `/gsd:new-milestone`)
+- [ ] Strip file extension from folder name for single-file downloads
+- [ ] Fix Put.io transfer cleanup after Sonarr/Radarr import
+- [ ] Handle missing/deleted Put.io transfers with log warning + Discord notification
 
 ### Out of Scope
 
@@ -125,4 +136,4 @@ The application must run reliably 24/7 without crashes, resource leaks, or silen
 | Labels field always present (not omitempty) | Sonarr/Radarr expect field to always be present | ✓ Good - empty array acceptable |
 
 ---
-*Last updated: 2026-02-08 after v1.3 milestone completion*
+*Last updated: 2026-02-22 after v1.4 milestone start*
