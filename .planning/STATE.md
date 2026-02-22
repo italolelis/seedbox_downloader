@@ -10,11 +10,11 @@ See: .planning/PROJECT.md (updated 2026-02-22)
 ## Current Position
 
 Phase: 13 - Folder Naming Fix
-Plan: —
-Status: Roadmap created, ready to plan
-Last activity: 2026-02-22 — Roadmap created for v1.4 milestone
+Plan: 01 (complete)
+Status: Phase 13 complete, ready for Phase 14
+Last activity: 2026-02-22 — Completed 13-01-PLAN.md (folder naming fix)
 
-Progress: [░░░░░░░░░░] 0% (0/3 phases complete)
+Progress: [███░░░░░░░] 33% (1/3 phases complete)
 
 ## Performance Metrics
 
@@ -22,14 +22,16 @@ Progress: [░░░░░░░░░░] 0% (0/3 phases complete)
 |--------|-------|
 | Phases this milestone | 3 |
 | Requirements mapped | 6/6 |
-| Plans complete | 0/3 |
+| Plans complete | 1/3 |
 | Coverage | 100% |
 
 ## Accumulated Context
 
 ### Decisions
 
-Decisions are logged in PROJECT.md Key Decisions table.
+- Strip only the last extension segment using `filepath.Ext + strings.TrimSuffix` for single-file folder naming (matches Sonarr/Radarr folder-name parsing)
+- Guard `stripFileExtension` against empty result: if stripping produces `""` (dot-prefixed files like `.hidden`), return original name unchanged to avoid empty folder path component
+- Only the `!file.IsDir()` branch in `getFilesRecursively` is modified; multi-file directory traversal paths are untouched
 
 ### Pending Todos
 
@@ -42,6 +44,6 @@ None.
 ## Session Continuity
 
 Last session: 2026-02-22
-Stopped at: Roadmap created for v1.4
+Stopped at: Completed 13-01-PLAN.md
 Resume file: None
-Next step: `/gsd:plan-phase 13` — Folder Naming Fix (DL-01, DL-02)
+Next step: `/gsd:plan-phase 14` — Transfer Cleanup Fix (CLN-01, CLN-02)
