@@ -115,3 +115,32 @@
 
 ---
 
+
+## v1.4 Download Pipeline Fixes (Shipped: 2026-02-22)
+
+**Delivered:** Fix download folder naming, automate Put.io transfer cleanup after import, and detect missing transfers with Discord notifications
+
+**Phases completed:** 13-15 (3 plans total)
+
+**Key accomplishments:**
+
+- Fixed single-file folder naming — Put.io single-file transfers now create correctly named folders without file extension (e.g., `the_movie/` not `the_movie.mkv/`), enabling Sonarr/Radarr import
+- Automated Put.io transfer cleanup after import — transfers and file data automatically deleted after Sonarr/Radarr confirms import, with configurable seed ratio window via `PUTIO_SEED_RATIO`
+- Missing transfer detection — distinguishes "transfer removed" from "files missing" with distinct warn-level logs and Discord embed notifications (red sidebar, structured fields)
+- Pipeline resilience — missing transfers marked in DB to prevent re-processing, partial local files cleaned up, nil guards on all notification handlers to prevent crash when Discord webhook not configured
+
+**Stats:**
+
+- 23 files changed, 2,185 insertions, 63 deletions
+- 6,072 lines of Go total
+- 3 phases, 3 plans, 6 tasks
+- Single session implementation (2026-02-22)
+- 6/6 v1.4 requirements satisfied (100%)
+- 0 critical gaps, 1 minor tech debt item
+
+**Git range:** `d57d40f` (docs(13)) → `4c6f37f` (docs: milestone v1.4 audit)
+
+**What's next:** Production deployment to validate folder naming fix, cleanup behavior, and Discord notifications
+
+---
+

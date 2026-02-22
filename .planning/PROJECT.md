@@ -8,14 +8,15 @@ A Go-based automated downloader that orchestrates transfers from seedbox/torrent
 
 The application must run reliably 24/7 without crashes, resource leaks, or silent failures.
 
-## Current Milestone: v1.4 Download Pipeline Fixes
+## Previous Milestone: v1.4 Download Pipeline Fixes (Shipped: 2026-02-22)
 
 **Goal:** Fix download folder naming for single-file transfers, ensure Put.io transfer cleanup after import, and handle missing transfers gracefully
 
-**Target fixes:**
-- Single-file transfers create folders with file extension in name (e.g., `the_movie.mkv/`) — Sonarr/Radarr can't import
-- Put.io transfers stay forever after Sonarr/Radarr import — cleanup never fires
-- Missing/deleted Put.io transfers not handled — need log warning + Discord notification
+**Delivered:**
+- ✓ Single-file transfers create correctly named folders without file extension
+- ✓ Put.io transfers automatically cleaned up after Sonarr/Radarr import (configurable seed ratio)
+- ✓ Missing/deleted transfers detected with distinct warn logs and Discord embed notifications
+- ✓ Nil guards on all notification handlers prevent crash when Discord webhook unset
 
 ## Previous Milestone: v1.3 Activity Tab Support (Shipped: 2026-02-08)
 
@@ -59,12 +60,14 @@ The application must run reliably 24/7 without crashes, resource leaks, or silen
 - ✓ Show download progress, ETA, and peer info for active transfers — v1.3
 - ✓ Filter in-progress transfers by label without requiring FileID — v1.3 (SaveParentID)
 - ✓ Correct Transmission status mapping for all Put.io transfer states — v1.3
+- ✓ Strip file extension from folder name for single-file downloads — v1.4
+- ✓ Put.io transfer cleanup after Sonarr/Radarr import with configurable seed ratio — v1.4
+- ✓ Missing/deleted Put.io transfer detection with warn log + Discord notification — v1.4
+- ✓ Nil guards on all notification handlers prevent crash when Discord webhook unset — v1.4
 
 ### Active
 
-- [ ] Strip file extension from folder name for single-file downloads
-- [ ] Fix Put.io transfer cleanup after Sonarr/Radarr import
-- [ ] Handle missing/deleted Put.io transfers with log warning + Discord notification
+(None — planning next milestone)
 
 ### Out of Scope
 
@@ -79,11 +82,11 @@ The application must run reliably 24/7 without crashes, resource leaks, or silen
 
 ## Context
 
-**Shipped v1.3 (2026-02-08):**
-- 4 milestones shipped (v1, v1.1, v1.2, v1.3) across 12 phases, 26 plans
-- Full Activity tab integration — Sonarr/Radarr can monitor in-progress downloads
-- Complete structured logging with trace correlation, lifecycle visibility, and HTTP request logging
-- Production-ready with comprehensive observability and reliability
+**Shipped v1.4 (2026-02-22):**
+- 5 milestones shipped (v1, v1.1, v1.2, v1.3, v1.4) across 15 phases, 29 plans
+- Download pipeline fully operational — folder naming, cleanup, missing transfer handling all fixed
+- Discord embed notifications for missing transfers with distinct "removed" vs "files missing" messages
+- 6,072 lines of Go total
 
 **Architecture:**
 - Event-driven pipeline: TransferOrchestrator → Downloader → Import Monitor → Cleanup
@@ -134,6 +137,11 @@ The application must run reliably 24/7 without crashes, resource leaks, or silen
 | Triple safety net for download pipeline | IsAvailable + IsDownloadable + conditional files | ✓ Good - defense-in-depth prevents false positives |
 | Monitor-first for rate limits | Defer caching until production data shows issues | — Pending - deployed, monitoring |
 | Labels field always present (not omitempty) | Sonarr/Radarr expect field to always be present | ✓ Good - empty array acceptable |
+| Strip only last extension from single-file folder name | Matches Sonarr/Radarr folder-name parsing expectations | ✓ Good - `filepath.Ext + TrimSuffix` with empty-result guard |
+| TransferInfoer capability interface | `d.dc` is InstrumentedDownloadClient, not *putio.Client — direct assertion always fails | ✓ Good - clean proxy pattern |
+| Configurable seed ratio via PUTIO_SEED_RATIO | Immediate cleanup (default) vs ratio-based seeding window | ✓ Good - flexible, backward compatible |
+| Sentinel errors in putio package | Distinguish "transfer removed" vs "files missing" without circular imports | ✓ Good - clean dependency chain |
+| WatchDownloads as single emission point | Prevents double-emit to unbuffered channel, ensures once-only notification | ✓ Good - verified by plan checker |
 
 ---
-*Last updated: 2026-02-22 after v1.4 milestone start*
+*Last updated: 2026-02-22 after v1.4 milestone*
