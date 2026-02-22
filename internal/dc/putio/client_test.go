@@ -146,6 +146,83 @@ func newTestClient(serverURL string) *Client {
 	return &Client{putioClient: goputioClient}
 }
 
+func TestStripFileExtension(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"mkv file", "the_movie.mkv", "the_movie"},
+		{"mp4 file", "the_movie.mp4", "the_movie"},
+		{"avi file", "the_movie.avi", "the_movie"},
+		{"torrent file", "the_movie.torrent", "the_movie"},
+		{"nzb file", "the_movie.nzb", "the_movie"},
+		{"multiple dots", "the.movie.2024.mkv", "the.movie.2024"},
+		{"no extension", "movie", "movie"},
+		{"dot prefix no ext", ".hidden", ".hidden"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, stripFileExtension(tt.input))
+		})
+	}
+}
+
+func TestGetFilesRecursively_SingleFileExtensionStrip(t *testing.T) {
+	tests := []struct {
+		name         string
+		fileName     string
+		fileType     string
+		expectedPath string
+	}{
+		{
+			name:         "mkv single file",
+			fileName:     "the_movie.mkv",
+			fileType:     "VIDEO",
+			expectedPath: "the_movie/the_movie.mkv",
+		},
+		{
+			name:         "mp4 single file",
+			fileName:     "movie.mp4",
+			fileType:     "VIDEO",
+			expectedPath: "movie/movie.mp4",
+		},
+		{
+			name:         "multiple dots mkv",
+			fileName:     "the.movie.2024.mkv",
+			fileType:     "VIDEO",
+			expectedPath: "the.movie.2024/the.movie.2024.mkv",
+		},
+		{
+			name:         "no extension",
+			fileName:     "movie",
+			fileType:     "VIDEO",
+			expectedPath: "movie/movie",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc("/v2/files/100", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprintf(w, `{"file":{"id":100,"name":%q,"size":1000,"file_type":%q,"content_type":"video/x-matroska"}}`,
+					tt.fileName, tt.fileType)
+			})
+			server := httptest.NewServer(mux)
+			defer server.Close()
+
+			client := newTestClient(server.URL)
+			files, err := client.getFilesRecursively(context.Background(), 100, tt.fileName)
+
+			require.NoError(t, err)
+			require.Len(t, files, 1)
+			assert.Equal(t, tt.expectedPath, files[0].Path)
+		})
+	}
+}
+
 func TestGetTaggedTorrents_SaveParentIDMatching(t *testing.T) {
 	tests := []struct {
 		name         string

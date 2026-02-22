@@ -338,9 +338,15 @@ func (c *Client) filterMatchingTransferIds(transfers []putio.Transfer, transferI
 
 // stripFileExtension removes the final file extension from name.
 // For example, "the_movie.mkv" -> "the_movie", "the.movie.2024.mkv" -> "the.movie.2024".
-// Files with no extension or dot-prefixed hidden files (e.g. ".hidden") are returned unchanged.
+// If stripping would produce an empty string (e.g. dot-prefixed files like ".hidden"),
+// the original name is returned unchanged to avoid an empty folder name.
 func stripFileExtension(name string) string {
-	return strings.TrimSuffix(name, filepath.Ext(name))
+	stripped := strings.TrimSuffix(name, filepath.Ext(name))
+	if stripped == "" {
+		return name
+	}
+
+	return stripped
 }
 
 func (c *Client) findDirectoryID(ctx context.Context, downloadDir string) (int64, error) {
