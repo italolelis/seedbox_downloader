@@ -170,8 +170,10 @@ Plans:
 2. The Put.io file data associated with the transfer is deleted alongside the transfer
 3. Transfers that fail import are not prematurely deleted
 
+**Plans:** 1 plan
+
 Plans:
-- [ ] 14-01: Fix Put.io cleanup trigger and file deletion after import confirmation
+- [ ] 14-01-PLAN.md — Fix immediate cleanup path, live ratio polling for WatchForSeeding, backoff retry with transfer-not-found handling
 
 ---
 
