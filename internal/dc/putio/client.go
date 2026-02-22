@@ -336,6 +336,13 @@ func (c *Client) filterMatchingTransferIds(transfers []putio.Transfer, transferI
 	return matchingTransfers
 }
 
+// stripFileExtension removes the final file extension from name.
+// For example, "the_movie.mkv" -> "the_movie", "the.movie.2024.mkv" -> "the.movie.2024".
+// Files with no extension or dot-prefixed hidden files (e.g. ".hidden") are returned unchanged.
+func stripFileExtension(name string) string {
+	return strings.TrimSuffix(name, filepath.Ext(name))
+}
+
 func (c *Client) findDirectoryID(ctx context.Context, downloadDir string) (int64, error) {
 	search, err := c.putioClient.Files.Search(ctx, downloadDir, 1)
 	if err != nil {
@@ -364,9 +371,10 @@ func (c *Client) getFilesRecursively(ctx context.Context, parentID int64, basePa
 	}
 
 	if !file.IsDir() {
+		folderName := stripFileExtension(basePath)
 		result = append(result, &transfer.File{
 			ID:   file.ID,
-			Path: filepath.Join(basePath, file.Name),
+			Path: filepath.Join(folderName, file.Name),
 			Size: file.Size,
 		})
 
