@@ -415,6 +415,8 @@ func setupNotificationForDownloader(
 				handleDownloadFinished(ctx, logger, repo, notif, downloader, t, cfg.PollingInterval)
 			case t := <-downloader.OnTransferImported:
 				handleTransferImported(ctx, logger, notif, downloader, t, cfg.PollingInterval, seedRatio)
+			case event := <-downloader.OnTransferMissing:
+				handleTransferMissing(ctx, logger, repo, notif, event)
 			}
 		}
 	}()
@@ -436,10 +438,12 @@ func handleDownloadError(
 
 	logger.WarnContext(ctx, "transfer download error", "transfer_id", t.ID, "transfer_name", t.Name)
 
-	if notifyErr := notif.Notify(
-		"❌ Download failed for transfer: " + t.Name + " (" + t.ID + ")",
-	); notifyErr != nil {
-		logger.ErrorContext(ctx, "failed to send notification", "err", notifyErr)
+	if notif != nil {
+		if notifyErr := notif.Notify(
+			"❌ Download failed for transfer: " + t.Name + " (" + t.ID + ")",
+		); notifyErr != nil {
+			logger.ErrorContext(ctx, "failed to send notification", "err", notifyErr)
+		}
 	}
 }
 
@@ -463,10 +467,12 @@ func handleDownloadFinished(
 
 	logger.InfoContext(ctx, "transfer download finished", "transfer_id", t.ID, "transfer_name", t.Name)
 
-	if notifyErr := notif.Notify(
-		"✅ Download finished for transfer: " + t.Name + " (" + t.ID + ")",
-	); notifyErr != nil {
-		logger.ErrorContext(ctx, "failed to send notification", "err", notifyErr)
+	if notif != nil {
+		if notifyErr := notif.Notify(
+			"✅ Download finished for transfer: " + t.Name + " (" + t.ID + ")",
+		); notifyErr != nil {
+			logger.ErrorContext(ctx, "failed to send notification", "err", notifyErr)
+		}
 	}
 }
 
@@ -485,10 +491,57 @@ func handleTransferImported(
 		dl.CleanupTransfer(ctx, t)
 	}
 
-	if notifyErr := notif.Notify(
-		"📪 Transfer imported: " + t.Name + " (" + t.ID + ")",
-	); notifyErr != nil {
-		logger.ErrorContext(ctx, "failed to send notification", "err", notifyErr)
+	if notif != nil {
+		if notifyErr := notif.Notify(
+			"📪 Transfer imported: " + t.Name + " (" + t.ID + ")",
+		); notifyErr != nil {
+			logger.ErrorContext(ctx, "failed to send notification", "err", notifyErr)
+		}
+	}
+}
+
+func handleTransferMissing(
+	ctx context.Context,
+	logger *slog.Logger,
+	repo storage.DownloadRepository,
+	notif notifier.Notifier,
+	event downloader.MissingTransferEvent,
+) {
+	if err := repo.UpdateTransferStatus(event.Transfer.ID, "missing"); err != nil {
+		logger.ErrorContext(ctx, "failed to update transfer status to missing", "transfer_id", event.Transfer.ID, "err", err)
+	}
+
+	logger.WarnContext(ctx, "tracked transfer missing from Put.io",
+		"transfer_id", event.Transfer.ID,
+		"transfer_name", event.Transfer.Name,
+		"missing_type", event.MissingType)
+
+	if notif != nil {
+		title := "Transfer Removed"
+		description := "This transfer was removed from Put.io before download could complete."
+		statusLabel := "Transfer Removed"
+
+		if event.MissingType == "files_missing" {
+			title = "Transfer Files Missing"
+			description = "The files for this transfer were deleted from Put.io while download was in progress."
+			statusLabel = "Files Missing"
+		}
+
+		embed := notifier.Embed{
+			Title:       title,
+			Description: description,
+			Color:       15158332, // 0xE74C3C red
+			Fields: []notifier.EmbedField{
+				{Name: "Transfer Name", Value: event.Transfer.Name, Inline: true},
+				{Name: "Transfer ID", Value: event.Transfer.ID, Inline: true},
+				{Name: "Status", Value: statusLabel, Inline: true},
+			},
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+		}
+
+		if notifyErr := notif.NotifyEmbed(embed); notifyErr != nil {
+			logger.WarnContext(ctx, "failed to send missing transfer notification", "transfer_id", event.Transfer.ID, "err", notifyErr)
+		}
 	}
 }
 
