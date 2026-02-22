@@ -7,6 +7,12 @@ import (
 	"github.com/italolelis/seedbox_downloader/internal/telemetry"
 )
 
+// TransferInfoer is an optional capability for download clients that support
+// querying live transfer upload ratio from the remote service.
+type TransferInfoer interface {
+	GetTransferInfo(ctx context.Context, transferID string) (uploadRatio float64, found bool, err error)
+}
+
 // InstrumentedDownloadClient wraps DownloadClient with telemetry.
 type InstrumentedDownloadClient struct {
 	client     DownloadClient
@@ -47,6 +53,17 @@ func (c *InstrumentedDownloadClient) GetTaggedTorrents(ctx context.Context, labe
 	}
 
 	return result, nil
+}
+
+// GetTransferInfo retrieves live transfer upload ratio if the underlying client supports it.
+// Returns (0, false, nil) if the underlying client does not implement TransferInfoer.
+func (c *InstrumentedDownloadClient) GetTransferInfo(ctx context.Context, transferID string) (float64, bool, error) {
+	infoer, ok := c.client.(TransferInfoer)
+	if !ok {
+		return 0, false, nil
+	}
+
+	return infoer.GetTransferInfo(ctx, transferID)
 }
 
 // GrabFile grabs a file with telemetry.

@@ -10,11 +10,12 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/cenkalti/backoff/v5"
 	"github.com/dustin/go-humanize"
-	"github.com/italolelis/seedbox_downloader/internal/dc/putio"
 	"github.com/italolelis/seedbox_downloader/internal/downloader/progress"
 	"github.com/italolelis/seedbox_downloader/internal/logctx"
 	"github.com/italolelis/seedbox_downloader/internal/storage"
@@ -236,10 +237,47 @@ func (d *Downloader) WatchForImported(ctx context.Context, t *transfer.Transfer,
 	}()
 }
 
-func (d *Downloader) WatchForSeeding(ctx context.Context, t *transfer.Transfer, pollingInterval time.Duration) {
+// CleanupTransfer removes the Put.io transfer and its file data with exponential backoff retry.
+// If the transfer is not found on Put.io (already deleted), this is treated as success.
+// Cleanup failures after retries are logged but do not crash or stall the pipeline.
+func (d *Downloader) CleanupTransfer(ctx context.Context, t *transfer.Transfer) {
 	logger := logctx.LoggerFromContext(ctx)
 
-	logger.InfoContext(ctx, "watching for seeding transfers", "transfer_id", t.ID, "polling_interval", pollingInterval)
+	hash := sha1.Sum([]byte(t.ID))
+	hashStr := hex.EncodeToString(hash[:])
+
+	_, err := backoff.Retry[struct{}](ctx, func() (struct{}, error) {
+		if err := d.tc.RemoveTransfers(ctx, []string{hashStr}, true); err != nil {
+			if strings.Contains(err.Error(), "transfer not found") {
+				logger.InfoContext(ctx, "Put.io transfer already removed, treating as success",
+					"transfer_id", t.ID, "transfer_name", t.Name)
+
+				return struct{}{}, nil
+			}
+
+			return struct{}{}, err
+		}
+
+		return struct{}{}, nil
+	}, backoff.WithMaxTries(3))
+
+	if err != nil {
+		logger.ErrorContext(ctx, "failed to clean up Put.io transfer after retries, continuing",
+			"transfer_id", t.ID, "err", err)
+
+		return
+	}
+
+	logger.InfoContext(ctx, "Put.io transfer and files cleaned up",
+		"transfer_id", t.ID, "transfer_name", t.Name)
+}
+
+// WatchForSeeding watches until the Put.io transfer reaches the target seed ratio, then cleans it up.
+func (d *Downloader) WatchForSeeding(ctx context.Context, t *transfer.Transfer, pollingInterval time.Duration, seedRatio float64) {
+	logger := logctx.LoggerFromContext(ctx)
+
+	logger.InfoContext(ctx, "watching for seeding transfers",
+		"transfer_id", t.ID, "polling_interval", pollingInterval, "seed_ratio", seedRatio)
 
 	go func() {
 		defer func() {
@@ -265,22 +303,50 @@ func (d *Downloader) WatchForSeeding(ctx context.Context, t *transfer.Transfer, 
 
 				return
 			case <-ticker.C:
-				if !t.IsSeeding() {
-					logger.InfoContext(ctx, "transfer stopped seeding",
+				infoer, ok := d.dc.(transfer.TransferInfoer)
+				if !ok {
+					logger.ErrorContext(ctx, "download client does not support transfer info, cannot watch seeding",
 						"operation", "watch_seeding",
-						"transfer_id", t.ID,
-						"reason", "seeding_complete")
-
-					hash := sha1.Sum([]byte(t.ID))
-
-					if dc, ok := d.dc.(*putio.Client); ok {
-						if err := dc.RemoveTransfers(ctx, []string{hex.EncodeToString(hash[:])}, true); err != nil {
-							logger.ErrorContext(ctx, "failed to remove transfer", "transfer_id", t.ID, "err", err)
-						}
-					}
+						"transfer_id", t.ID)
 
 					return
 				}
+
+				uploadRatio, found, err := infoer.GetTransferInfo(ctx, t.ID)
+				if err != nil {
+					logger.ErrorContext(ctx, "failed to get transfer info, retrying next tick",
+						"operation", "watch_seeding",
+						"transfer_id", t.ID,
+						"err", err)
+
+					continue
+				}
+
+				if !found {
+					logger.InfoContext(ctx, "transfer no longer exists on Put.io, cleanup already done",
+						"operation", "watch_seeding",
+						"transfer_id", t.ID)
+
+					return
+				}
+
+				if uploadRatio >= seedRatio {
+					logger.InfoContext(ctx, "seed ratio reached, cleaning up transfer",
+						"operation", "watch_seeding",
+						"transfer_id", t.ID,
+						"upload_ratio", uploadRatio,
+						"target_ratio", seedRatio)
+
+					d.CleanupTransfer(ctx, t)
+
+					return
+				}
+
+				logger.DebugContext(ctx, "seed ratio not yet reached",
+					"operation", "watch_seeding",
+					"transfer_id", t.ID,
+					"upload_ratio", uploadRatio,
+					"target_ratio", seedRatio)
 			}
 		}
 	}()

@@ -117,6 +117,30 @@ func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*transfer
 	return torrents, nil
 }
 
+// GetTransferInfo retrieves the upload ratio for a transfer by its string ID.
+// Returns (uploadRatio, found, error). If the transfer is not found, found is false and err is nil.
+// If Downloaded is zero, ratio is returned as 0 to avoid division by zero.
+func (c *Client) GetTransferInfo(ctx context.Context, transferID string) (float64, bool, error) {
+	transfers, err := c.putioClient.Transfers.List(ctx)
+	if err != nil {
+		return 0, false, fmt.Errorf("failed to list transfers: %w", err)
+	}
+
+	for _, t := range transfers {
+		if fmt.Sprintf("%d", t.ID) == transferID {
+			if t.Downloaded == 0 {
+				return 0, true, nil
+			}
+
+			ratio := float64(t.Uploaded) / float64(t.Downloaded)
+
+			return ratio, true, nil
+		}
+	}
+
+	return 0, false, nil
+}
+
 // GrabFile implements DownloadClient.GrabFile for Put.io.
 func (c *Client) GrabFile(ctx context.Context, file *transfer.File) (io.ReadCloser, error) {
 	logger := logctx.LoggerFromContext(ctx)
