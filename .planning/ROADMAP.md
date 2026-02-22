@@ -210,6 +210,6 @@ Plans:
 | 10. HTTP Request Logging | v1.2 | 2/2 | Complete | 2026-02-08 |
 | 11. SaveParentID Tag Matching | v1.3 | 1/1 | Complete | 2026-02-08 |
 | 12. In-Progress Visibility | v1.3 | 2/2 | Complete | 2026-02-08 |
-| 13. Folder Naming Fix | v1.4 | 1/1 | Complete | 2026-02-22 |
+| 13. Folder Naming Fix | v1.4 | Complete    | 2026-02-22 | 2026-02-22 |
 | 14. Transfer Cleanup Fix | v1.4 | 0/1 | Pending | — |
 | 15. Missing Transfer Handling | v1.4 | 0/1 | Pending | — |

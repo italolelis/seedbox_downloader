@@ -9,8 +9,8 @@ Requirements for download pipeline fixes. Each maps to roadmap phases.
 
 ### Download Pipeline
 
-- [ ] **DL-01**: Single-file transfers create a folder named without file extension (e.g., `the_movie/the_movie.mkv` not `the_movie.mkv/the_movie.mkv`)
-- [ ] **DL-02**: Folder name stripping works for any file extension (.mkv, .mp4, .avi, .torrent, etc.)
+- [x] **DL-01**: Single-file transfers create a folder named without file extension (e.g., `the_movie/the_movie.mkv` not `the_movie.mkv/the_movie.mkv`)
+- [x] **DL-02**: Folder name stripping works for any file extension (.mkv, .mp4, .avi, .torrent, etc.)
 
 ### Transfer Cleanup
 
@@ -40,8 +40,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DL-01 | Phase 13 | Pending |
-| DL-02 | Phase 13 | Pending |
+| DL-01 | Phase 13 | Complete |
+| DL-02 | Phase 13 | Complete |
 | CLN-01 | Phase 14 | Pending |
 | CLN-02 | Phase 14 | Pending |
 | MTX-01 | Phase 15 | Pending |
