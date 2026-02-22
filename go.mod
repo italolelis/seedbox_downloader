@@ -8,7 +8,8 @@ require (
 	github.com/cenkalti/backoff/v5 v5.0.3
 	github.com/dustin/go-humanize v1.0.1
 	github.com/go-chi/chi v1.5.5
-	github.com/go-chi/chi/v5 v5.2.1
+	github.com/go-chi/chi/v5 v5.2.2
+	github.com/google/uuid v1.6.0
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/mattn/go-sqlite3 v1.14.14
 	github.com/putdotio/go-putio v1.7.2
@@ -35,7 +36,6 @@ require (
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
