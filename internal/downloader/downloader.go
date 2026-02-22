@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/cenkalti/backoff/v5"
 	"github.com/dustin/go-humanize"
+	"github.com/italolelis/seedbox_downloader/internal/dc/putio"
 	"github.com/italolelis/seedbox_downloader/internal/downloader/progress"
 	"github.com/italolelis/seedbox_downloader/internal/logctx"
 	"github.com/italolelis/seedbox_downloader/internal/storage"
@@ -23,6 +25,12 @@ import (
 	"github.com/italolelis/seedbox_downloader/internal/transfer"
 	"golang.org/x/sync/errgroup"
 )
+
+// MissingTransferEvent carries a missing transfer and its classification.
+type MissingTransferEvent struct {
+	Transfer    *transfer.Transfer
+	MissingType string // "files_missing" or "transfer_removed"
+}
 
 const (
 	dirPerm = 0755
@@ -39,6 +47,7 @@ type Downloader struct {
 	OnTransferDownloadError    chan *transfer.Transfer
 	OnTransferDownloadFinished chan *transfer.Transfer
 	OnTransferImported         chan *transfer.Transfer
+	OnTransferMissing          chan MissingTransferEvent
 }
 
 func NewDownloader(
@@ -58,6 +67,7 @@ func NewDownloader(
 		OnTransferDownloadError:    make(chan *transfer.Transfer),
 		OnTransferDownloadFinished: make(chan *transfer.Transfer),
 		OnTransferImported:         make(chan *transfer.Transfer),
+		OnTransferMissing:          make(chan MissingTransferEvent),
 	}
 }
 
@@ -66,6 +76,7 @@ func (d *Downloader) Close() {
 	close(d.OnTransferDownloadError)
 	close(d.OnTransferDownloadFinished)
 	close(d.OnTransferImported)
+	close(d.OnTransferMissing)
 }
 
 // WatchDownloads watches for transfers and downloads them.
@@ -86,6 +97,20 @@ func (d *Downloader) WatchDownloads(ctx context.Context, incomingTransfers <-cha
 
 				downloadedFiles, err := d.DownloadTransfer(ctx, transfer)
 				if err != nil {
+					if errors.Is(err, putio.ErrTransferNotFound) {
+						logger.WarnContext(ctx, "transfer removed from Put.io", "transfer_id", transfer.ID, "transfer_name", transfer.Name)
+						d.OnTransferMissing <- MissingTransferEvent{Transfer: transfer, MissingType: "transfer_removed"}
+
+						continue
+					}
+
+					if errors.Is(err, putio.ErrTransferFilesNotFound) {
+						// Warn log already emitted inside DownloadTransfer for the specific file
+						d.OnTransferMissing <- MissingTransferEvent{Transfer: transfer, MissingType: "files_missing"}
+
+						continue
+					}
+
 					logger.ErrorContext(ctx, "failed to download transfer", "download_id", transfer.ID, "err", err)
 
 					d.OnTransferDownloadError <- transfer
@@ -110,7 +135,7 @@ func (d *Downloader) DownloadTransfer(ctx context.Context, transfer *transfer.Tr
 	wg, ctx := errgroup.WithContext(ctx)
 
 	if len(transfer.Files) == 0 {
-		return 0, fmt.Errorf("no files to download")
+		return 0, fmt.Errorf("transfer %s has no files (transfer removed from Put.io): %w", transfer.Name, putio.ErrTransferNotFound)
 	}
 
 	logger := logctx.LoggerFromContext(ctx)
@@ -135,6 +160,13 @@ func (d *Downloader) DownloadTransfer(ctx context.Context, transfer *transfer.Tr
 					logger.DebugContext(ctx, "file already downloaded", "download_id", transfer.ID, "file_path", file.Path)
 
 					return err
+				}
+
+				if errors.Is(err, putio.ErrTransferFilesNotFound) {
+					logger.WarnContext(ctx, "transfer files missing from Put.io", "transfer_id", transfer.ID, "transfer_name", transfer.Name, "file_path", file.Path)
+					os.RemoveAll(filepath.Join(d.downloadDir, transfer.Name))
+
+					return fmt.Errorf("file %s missing from Put.io: %w", file.Path, putio.ErrTransferFilesNotFound)
 				}
 
 				logger.ErrorContext(ctx, "failed to download file", "download_id", transfer.ID, "file_path", file.Path, "err", err)

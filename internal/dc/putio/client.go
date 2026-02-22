@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,6 +20,16 @@ import (
 )
 
 const maxTorrentSize = 10 * 1024 * 1024 // 10MB max torrent file size
+
+var (
+	// ErrTransferFilesNotFound indicates the transfer's files were deleted from Put.io
+	// but the transfer itself may still exist.
+	ErrTransferFilesNotFound = errors.New("transfer files not found on Put.io")
+
+	// ErrTransferNotFound indicates the transfer itself no longer exists on Put.io.
+	// Detected when a previously-claimed transfer arrives at DownloadTransfer with zero files.
+	ErrTransferNotFound = errors.New("transfer not found on Put.io")
+)
 
 type Client struct {
 	putioClient *putio.Client
@@ -93,7 +104,7 @@ func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*transfer
 		if t.FileID != 0 {
 			file, err := c.putioClient.Files.Get(ctx, t.FileID)
 			if err != nil {
-				logger.ErrorContext(ctx, "failed to get file", "transfer_id", t.ID, "err", err)
+				logger.WarnContext(ctx, "transfer files missing from Put.io during listing", "transfer_id", t.ID, "file_id", t.FileID, "err", err)
 
 				continue
 			}
@@ -149,7 +160,7 @@ func (c *Client) GrabFile(ctx context.Context, file *transfer.File) (io.ReadClos
 	if err != nil {
 		logger.ErrorContext(ctx, "failed to get file download url", "file_id", file.ID, "err", err)
 
-		return nil, fmt.Errorf("failed to get file download url: %w", err)
+		return nil, fmt.Errorf("file %d no longer available on Put.io: %w", file.ID, ErrTransferFilesNotFound)
 	}
 
 	resp, err := http.Get(url)
