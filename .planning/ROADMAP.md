@@ -216,4 +216,4 @@ Plans:
 | 12. In-Progress Visibility | v1.3 | 2/2 | Complete | 2026-02-08 |
 | 13. Folder Naming Fix | v1.4 | Complete    | 2026-02-22 | 2026-02-22 |
 | 14. Transfer Cleanup Fix | v1.4 | Complete    | 2026-02-22 | 2026-02-22 |
-| 15. Missing Transfer Handling | 1/1 | Complete   | 2026-02-22 | 2026-02-22 |
+| 15. Missing Transfer Handling | 1/1 | Complete    | 2026-02-22 | 2026-02-22 |

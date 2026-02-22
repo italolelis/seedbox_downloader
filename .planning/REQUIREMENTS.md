@@ -19,8 +19,8 @@ Requirements for download pipeline fixes. Each maps to roadmap phases.
 
 ### Missing Transfer Handling
 
-- [ ] **MTX-01**: Missing/deleted Put.io transfers are detected and logged at warn level
-- [ ] **MTX-02**: Discord notification sent when a tracked transfer no longer exists in Put.io
+- [x] **MTX-01**: Missing/deleted Put.io transfers are detected and logged at warn level
+- [x] **MTX-02**: Discord notification sent when a tracked transfer no longer exists in Put.io
 
 ## Future Requirements
 
@@ -44,8 +44,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DL-02 | Phase 13 | Complete |
 | CLN-01 | Phase 14 | Complete |
 | CLN-02 | Phase 14 | Complete |
-| MTX-01 | Phase 15 | Pending |
-| MTX-02 | Phase 15 | Pending |
+| MTX-01 | Phase 15 | Complete |
+| MTX-02 | Phase 15 | Complete |
 
 **Coverage:**
 - v1.4 requirements: 6 total
