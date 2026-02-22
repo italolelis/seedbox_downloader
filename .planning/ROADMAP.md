@@ -170,7 +170,7 @@ Plans:
 2. The Put.io file data associated with the transfer is deleted alongside the transfer
 3. Transfers that fail import are not prematurely deleted
 
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
 - [x] 14-01-PLAN.md — Fix immediate cleanup path, live ratio polling for WatchForSeeding, backoff retry with transfer-not-found handling
@@ -213,5 +213,5 @@ Plans:
 | 11. SaveParentID Tag Matching | v1.3 | 1/1 | Complete | 2026-02-08 |
 | 12. In-Progress Visibility | v1.3 | 2/2 | Complete | 2026-02-08 |
 | 13. Folder Naming Fix | v1.4 | Complete    | 2026-02-22 | 2026-02-22 |
-| 14. Transfer Cleanup Fix | v1.4 | 1/1 | Complete | 2026-02-22 |
+| 14. Transfer Cleanup Fix | v1.4 | Complete    | 2026-02-22 | 2026-02-22 |
 | 15. Missing Transfer Handling | v1.4 | 0/1 | Pending | — |

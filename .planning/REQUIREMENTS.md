@@ -14,8 +14,8 @@ Requirements for download pipeline fixes. Each maps to roadmap phases.
 
 ### Transfer Cleanup
 
-- [ ] **CLN-01**: Put.io transfer is removed after Sonarr/Radarr confirms import (not only after seeding stops)
-- [ ] **CLN-02**: Put.io file data is deleted alongside transfer removal
+- [x] **CLN-01**: Put.io transfer is removed after Sonarr/Radarr confirms import (not only after seeding stops)
+- [x] **CLN-02**: Put.io file data is deleted alongside transfer removal
 
 ### Missing Transfer Handling
 
@@ -42,8 +42,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 |-------------|-------|--------|
 | DL-01 | Phase 13 | Complete |
 | DL-02 | Phase 13 | Complete |
-| CLN-01 | Phase 14 | Pending |
-| CLN-02 | Phase 14 | Pending |
+| CLN-01 | Phase 14 | Complete |
+| CLN-02 | Phase 14 | Complete |
 | MTX-01 | Phase 15 | Pending |
 | MTX-02 | Phase 15 | Pending |
 
