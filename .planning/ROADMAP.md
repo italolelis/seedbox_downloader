@@ -191,8 +191,10 @@ Plans:
 3. The pipeline continues processing other transfers when one is found missing — it does not crash or stall
 4. Transfers that are present are not affected by the missing-transfer detection logic
 
+**Plans:** 1 plan
+
 Plans:
-- [ ] 15-01: Detect missing transfers, log warning, and send Discord notification
+- [ ] 15-01-PLAN.md — Detect missing transfers in error path, log at warn level, send Discord embed notification, mark DB as missing, clean up partial files
 
 ---
 
