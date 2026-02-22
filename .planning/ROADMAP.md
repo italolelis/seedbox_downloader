@@ -6,7 +6,7 @@
 - ✅ **v1.1 Torrent File Support** - Phases 4-6 (shipped 2026-02-01)
 - ✅ **v1.2 Logging Improvements** - Phases 7-10 (shipped 2026-02-08)
 - ✅ **v1.3 Activity Tab Support** - Phases 11-12 (shipped 2026-02-08)
-- **v1.4 Download Pipeline Fixes** - Phases 13-15 (in progress)
+- ✅ **v1.4 Download Pipeline Fixes** - Phases 13-15 (shipped 2026-02-22)
 
 ## Phases
 
@@ -191,10 +191,10 @@ Plans:
 3. The pipeline continues processing other transfers when one is found missing — it does not crash or stall
 4. Transfers that are present are not affected by the missing-transfer detection logic
 
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
-- [ ] 15-01-PLAN.md — Detect missing transfers in error path, log at warn level, send Discord embed notification, mark DB as missing, clean up partial files
+- [x] 15-01-PLAN.md — Detect missing transfers in error path, log at warn level, send Discord embed notification, mark DB as missing, clean up partial files
 
 ---
 
@@ -216,4 +216,4 @@ Plans:
 | 12. In-Progress Visibility | v1.3 | 2/2 | Complete | 2026-02-08 |
 | 13. Folder Naming Fix | v1.4 | Complete    | 2026-02-22 | 2026-02-22 |
 | 14. Transfer Cleanup Fix | v1.4 | Complete    | 2026-02-22 | 2026-02-22 |
-| 15. Missing Transfer Handling | v1.4 | 0/1 | Pending | — |
+| 15. Missing Transfer Handling | 1/1 | Complete   | 2026-02-22 | 2026-02-22 |
