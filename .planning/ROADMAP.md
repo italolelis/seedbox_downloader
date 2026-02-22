@@ -6,6 +6,7 @@
 - ✅ **v1.1 Torrent File Support** - Phases 4-6 (shipped 2026-02-01)
 - ✅ **v1.2 Logging Improvements** - Phases 7-10 (shipped 2026-02-08)
 - ✅ **v1.3 Activity Tab Support** - Phases 11-12 (shipped 2026-02-08)
+- **v1.4 Download Pipeline Fixes** - Phases 13-15 (in progress)
 
 ## Phases
 
@@ -131,6 +132,68 @@ Plans:
 
 </details>
 
+---
+
+## v1.4 Download Pipeline Fixes
+
+**Milestone Goal:** Fix download folder naming for single-file transfers, ensure Put.io transfer cleanup after import, and handle missing transfers gracefully
+
+### Phase 13: Folder Naming Fix
+
+**Goal:** Single-file transfers download into correctly named folders without file extensions
+
+**Dependencies:** None
+
+**Requirements:** DL-01, DL-02
+
+**Success Criteria:**
+1. A single-file transfer (e.g., `the_movie.mkv`) creates a folder named `the_movie/`, not `the_movie.mkv/`
+2. The folder naming fix applies to any file extension (.mkv, .mp4, .avi, .torrent, etc.)
+3. Multi-file transfers are unaffected — their folder names remain unchanged
+4. Sonarr/Radarr can successfully import content from the corrected folder path
+
+Plans:
+- [ ] 13-01: Strip file extension from single-file transfer folder name
+
+---
+
+### Phase 14: Transfer Cleanup Fix
+
+**Goal:** Put.io transfers and their file data are removed after Sonarr/Radarr confirms import
+
+**Dependencies:** None
+
+**Requirements:** CLN-01, CLN-02
+
+**Success Criteria:**
+1. After Sonarr/Radarr confirms an import, the Put.io transfer is deleted (not left pending seeding stop)
+2. The Put.io file data associated with the transfer is deleted alongside the transfer
+3. Transfers that fail import are not prematurely deleted
+
+Plans:
+- [ ] 14-01: Fix Put.io cleanup trigger and file deletion after import confirmation
+
+---
+
+### Phase 15: Missing Transfer Handling
+
+**Goal:** Missing or deleted Put.io transfers are detected, logged, and reported via Discord
+
+**Dependencies:** None
+
+**Requirements:** MTX-01, MTX-02
+
+**Success Criteria:**
+1. When a tracked transfer no longer exists in Put.io, a warn-level log entry is emitted with transfer details
+2. When a tracked transfer is missing, a Discord notification is sent identifying the transfer
+3. The pipeline continues processing other transfers when one is found missing — it does not crash or stall
+4. Transfers that are present are not affected by the missing-transfer detection logic
+
+Plans:
+- [ ] 15-01: Detect missing transfers, log warning, and send Discord notification
+
+---
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -147,3 +210,6 @@ Plans:
 | 10. HTTP Request Logging | v1.2 | 2/2 | Complete | 2026-02-08 |
 | 11. SaveParentID Tag Matching | v1.3 | 1/1 | Complete | 2026-02-08 |
 | 12. In-Progress Visibility | v1.3 | 2/2 | Complete | 2026-02-08 |
+| 13. Folder Naming Fix | v1.4 | 0/1 | Pending | — |
+| 14. Transfer Cleanup Fix | v1.4 | 0/1 | Pending | — |
+| 15. Missing Transfer Handling | v1.4 | 0/1 | Pending | — |

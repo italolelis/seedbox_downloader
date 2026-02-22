@@ -40,18 +40,18 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DL-01 | TBD | Pending |
-| DL-02 | TBD | Pending |
-| CLN-01 | TBD | Pending |
-| CLN-02 | TBD | Pending |
-| MTX-01 | TBD | Pending |
-| MTX-02 | TBD | Pending |
+| DL-01 | Phase 13 | Pending |
+| DL-02 | Phase 13 | Pending |
+| CLN-01 | Phase 14 | Pending |
+| CLN-02 | Phase 14 | Pending |
+| MTX-01 | Phase 15 | Pending |
+| MTX-02 | Phase 15 | Pending |
 
 **Coverage:**
 - v1.4 requirements: 6 total
-- Mapped to phases: 0
-- Unmapped: 6 ⚠️
+- Mapped to phases: 6
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-02-22*
-*Last updated: 2026-02-22 after initial definition*
+*Last updated: 2026-02-22 after roadmap creation*
