@@ -10,6 +10,7 @@
 /build/
 /bin/
 /dist/
+/seedbox_downloader
 
 # Go modules
 vendor/
