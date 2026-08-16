@@ -1,0 +1,33 @@
+# OpenTelemetry Collector configuration.
+#
+# This exists because the application exports over OTLP and nothing else -- it
+# opens no scrape endpoint of its own. The collector receives OTLP and re-exposes
+# the metrics in Prometheus format, so Prometheus scrapes the collector rather
+# than the application.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch:
+
+exporters:
+  # Prometheus scrapes this endpoint on the collector.
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    # resource_to_telemetry_conversion is deliberately NOT enabled. Promoting every
+    # resource attribute to a label collides with the labels the Go runtime metrics
+    # already carry ("duplicate label names in constant and variable labels"), and
+    # the exporter then drops those metrics entirely. Resource attributes are
+    # available on the target_info metric instead -- join against it in Grafana if
+    # you need service.name or service.version.
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus]

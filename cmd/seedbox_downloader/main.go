@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -69,9 +70,16 @@ type config struct {
 	}
 
 	Telemetry struct {
-		Enabled     bool   `split_words:"true" default:"true"`
+		// Telemetry is opt-in: enabled by default would point every unconfigured
+		// deployment at a collector that isn't there and warn about it forever.
+		Enabled     bool   `split_words:"true" default:"false"`
 		OTELAddress string `split_words:"true" default:"0.0.0.0:4317"`
-		ServiceName string `split_words:"true" default:"seedbox_downloader"`
+		// The OTLP exporter defaults to TLS. Ordinary collectors on a private
+		// network are plaintext, which is what the default address describes, so
+		// plaintext is the default here too. Set false for a collector reached
+		// over a network you do not trust.
+		OTELInsecure bool   `split_words:"true" default:"true"`
+		ServiceName  string `split_words:"true" default:"seedbox_downloader"`
 	}
 
 	Sonarr arrConfig `envconfig:"SONARR"`
@@ -159,10 +167,11 @@ func run(ctx context.Context) error {
 	return runMainLoop(ctx, cfg, servers)
 }
 
+// servers holds the HTTP listeners. There is only one: metrics leave over OTLP,
+// so nothing is scraped from this process and no second listener is opened.
 type servers struct {
-	api     *http.Server
-	metrics *http.Server
-	errors  chan error
+	api    *http.Server
+	errors chan error
 }
 
 func initializeConfig() (*config, *slog.Logger, error) {
@@ -182,12 +191,26 @@ func initializeConfig() (*config, *slog.Logger, error) {
 
 func initializeTelemetry(ctx context.Context, cfg *config) (*telemetry.Telemetry, error) {
 	tel, err := telemetry.New(ctx, telemetry.Config{
+		Enabled:        cfg.Telemetry.Enabled,
 		ServiceName:    cfg.Telemetry.ServiceName,
 		ServiceVersion: version,
 		OTELAddress:    cfg.Telemetry.OTELAddress,
+		Insecure:       cfg.Telemetry.OTELInsecure,
 	})
 	if err != nil {
 		logger := logctx.LoggerFromContext(ctx)
+
+		// Name the settings the operator actually sets, rather than making them
+		// map an internal error back onto environment variables themselves.
+		if errors.Is(err, telemetry.ErrMissingOTELAddress) {
+			logger.ErrorContext(ctx, "telemetry is enabled but has nowhere to export to",
+				"component", "telemetry",
+				"remedy", "set TELEMETRY_OTEL_ADDRESS to a collector address, or set TELEMETRY_ENABLED=false",
+				"err", err)
+
+			return nil, fmt.Errorf("failed to initialize telemetry: %w", err)
+		}
+
 		logger.ErrorContext(ctx, "telemetry initialization failed",
 			"component", "telemetry",
 			"service_name", cfg.Telemetry.ServiceName,
@@ -313,18 +336,7 @@ func runMainLoop(ctx context.Context, cfg *config, servers *servers) error {
 			logger.InfoContext(shutdownCtx, "starting graceful shutdown",
 				"shutdown_timeout", cfg.Web.ShutdownTimeout.String())
 
-			// Phase 1: Stop metrics server (if present)
-			if servers.metrics != nil {
-				logger.InfoContext(shutdownCtx, "stopping metrics server")
-
-				if err := servers.metrics.Shutdown(shutdownCtx); err != nil {
-					logger.ErrorContext(shutdownCtx, "failed to gracefully shutdown metrics server", "err", err)
-				}
-
-				logger.InfoContext(shutdownCtx, "metrics server stopped")
-			}
-
-			// Phase 2: Stop HTTP server
+			// Phase 1: Stop HTTP server
 			logger.InfoContext(shutdownCtx, "stopping HTTP server")
 
 			if err := servers.api.Shutdown(shutdownCtx); err != nil {
@@ -337,7 +349,7 @@ func runMainLoop(ctx context.Context, cfg *config, servers *servers) error {
 
 			logger.InfoContext(shutdownCtx, "HTTP server stopped")
 
-			// Phase 3: the background services stop on their own, since every one of
+			// Phase 2: the background services stop on their own, since every one of
 			// them selects on this context. Nothing closes their event channels --
 			// several goroutines send on each, so there is no correct closer.
 

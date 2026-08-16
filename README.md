@@ -29,7 +29,7 @@ Seedbox Downloader is an event-driven Go service that automatically downloads co
 - **Seed ratio enforcement** — Optionally wait for a target seed ratio before removing transfers
 - **Parallel downloads** — Configurable concurrency with progress tracking
 - **Discord notifications** — Rich embeds for download events, failures, and missing transfers
-- **Full observability** — OpenTelemetry traces, Prometheus metrics, Grafana dashboards included
+- **Observability** — OpenTelemetry metrics over OTLP, with a collector + Prometheus + Grafana stack included
 - **SQLite state tracking** — Atomic transfer claiming prevents duplicate processing
 - **Distroless Docker image** — Minimal, secure, non-root container
 
@@ -209,8 +209,9 @@ All configuration is done via environment variables.
 
 | Variable | Default | Description |
 |---|---|---|
-| `TELEMETRY_ENABLED` | `true` | Enable OpenTelemetry instrumentation |
-| `TELEMETRY_OTEL_ADDRESS` | `0.0.0.0:4317` | OTLP gRPC collector address |
+| `TELEMETRY_ENABLED` | `false` | Enable OpenTelemetry instrumentation. Opt-in — when off, nothing is exported and no connection is attempted. |
+| `TELEMETRY_OTEL_ADDRESS` | `0.0.0.0:4317` | OTLP gRPC collector address. Required when telemetry is enabled; startup fails if it is empty. |
+| `TELEMETRY_OTEL_INSECURE` | `true` | Send OTLP over plaintext gRPC. Ordinary local collectors are plaintext; set `false` for a collector reached over an untrusted network. |
 | `TELEMETRY_SERVICE_NAME` | `seedbox_downloader` | Service name in traces/metrics |
 
 ## Put.io + *Arr Integration
@@ -271,7 +272,10 @@ docker compose -f docker-compose.telemetry.yml up -d
 |---|---|
 | Grafana | `http://localhost:3000` (admin/admin) |
 | Prometheus | `http://localhost:9090` |
-| Metrics endpoint | `http://localhost:2112/metrics` |
+| Collector metrics | `http://localhost:8889/metrics` |
+
+Metrics leave the application over OTLP only; the collector re-exposes them for
+Prometheus to scrape. The application itself opens no metrics endpoint.
 
 ### Included Metrics
 

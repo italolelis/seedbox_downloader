@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -10,10 +11,8 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
-	"go.opentelemetry.io/otel/exporters/prometheus"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/metric/noop"
-	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
@@ -21,12 +20,13 @@ import (
 )
 
 // Telemetry holds all telemetry instruments and providers.
+//
+// Metrics leave the process over OTLP and nothing else. There is no Prometheus
+// scrape endpoint: point a collector at OTELAddress and scrape the collector.
 type Telemetry struct {
 	meterProvider metric.MeterProvider
 	tracer        trace.Tracer
 	meter         metric.Meter
-	exporter      *prometheus.Exporter
-	logProvider   *sdklog.LoggerProvider
 
 	// RED Metrics are now handled by otelhttp automatically
 
@@ -53,14 +53,33 @@ type Telemetry struct {
 	systemUptime metric.Float64Gauge
 }
 
+// ErrMissingOTELAddress is returned when telemetry is enabled but no collector
+// address was configured. Enabling telemetry with nowhere to send it is a
+// misconfiguration, not a request to silently discard metrics.
+var ErrMissingOTELAddress = errors.New("telemetry is enabled but no OTEL address is configured")
+
 // Config holds telemetry configuration.
 type Config struct {
+	// Enabled turns telemetry export on or off. When false, no exporter is
+	// constructed and no connection to OTELAddress is attempted.
+	Enabled        bool
 	ServiceName    string
 	ServiceVersion string
 	OTELAddress    string
+	// Insecure sends OTLP over plaintext gRPC rather than TLS. The OTLP exporter
+	// defaults to TLS, so talking to an ordinary local collector without this
+	// fails with "first record does not look like a TLS handshake" -- which is not
+	// an obvious diagnosis. Set false when the collector is reached over a network
+	// you do not trust.
+	Insecure bool
 }
 
 // New creates a new telemetry instance.
+//
+// When cfg.Enabled is false, no-op providers are installed: the instruments are
+// still created so callers need no nil handling, but nothing is exported and no
+// connection is opened. When cfg.Enabled is true and cfg.OTELAddress is empty,
+// New returns ErrMissingOTELAddress rather than silently discarding metrics.
 func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 	// Create resource with service attributes
 	extraResources, _ := resource.New(ctx,
@@ -85,15 +104,33 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 
 	var meterProvider metric.MeterProvider
 
-	if cfg.OTELAddress == "" {
-		slog.InfoContext(ctx, "Telemetry disabled - metrics and traces will not be collected")
+	switch {
+	case !cfg.Enabled:
+		slog.InfoContext(ctx, "telemetry disabled - metrics and traces will not be exported")
 
 		meterProvider = noop.NewMeterProvider()
-	} else {
+	case cfg.OTELAddress == "":
+		return nil, ErrMissingOTELAddress
+	default:
+		// Report export failures at WARN. An unreachable collector means metrics
+		// are silently not arriving, which is not routine -- but it also must not
+		// take the process down, so it stays a log line rather than an error.
+		otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
+			slog.WarnContext(ctx, "telemetry export failed",
+				"component", "telemetry",
+				"otel_address", cfg.OTELAddress,
+				"err", err)
+		}))
+
 		// Create OTLP exporter
-		exporter, err := otlpmetricgrpc.New(ctx, otlpmetricgrpc.WithEndpoint(cfg.OTELAddress))
+		opts := []otlpmetricgrpc.Option{otlpmetricgrpc.WithEndpoint(cfg.OTELAddress)}
+		if cfg.Insecure {
+			opts = append(opts, otlpmetricgrpc.WithInsecure())
+		}
+
+		exporter, err := otlpmetricgrpc.New(ctx, opts...)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create prometheus exporter: %w", err)
+			return nil, fmt.Errorf("failed to create OTLP metric exporter: %w", err)
 		}
 
 		// Create meter provider with resource
@@ -117,15 +154,11 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 	}
 
 	// Initialize all metrics
-	if err := t.initializeMetrics(); err != nil {
+	if err := t.initializeMetrics(cfg.Enabled); err != nil {
 		return nil, fmt.Errorf("failed to initialize metrics: %w", err)
 	}
 
 	return t, nil
-}
-
-func (t *Telemetry) LoggerProvider() *sdklog.LoggerProvider {
-	return t.logProvider
 }
 
 // RecordDownload records download metrics.
@@ -258,8 +291,11 @@ func (t *Telemetry) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-// initializeMetrics creates all metric instruments.
-func (t *Telemetry) initializeMetrics() error {
+// initializeMetrics creates all metric instruments. The instruments are created
+// even when telemetry is disabled -- they resolve to no-ops, which keeps callers
+// free of nil checks. Runtime collection is skipped when disabled, since polling
+// memstats to feed a no-op provider is pure waste.
+func (t *Telemetry) initializeMetrics(enabled bool) error {
 	// HTTP metrics are handled by otelhttp automatically
 	if err := t.initializeUSEMetrics(); err != nil {
 		return err
@@ -267,6 +303,10 @@ func (t *Telemetry) initializeMetrics() error {
 
 	if err := t.initializeBusinessMetrics(); err != nil {
 		return err
+	}
+
+	if !enabled {
+		return nil
 	}
 
 	return runtime.Start(runtime.WithMinimumReadMemStatsInterval(time.Second))
