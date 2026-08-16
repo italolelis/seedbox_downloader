@@ -6,8 +6,10 @@ on:
       - main
     tags:
       - "v*"
+  # No branches filter: pull requests are checked whatever they target, so that a
+  # stack of dependent PRs gets lint and tests at review time rather than only
+  # once each one is retargeted at main.
   pull_request:
-    branches: [ main ]
 
 jobs:
   lint:
