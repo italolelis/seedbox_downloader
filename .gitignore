@@ -61,3 +61,6 @@ downloads/
 
 # Auto Claude data directory
 .auto-claude/
+
+# Local, per-developer agent settings
+.claude/settings.local.json
