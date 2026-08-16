@@ -132,7 +132,7 @@ func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*transfer
 			Source:             t.Source,
 			Status:             t.Status,
 			EstimatedTime:      t.EstimatedTime,
-			SavePath:           "/" + tag,
+			RemoteFolder:       "/" + tag,
 			PeersConnected:     int64(t.PeersConnected),
 			PeersGettingFromUs: int64(t.PeersGettingFromUs),
 			PeersSendingToUs:   int64(t.PeersSendingToUs),
@@ -439,19 +439,6 @@ func (c *Client) filterMatchingTransferIds(transfers []putio.Transfer, transferI
 	return matchingTransfers
 }
 
-// stripFileExtension removes the final file extension from name.
-// For example, "the_movie.mkv" -> "the_movie", "the.movie.2024.mkv" -> "the.movie.2024".
-// If stripping would produce an empty string (e.g. dot-prefixed files like ".hidden"),
-// the original name is returned unchanged to avoid an empty folder name.
-func stripFileExtension(name string) string {
-	stripped := strings.TrimSuffix(name, filepath.Ext(name))
-	if stripped == "" {
-		return name
-	}
-
-	return stripped
-}
-
 func (c *Client) findDirectoryID(ctx context.Context, downloadDir string) (int64, error) {
 	search, err := c.putioClient.Files.Search(ctx, downloadDir, 1)
 	if err != nil {
@@ -480,10 +467,14 @@ func (c *Client) getFilesRecursively(ctx context.Context, parentID int64, basePa
 	}
 
 	if !file.IsDir() {
-		folderName := stripFileExtension(basePath)
+		// basePath is this node's own path relative to the transfer root, so a
+		// single-file transfer resolves to just the file name. No enclosing folder
+		// is invented: that is what Transmission does with a single-file torrent,
+		// and inventing one is what made the advertised path and the written path
+		// disagree.
 		result = append(result, &transfer.File{
 			ID:   file.ID,
-			Path: filepath.Join(folderName, file.Name),
+			Path: basePath,
 			Size: file.Size,
 		})
 
