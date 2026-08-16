@@ -70,8 +70,10 @@ type TransferOrchestrator struct {
 	label           string
 	pollingInterval time.Duration
 
-	OnDownloadQueued   chan *Transfer
-	OnTransferImported chan *Transfer
+	// OnDownloadQueued is deliberately never closed: context cancellation stops
+	// the producer, and closing a channel from a goroutine that also sends on it
+	// is how shutdown panics happen.
+	OnDownloadQueued chan *Transfer
 }
 
 func NewTransferOrchestrator(repo storage.DownloadRepository, dc DownloadClient, label string, pollingInterval time.Duration) *TransferOrchestrator {
@@ -81,14 +83,8 @@ func NewTransferOrchestrator(repo storage.DownloadRepository, dc DownloadClient,
 		label:           label,
 		pollingInterval: pollingInterval,
 
-		OnDownloadQueued:   make(chan *Transfer),
-		OnTransferImported: make(chan *Transfer),
+		OnDownloadQueued: make(chan *Transfer),
 	}
-}
-
-func (o *TransferOrchestrator) Close() {
-	close(o.OnDownloadQueued)
-	close(o.OnTransferImported)
 }
 
 func (o *TransferOrchestrator) ProduceTransfers(ctx context.Context) {

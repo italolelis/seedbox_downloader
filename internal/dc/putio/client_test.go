@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/italolelis/seedbox_downloader/internal/transfer"
-	putio "github.com/putdotio/go-putio"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -139,11 +138,9 @@ func TestAddTransferByBytes_FileTooLarge(t *testing.T) {
 }
 
 func newTestClient(serverURL string) *Client {
-	goputioClient := putio.NewClient(nil)
 	u, _ := url.Parse(serverURL)
-	goputioClient.BaseURL = u
 
-	return &Client{putioClient: goputioClient}
+	return NewClient("test-token", WithBaseURL(u))
 }
 
 func TestStripFileExtension(t *testing.T) {

@@ -133,12 +133,11 @@ func run(ctx context.Context) error {
 
 	logger.InfoContext(ctx, "initializing services")
 
-	services, err := initializeServices(ctx, cfg, tel)
-	if err != nil {
+	// The services run as goroutines that stop on context cancellation; there is
+	// nothing to tear down here, so no handle is kept.
+	if err := initializeServices(ctx, cfg, tel); err != nil {
 		return err
 	}
-
-	defer services.Close()
 
 	logger.InfoContext(ctx, "starting HTTP server")
 
@@ -156,27 +155,6 @@ func run(ctx context.Context) error {
 	)
 
 	return runMainLoop(ctx, cfg, servers)
-}
-
-type services struct {
-	downloader           *downloader.Downloader
-	transferOrchestrator *transfer.TransferOrchestrator
-}
-
-func (s *services) Close() {
-	// Use default logger with shutdown group since context may be cancelled
-	logger := slog.Default().WithGroup("shutdown")
-
-	logger.Info("stopping services")
-	logger.Info("stopping downloader")
-	s.downloader.Close()
-	logger.Info("downloader stopped")
-
-	logger.Info("stopping transfer orchestrator")
-	s.transferOrchestrator.Close()
-	logger.Info("transfer orchestrator stopped")
-
-	logger.Info("services stopped")
 }
 
 type servers struct {
@@ -220,7 +198,7 @@ func initializeTelemetry(ctx context.Context, cfg *config) (*telemetry.Telemetry
 	return tel, nil
 }
 
-func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemetry) (*services, error) {
+func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemetry) error {
 	logger := logctx.LoggerFromContext(ctx)
 
 	logger.InfoContext(ctx, "initializing database")
@@ -234,7 +212,7 @@ func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemet
 			"max_idle_conns", cfg.DBMaxIdleConns,
 			"err", err)
 
-		return nil, fmt.Errorf("failed to initialize the database: %w", err)
+		return fmt.Errorf("failed to initialize the database: %w", err)
 	}
 
 	logger.InfoContext(ctx, "database ready",
@@ -254,7 +232,7 @@ func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemet
 			"client_type", cfg.DownloadClient,
 			"err", err)
 
-		return nil, fmt.Errorf("failed to build download client: %w", err)
+		return fmt.Errorf("failed to build download client: %w", err)
 	}
 
 	instrumentedDC := transfer.NewInstrumentedDownloadClient(dc, tel, cfg.DownloadClient)
@@ -264,7 +242,7 @@ func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemet
 			"client_type", cfg.DownloadClient,
 			"err", err)
 
-		return nil, fmt.Errorf("failed to authenticate with the download client: %w", err)
+		return fmt.Errorf("failed to authenticate with the download client: %w", err)
 	}
 
 	logger.InfoContext(ctx, "download client ready", "client_type", cfg.DownloadClient)
@@ -290,10 +268,7 @@ func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemet
 	transferOrchestrator.ProduceTransfers(ctx)
 	downloader.WatchDownloads(ctx, transferOrchestrator.OnDownloadQueued)
 
-	return &services{
-		downloader:           downloader,
-		transferOrchestrator: transferOrchestrator,
-	}, nil
+	return nil
 }
 
 func startServers(ctx context.Context, cfg *config, tel *telemetry.Telemetry) (*servers, error) {
@@ -360,7 +335,9 @@ func runMainLoop(ctx context.Context, cfg *config, servers *servers) error {
 
 			logger.InfoContext(shutdownCtx, "HTTP server stopped")
 
-			// Phase 3: Services are stopped via defer in run() - services.Close() logs its own shutdown
+			// Phase 3: the background services stop on their own, since every one of
+			// them selects on this context. Nothing closes their event channels --
+			// several goroutines send on each, so there is no correct closer.
 
 			logger.InfoContext(shutdownCtx, "graceful shutdown complete")
 
@@ -551,7 +528,7 @@ func buildDownloadClient(cfg *config) (transfer.DownloadClient, error) {
 	case "deluge":
 		return deluge.NewClient(cfg.DelugeBaseURL, cfg.DelugeAPIURLPath, cfg.DelugeCompletedDir, cfg.DelugeUsername, cfg.DelugePassword, true), nil
 	case "putio":
-		return putio.NewClient(cfg.PutioToken, true), nil
+		return putio.NewClient(cfg.PutioToken), nil
 	}
 
 	return nil, fmt.Errorf("invalid download client: %s", cfg.DownloadClient)
