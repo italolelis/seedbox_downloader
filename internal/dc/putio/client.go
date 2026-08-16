@@ -8,10 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/italolelis/seedbox_downloader/internal/logctx"
 	"github.com/italolelis/seedbox_downloader/internal/transfer"
@@ -31,17 +34,54 @@ var (
 	ErrTransferNotFound = errors.New("transfer not found on Put.io")
 )
 
+// Timeouts for fetching file content. Deliberately NOT a whole-request timeout:
+// http.Client.Timeout covers reading the body too, so any value large enough for
+// a multi-gigabyte release would be useless as a liveness check, and any value
+// small enough to be useful would abort legitimate downloads part-way through.
+// These bound only the phases that should be quick, leaving the body read
+// governed by the caller's context.
+const (
+	dialTimeout           = 15 * time.Second
+	tlsHandshakeTimeout   = 15 * time.Second
+	responseHeaderTimeout = 60 * time.Second
+)
+
 type Client struct {
 	putioClient *putio.Client
+	httpClient  *http.Client
 }
 
-func NewClient(token string, insecure ...bool) *Client {
-	client := &Client{}
+// Option configures a Client.
+type Option func(*Client)
 
+// WithBaseURL points the client at an alternate Put.io API endpoint instead of
+// the live service. Intended for tests, and for deployments that route API
+// traffic through a proxy.
+func WithBaseURL(u *url.URL) Option {
+	return func(c *Client) {
+		c.putioClient.BaseURL = u
+	}
+}
+
+func NewClient(token string, opts ...Option) *Client {
 	// Initialize Put.io client
 	tokenSource := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
 	oauthClient := oauth2.NewClient(context.Background(), tokenSource)
-	client.putioClient = putio.NewClient(oauthClient)
+
+	client := &Client{
+		putioClient: putio.NewClient(oauthClient),
+		httpClient: &http.Client{
+			Transport: &http.Transport{
+				DialContext:           (&net.Dialer{Timeout: dialTimeout}).DialContext,
+				TLSHandshakeTimeout:   tlsHandshakeTimeout,
+				ResponseHeaderTimeout: responseHeaderTimeout,
+			},
+		},
+	}
+
+	for _, opt := range opts {
+		opt(client)
+	}
 
 	return client
 }
@@ -153,6 +193,10 @@ func (c *Client) GetTransferInfo(ctx context.Context, transferID string) (float6
 }
 
 // GrabFile implements DownloadClient.GrabFile for Put.io.
+//
+// The response status is checked before the body is handed back. Without that,
+// an error page becomes the file's content: the copy succeeds, the transfer is
+// reported as downloaded, and what lands on disk is HTML named like a video.
 func (c *Client) GrabFile(ctx context.Context, file *transfer.File) (io.ReadCloser, error) {
 	logger := logctx.LoggerFromContext(ctx)
 
@@ -163,11 +207,35 @@ func (c *Client) GrabFile(ctx context.Context, file *transfer.File) (io.ReadClos
 		return nil, fmt.Errorf("file %d no longer available on Put.io: %w", file.ID, ErrTransferFilesNotFound)
 	}
 
-	resp, err := http.Get(url)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build file request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		logger.ErrorContext(ctx, "failed to get file", "file_id", file.ID, "err", err)
 
 		return nil, fmt.Errorf("failed to get file: %w", err)
+	}
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		defer resp.Body.Close()
+
+		// A gone file is a different condition from a broken one: the transfer's
+		// data has been deleted, which the pipeline reports as a missing transfer
+		// rather than retrying forever.
+		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
+			logger.WarnContext(ctx, "file no longer exists on Put.io",
+				"file_id", file.ID, "file_path", file.Path, "status", resp.Status)
+
+			return nil, fmt.Errorf("file %d is gone from Put.io (%s): %w", file.ID, resp.Status, ErrTransferFilesNotFound)
+		}
+
+		logger.ErrorContext(ctx, "unexpected status fetching file",
+			"file_id", file.ID, "file_path", file.Path, "status", resp.Status)
+
+		return nil, fmt.Errorf("failed to get file %d: unexpected status %s", file.ID, resp.Status)
 	}
 
 	return resp.Body, nil

@@ -36,6 +36,13 @@ const (
 	dirPerm = 0755
 )
 
+// ErrSizeMismatch reports that a file was written whose byte count does not match
+// the size the seedbox reported for it. Distinct from a network failure: the copy
+// completed without error, and the shortfall is the only evidence anything is
+// wrong -- so a transfer must never be considered downloaded on the strength of a
+// clean copy alone.
+var ErrSizeMismatch = errors.New("downloaded file size does not match the size reported by the seedbox")
+
 type Downloader struct {
 	downloadDir string
 	dc          transfer.DownloadClient
@@ -43,7 +50,9 @@ type Downloader struct {
 	arrServices []*arr.Client
 	maxParallel int
 
-	OnFileDownloadError        chan *transfer.File
+	// Event channels. These are deliberately never closed: several goroutines
+	// send on them, so no single goroutine can correctly own closing them.
+	// Context cancellation stops the producers and the channels are collected.
 	OnTransferDownloadError    chan *transfer.Transfer
 	OnTransferDownloadFinished chan *transfer.Transfer
 	OnTransferImported         chan *transfer.Transfer
@@ -63,20 +72,11 @@ func NewDownloader(
 		maxParallel:                maxParallel,
 		tc:                         tc,
 		arrServices:                arrServices,
-		OnFileDownloadError:        make(chan *transfer.File),
 		OnTransferDownloadError:    make(chan *transfer.Transfer),
 		OnTransferDownloadFinished: make(chan *transfer.Transfer),
 		OnTransferImported:         make(chan *transfer.Transfer),
 		OnTransferMissing:          make(chan MissingTransferEvent),
 	}
-}
-
-func (d *Downloader) Close() {
-	close(d.OnFileDownloadError)
-	close(d.OnTransferDownloadError)
-	close(d.OnTransferDownloadFinished)
-	close(d.OnTransferImported)
-	close(d.OnTransferMissing)
 }
 
 // WatchDownloads watches for transfers and downloads them.
@@ -156,7 +156,7 @@ func (d *Downloader) DownloadTransfer(ctx context.Context, transfer *transfer.Tr
 
 			targetPath := filepath.Join(d.downloadDir, file.Path)
 			if err := d.DownloadFile(ctx, transfer.ID, file, targetPath); err != nil {
-				if err == storage.ErrDownloaded {
+				if errors.Is(err, storage.ErrDownloaded) {
 					logger.DebugContext(ctx, "file already downloaded", "download_id", transfer.ID, "file_path", file.Path)
 
 					return err
@@ -164,7 +164,10 @@ func (d *Downloader) DownloadTransfer(ctx context.Context, transfer *transfer.Tr
 
 				if errors.Is(err, putio.ErrTransferFilesNotFound) {
 					logger.WarnContext(ctx, "transfer files missing from Put.io", "transfer_id", transfer.ID, "transfer_name", transfer.Name, "file_path", file.Path)
-					os.RemoveAll(filepath.Join(d.downloadDir, transfer.Name))
+
+					if rmErr := os.RemoveAll(filepath.Join(d.downloadDir, transfer.Name)); rmErr != nil {
+						logger.WarnContext(ctx, "failed to remove partial transfer output", "transfer_id", transfer.ID, "err", rmErr)
+					}
 
 					return fmt.Errorf("file %s missing from Put.io: %w", file.Path, putio.ErrTransferFilesNotFound)
 				}
@@ -206,15 +209,48 @@ func (d *Downloader) DownloadFile(ctx context.Context, transferID string, file *
 		return fmt.Errorf("failed to create target file: %w", err)
 	}
 
-	defer out.Close()
-
-	if err := d.writeFile(ctx, out, fileReader, file.Path, targetPath, file.Size); err != nil {
-		d.OnFileDownloadError <- file
+	// The error is returned, not published. A per-file event channel used to be
+	// sent to here with nothing receiving from it, which blocked this goroutine
+	// forever -- taking the errgroup, the whole transfer, and every subsequent
+	// transfer down with it. The error group already carries this up to the
+	// transfer level, which is the only level anything acts on.
+	written, err := d.writeFile(ctx, out, fileReader, file.Path, targetPath, file.Size)
+	if err != nil {
+		out.Close()
 
 		return fmt.Errorf("failed to download file: %w", err)
 	}
 
-	logger.DebugContext(ctx, "file downloaded", "target", targetPath)
+	// Closed explicitly rather than deferred, because its error matters: bytes are
+	// not durable until close returns, so a failed final flush -- the classic full
+	// disk -- is a failed download, not a successful one.
+	if err := out.Close(); err != nil {
+		logger.ErrorContext(ctx, "failed to close downloaded file",
+			"target", targetPath, "written_bytes", written, "err", err)
+
+		return fmt.Errorf("failed to close target file %s: %w", targetPath, err)
+	}
+
+	// The seedbox told us how big this file is, so a mismatch is decisive: it
+	// catches truncation, a body that ended early, and content that was never the
+	// file at all. Without it, any of those is reported as a successful download.
+	if file.Size > 0 && written != file.Size {
+		logger.ErrorContext(ctx, "downloaded file is not the size the seedbox reported",
+			"target", targetPath,
+			"expected_bytes", file.Size,
+			"written_bytes", written,
+			"missing_bytes", file.Size-written)
+
+		// This specific file is known-bad, so it does not stay on disk under a
+		// media file's name. Other files in the same transfer are left alone.
+		if rmErr := os.Remove(targetPath); rmErr != nil {
+			logger.WarnContext(ctx, "failed to remove short file", "target", targetPath, "err", rmErr)
+		}
+
+		return fmt.Errorf("%w: %s expected %d bytes, wrote %d", ErrSizeMismatch, file.Path, file.Size, written)
+	}
+
+	logger.DebugContext(ctx, "file downloaded", "target", targetPath, "written_bytes", written)
 
 	return nil
 }
@@ -425,7 +461,9 @@ func (d *Downloader) ensureTargetDir(ctx context.Context, targetPath string, log
 	return nil
 }
 
-func (d *Downloader) writeFile(ctx context.Context, out *os.File, reader io.Reader, url, targetPath string, totalBytes int64) error {
+// writeFile copies reader into out, reporting how many bytes were written so the
+// caller can check that against the size the seedbox promised.
+func (d *Downloader) writeFile(ctx context.Context, out *os.File, reader io.Reader, url, targetPath string, totalBytes int64) (int64, error) {
 	logger := logctx.LoggerFromContext(ctx)
 
 	logger.DebugContext(ctx, "downloading file", "file_path", targetPath, "file_size", humanize.Bytes(uint64(totalBytes)))
@@ -444,9 +482,10 @@ func (d *Downloader) writeFile(ctx context.Context, out *os.File, reader io.Read
 	}
 	pr := progress.NewReader(reader, totalBytes, progressInterval, progressCb)
 
-	if _, err := io.Copy(out, pr); err != nil {
-		return fmt.Errorf("failed to copy file: %w", err)
+	written, err := io.Copy(out, pr)
+	if err != nil {
+		return written, fmt.Errorf("failed to copy file: %w", err)
 	}
 
-	return nil
+	return written, nil
 }
