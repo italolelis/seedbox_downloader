@@ -104,10 +104,13 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          # Must be a build arg, not an env var: the build does not see the
+          # runner's environment, so VERSION was expanding to empty and every
+          # published image reported no version at all.
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
           push: ${{ github.event_name == 'push' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-        env:
-          VERSION: ${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.version'] }}
