@@ -88,7 +88,7 @@ func TestGetTaggedTorrents(t *testing.T) {
 			},
 			"mytag",
 			1,
-			map[string]string{"ID": "abc123", "FileName": "file1.mkv", "Label": "mytag", "SavePath": "/downloads"},
+			map[string]string{"ID": "abc123", "FileName": "file1.mkv", "Label": "mytag", "RemoteFolder": "/downloads"},
 		},
 		{
 			"no match",
@@ -119,7 +119,7 @@ func TestGetTaggedTorrents(t *testing.T) {
 			if tt.expectCount > 0 && tt.expectFields != nil {
 				assert.Equal(t, tt.expectFields["ID"], torrents[0].ID)
 				assert.Equal(t, tt.expectFields["Label"], torrents[0].Label)
-				assert.Equal(t, tt.expectFields["SavePath"], torrents[0].SavePath)
+				assert.Equal(t, tt.expectFields["RemoteFolder"], torrents[0].RemoteFolder)
 			}
 		})
 	}

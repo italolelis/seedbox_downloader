@@ -156,25 +156,7 @@ func (d *Downloader) DownloadTransfer(ctx context.Context, transfer *transfer.Tr
 
 			targetPath := filepath.Join(d.downloadDir, file.Path)
 			if err := d.DownloadFile(ctx, transfer.ID, file, targetPath); err != nil {
-				if errors.Is(err, storage.ErrDownloaded) {
-					logger.DebugContext(ctx, "file already downloaded", "download_id", transfer.ID, "file_path", file.Path)
-
-					return err
-				}
-
-				if errors.Is(err, putio.ErrTransferFilesNotFound) {
-					logger.WarnContext(ctx, "transfer files missing from Put.io", "transfer_id", transfer.ID, "transfer_name", transfer.Name, "file_path", file.Path)
-
-					if rmErr := os.RemoveAll(filepath.Join(d.downloadDir, transfer.Name)); rmErr != nil {
-						logger.WarnContext(ctx, "failed to remove partial transfer output", "transfer_id", transfer.ID, "err", rmErr)
-					}
-
-					return fmt.Errorf("file %s missing from Put.io: %w", file.Path, putio.ErrTransferFilesNotFound)
-				}
-
-				logger.ErrorContext(ctx, "failed to download file", "download_id", transfer.ID, "file_path", file.Path, "err", err)
-
-				return err
+				return d.classifyFileError(ctx, logger, transfer, file, err)
 			}
 
 			atomic.AddInt32(&downloadedFiles, 1)
@@ -448,6 +430,52 @@ func (d *Downloader) checkForImported(ctx context.Context, transfer *transfer.Tr
 	}
 
 	return false, nil
+}
+
+// classifyFileError turns a per-file failure into the error the transfer level
+// acts on. Two conditions are distinguished from a plain failure: content already
+// on disk, and a transfer whose data has been deleted from the seedbox -- the
+// latter is reported as missing rather than retried forever.
+func (d *Downloader) classifyFileError(
+	ctx context.Context, logger *slog.Logger, t *transfer.Transfer, file *transfer.File, err error,
+) error {
+	if errors.Is(err, storage.ErrDownloaded) {
+		logger.DebugContext(ctx, "file already downloaded", "download_id", t.ID, "file_path", file.Path)
+
+		return err
+	}
+
+	if errors.Is(err, putio.ErrTransferFilesNotFound) {
+		logger.WarnContext(ctx, "transfer files missing from Put.io",
+			"transfer_id", t.ID, "transfer_name", t.Name, "file_path", file.Path)
+		d.removeLocalOutput(ctx, logger, t)
+
+		return fmt.Errorf("file %s missing from Put.io: %w", file.Path, putio.ErrTransferFilesNotFound)
+	}
+
+	logger.ErrorContext(ctx, "failed to download file",
+		"download_id", t.ID, "file_path", file.Path, "err", err)
+
+	return err
+}
+
+// removeLocalOutput deletes what was written for a transfer, addressed by the name
+// derived from its file paths. Addressing it by transfer name removed the wrong
+// path -- or nothing at all -- whenever the two disagreed, which is the same
+// divergence that stopped imports working.
+func (d *Downloader) removeLocalOutput(ctx context.Context, logger *slog.Logger, t *transfer.Transfer) {
+	name, derived := t.LocalName()
+	if !derived {
+		logger.WarnContext(ctx, "cannot locate local output to remove, leaving it in place",
+			"transfer_id", t.ID, "transfer_name", t.Name)
+
+		return
+	}
+
+	if err := os.RemoveAll(filepath.Join(d.downloadDir, name)); err != nil {
+		logger.WarnContext(ctx, "failed to remove partial transfer output",
+			"transfer_id", t.ID, "local_name", name, "err", err)
+	}
 }
 
 func (d *Downloader) ensureTargetDir(ctx context.Context, targetPath string, logger *slog.Logger) error {

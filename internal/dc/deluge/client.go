@@ -160,12 +160,12 @@ func (t *Torrent) ToTorrent() *transfer.Transfer {
 	}
 
 	return &transfer.Transfer{
-		ID:       t.ID,
-		Name:     t.Name,
-		Label:    t.Label,
-		SavePath: t.SavePath,
-		Progress: t.Progress,
-		Files:    files,
+		ID:           t.ID,
+		Name:         t.Name,
+		Label:        t.Label,
+		RemoteFolder: t.SavePath,
+		Progress:     t.Progress,
+		Files:        files,
 	}
 }
 

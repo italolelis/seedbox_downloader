@@ -94,7 +94,6 @@ docker run --rm \
 docker run --rm -p 9091:9091 \
   -e DOWNLOAD_CLIENT=putio \
   -e PUTIO_TOKEN=your-token \
-  -e PUTIO_BASE_DIR=/downloads \
   -e TARGET_LABEL=sonarr \
   -e DOWNLOAD_DIR=/downloads \
   -e TRANSMISSION_USERNAME=admin \
@@ -124,7 +123,6 @@ services:
     environment:
       DOWNLOAD_CLIENT: "putio"
       PUTIO_TOKEN: "your-putio-token"
-      PUTIO_BASE_DIR: "/downloads"
       TARGET_LABEL: "sonarr"
       DOWNLOAD_DIR: "/downloads"
       KEEP_DOWNLOADED_FOR: "168h"
@@ -184,7 +182,6 @@ All configuration is done via environment variables.
 | Variable | Default | Description |
 |---|---|---|
 | `PUTIO_TOKEN` | *required* | Your Put.io OAuth token |
-| `PUTIO_BASE_DIR` | *required* | Directory in Put.io for file storage |
 | `PUTIO_SEED_RATIO` | `0` | Target seed ratio before cleanup (0 = immediate) |
 
 ### Transmission Proxy (for *Arr)
@@ -241,10 +238,26 @@ The Transmission RPC proxy lets Sonarr, Radarr, and other *Arr apps use Put.io a
 
 | Variable | Where | Purpose |
 |---|---|---|
-| `PUTIO_BASE_DIR` | Put.io cloud | Where files are stored in Put.io |
-| `DOWNLOAD_DIR` | Local filesystem | Where files are downloaded to |
+| `TARGET_LABEL` | Put.io cloud | The folder on your Put.io account this instance pulls from |
+| `DOWNLOAD_DIR` | Local filesystem | Where files are written, and the path advertised to Sonarr/Radarr |
 
-Both paths typically point to `/downloads`. *Arr reads from the local `DOWNLOAD_DIR` after files are downloaded.
+`DOWNLOAD_DIR` is the only path reported over the Transmission RPC, because it is the
+only one that exists from an \*arr app's point of view. If your Sonarr/Radarr container
+mounts that same volume at a **different** path, configure a remote path mapping in the
+\*arr app translating `DOWNLOAD_DIR` to whatever it sees. If both containers mount it at
+the same path, no mapping is needed.
+
+**See [docs/PATHS.md](docs/PATHS.md)** for the full path contract — how single-file and
+multi-file transfers are laid out, how Put.io collision suffixes are handled, worked
+remote-path-mapping examples, and how to recover content downloaded by an earlier
+version.
+
+> **Upgrading from a version before the path fix?** This is a breaking change. Earlier
+> releases advertised `/<TARGET_LABEL>` — a Put.io-side path that never existed locally
+> — so any working setup had a remote path mapping compensating for it. That mapping is
+> now wrong: delete it if your mounts agree, or repoint it at `DOWNLOAD_DIR`.
+> `PUTIO_BASE_DIR` has been removed and now has no effect. See
+> [docs/PATHS.md](docs/PATHS.md#if-you-are-upgrading).
 
 ## Monitoring
 

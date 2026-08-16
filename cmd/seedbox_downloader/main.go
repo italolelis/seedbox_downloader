@@ -37,8 +37,10 @@ type config struct {
 	DelugePassword     string `envconfig:"DELUGE_PASSWORD"`
 	DelugeCompletedDir string `envconfig:"DELUGE_COMPLETED_DIR"`
 
-	PutioToken     string  `envconfig:"PUTIO_TOKEN"`
-	PutioBaseDir   string  `envconfig:"PUTIO_BASE_DIR"`
+	PutioToken string `envconfig:"PUTIO_TOKEN"`
+	// PUTIO_BASE_DIR is deliberately absent. Its only use was being advertised to
+	// the *arr apps as a download directory, which was the bug: it is a Put.io-side
+	// path and means nothing locally. Transfers are filed under TARGET_LABEL.
 	PutioSeedRatio float64 `envconfig:"PUTIO_SEED_RATIO" default:"0"`
 
 	TargetLabel       string         `envconfig:"TARGET_LABEL"`
@@ -557,7 +559,9 @@ func setupServer(ctx context.Context, cfg *config, tel *telemetry.Telemetry) (*h
 	}
 
 	if putioClient, ok := originalClient.(*putio.Client); ok {
-		tHandler = rest.NewTransmissionHandler(cfg.Transmission.Username, cfg.Transmission.Password, putioClient, cfg.TargetLabel, cfg.PutioBaseDir, tel)
+		// DownloadDir, not a Put.io path: this is advertised to the *arr apps, and
+		// the only path meaningful to them is the one we actually wrote to.
+		tHandler = rest.NewTransmissionHandler(cfg.Transmission.Username, cfg.Transmission.Password, putioClient, cfg.TargetLabel, cfg.DownloadDir, tel)
 		r.Mount("/", tHandler.Routes())
 	} else {
 		logger := logctx.LoggerFromContext(ctx)

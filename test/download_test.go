@@ -102,17 +102,15 @@ func TestDownload_NestedFoldersPreserveTheirStructure(t *testing.T) {
 	assertFile(t, filepath.Join(root, "Show.Complete", "Season 2", "s02e01.mkv"), "two one")
 }
 
-// Characterisation test, not an endorsement. A single-file transfer is currently
-// written into a wrapper folder named after the file with its extension stripped,
-// which is the divergence behind the import failures. Removing that wrapper is a
-// separate change; when it lands this is the test that flips, which is exactly
-// where the change should be visible.
-func TestDownload_SingleFileTransferCurrentlyGetsAWrapperFolder(t *testing.T) {
+// A single-file transfer lands directly in the root, with its extension intact
+// and no invented wrapper folder -- what Transmission does with a single-file
+// torrent. The transfer name and the stored file name deliberately differ here,
+// the way they do when the seedbox appends a collision suffix: the on-disk name
+// must follow the file, not the transfer.
+func TestDownload_SingleFileTransferHasNoWrapperFolder(t *testing.T) {
 	const stored = "Silo.S03E07.1080p-SiGLA ojqRfI77.mkv"
 
 	sb := seedbox.New(t, "itv", seedbox.Transfer{
-		// The transfer name and the stored file name deliberately differ, the way
-		// they do when the seedbox appends a collision suffix.
 		Name: "Silo.S03E07.1080p-SiGLA.mkv",
 		Root: seedbox.Entry{Name: stored, Content: "episode bytes"},
 	})
@@ -128,16 +126,46 @@ func TestDownload_SingleFileTransferCurrentlyGetsAWrapperFolder(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 
-	assertFile(t,
-		filepath.Join(root, "Silo.S03E07.1080p-SiGLA ojqRfI77", stored),
-		"episode bytes")
+	// The file itself, directly in the root, extension and collision suffix intact.
+	assertFile(t, filepath.Join(root, stored), "episode bytes")
 
-	// The wrapper is an invented directory: nothing advertises it, and the file the
-	// seedbox actually stored is one level down from where a client would look.
+	// Nothing else was created -- in particular no folder named after the file.
 	entries, err := os.ReadDir(root)
 	require.NoError(t, err)
-	require.Len(t, entries, 1)
-	assert.True(t, entries[0].IsDir(), "today a single file arrives wrapped in a folder")
+	require.Len(t, entries, 1, "a single-file transfer must produce exactly one entry")
+	assert.Equal(t, stored, entries[0].Name())
+	assert.False(t, entries[0].IsDir(), "the entry must be the file, not a wrapper folder")
+
+	// And the advertised name resolves to it, which is the invariant #24 asserts
+	// end to end. Removing this file therefore leaves no empty directory behind.
+	name, derived := transfers[0].LocalName()
+	require.True(t, derived)
+	assert.Equal(t, stored, name)
+
+	require.NoError(t, os.Remove(filepath.Join(root, name)))
+
+	entries, err = os.ReadDir(root)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "cleaning up an imported single-file transfer must leave nothing behind")
+}
+
+func TestDownload_SingleFileTransferWithoutAnExtension(t *testing.T) {
+	sb := seedbox.New(t, "itv", seedbox.Transfer{
+		Name: "No.Extension",
+		Root: seedbox.Entry{Name: "no_extension_file", Content: "some bytes"},
+	})
+
+	dl, root := newDownloader(t, sb)
+
+	transfers := fetch(t, sb)
+	require.Len(t, transfers, 1)
+
+	ctx := logctx.WithLogger(context.Background(), testLogger())
+
+	_, err := dl.DownloadTransfer(ctx, transfers[0])
+	require.NoError(t, err)
+
+	assertFile(t, filepath.Join(root, "no_extension_file"), "some bytes")
 }
 
 // The harness must be able to misbehave, or the tickets that depend on it cannot

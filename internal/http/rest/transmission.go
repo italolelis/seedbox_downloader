@@ -117,25 +117,29 @@ func NewTransmissionConfig(downloadDir string) *TransmissionConfig {
 }
 
 type TransmissionHandler struct {
-	username    string
-	password    string
-	dc          DownloadClient
-	label       string
-	downloadDir string
-	telemetry   *telemetry.Telemetry
+	username string
+	password string
+	dc       DownloadClient
+	label    string
+	// localRoot is the directory on local disk that transfers are written into.
+	// It is what gets advertised to the *arr apps, because it is the only path
+	// that actually exists from their point of view. A seedbox-side path must
+	// never be put here: advertising one is why imports silently never happened.
+	localRoot string
+	telemetry *telemetry.Telemetry
 }
 
 // NewTransmissionHandler creates a new content handler.
 func NewTransmissionHandler(
-	username, password string, dc DownloadClient, label string, downloadDir string, t *telemetry.Telemetry,
+	username, password string, dc DownloadClient, label string, localRoot string, t *telemetry.Telemetry,
 ) *TransmissionHandler {
 	return &TransmissionHandler{
-		username:    username,
-		password:    password,
-		dc:          dc,
-		label:       label,
-		downloadDir: downloadDir,
-		telemetry:   t,
+		username:  username,
+		password:  password,
+		dc:        dc,
+		label:     label,
+		localRoot: localRoot,
+		telemetry: t,
 	}
 }
 
@@ -169,7 +173,7 @@ func (h *TransmissionHandler) HandleRPC(w http.ResponseWriter, r *http.Request) 
 
 	switch req.Method {
 	case "session-get":
-		tConfig := NewTransmissionConfig(h.downloadDir)
+		tConfig := NewTransmissionConfig(h.localRoot)
 
 		w.Header().Set("Content-Type", "application/json")
 
@@ -505,30 +509,43 @@ func (h *TransmissionHandler) handleTorrentGet(ctx context.Context) (*Transmissi
 
 		hashBytes := sha1.Sum([]byte(transfer.ID))
 
+		// The advertised path must be the path that was written. The *arr apps join
+		// these two and look for the result on disk, with no branching on whether
+		// the transfer is one file or a folder -- so the name has to come from the
+		// files, never from the transfer name, which the seedbox may have renamed
+		// or suffixed after the fact.
+		name, derived := transfer.LocalName()
+		if !derived {
+			logger.WarnContext(ctx, "advertising the transfer name as a fallback: no local name could be derived",
+				"transfer_id", transfer.ID,
+				"transfer_name", transfer.Name,
+				"file_count", len(transfer.Files))
+		}
+
 		transmissionTorrents[i] = TransmissionTorrent{
-			ID:             id,
-			HashString:     hex.EncodeToString(hashBytes[:]),
-			Name:           transfer.Name,
-			DownloadDir:    transfer.SavePath,
-			TotalSize:      transfer.Size,
-			LeftUntilDone:  transfer.Size - transfer.Downloaded,
+			ID:            id,
+			HashString:    hex.EncodeToString(hashBytes[:]),
+			Name:          name,
+			DownloadDir:   h.localRoot,
+			TotalSize:     transfer.Size,
+			LeftUntilDone: transfer.Size - transfer.Downloaded,
 			IsFinished: strings.ToLower(transfer.Status) == "completed" ||
 				strings.ToLower(transfer.Status) == "seeding" ||
 				strings.ToLower(transfer.Status) == "finished",
-			ETA:            transfer.EstimatedTime,
-			Status:         status,
-			ErrorString:    errorString,
-			DownloadedEver: transfer.Downloaded,
-			Labels:         []string{h.label},
-			PeersConnected: transfer.PeersConnected,
-			PeersSendingToUs: transfer.PeersSendingToUs,
+			ETA:                transfer.EstimatedTime,
+			Status:             status,
+			ErrorString:        errorString,
+			DownloadedEver:     transfer.Downloaded,
+			Labels:             []string{h.label},
+			PeersConnected:     transfer.PeersConnected,
+			PeersSendingToUs:   transfer.PeersSendingToUs,
 			PeersGettingFromUs: transfer.PeersGettingFromUs,
-			RateDownload:   transfer.DownloadSpeed,
-			FileCount:      uint32(len(transfer.Files)),
-			SeedRatioLimit: 1.0,
-			SeedRatioMode:  1,
-			SeedIdleLimit:  100,
-			SeedIdleMode:   1,
+			RateDownload:       transfer.DownloadSpeed,
+			FileCount:          uint32(len(transfer.Files)),
+			SeedRatioLimit:     1.0,
+			SeedRatioMode:      1,
+			SeedIdleLimit:      100,
+			SeedIdleMode:       1,
 		}
 	}
 
