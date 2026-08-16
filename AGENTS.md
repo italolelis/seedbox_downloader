@@ -95,3 +95,17 @@ You are an expert in Go, microservices architecture, and clean backend developme
 4. Ensure all behavior is **observable, testable, and documented**.
 5. **Automate workflows** for testing, building, and deployment.
 6. Read and use the linters rules in .github/linters/.golangci.yml
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live as GitHub issues in `italolelis/seedbox_downloader`, managed via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical triage roles, each label string equal to its name. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` at the repo root, ADRs in `docs/adr/`. See `docs/agents/domain.md`.
