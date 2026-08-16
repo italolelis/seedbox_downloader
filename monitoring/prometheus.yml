@@ -10,9 +10,11 @@ scrape_configs:
     static_configs:
       - targets: ['localhost:9090']
 
+  # The application exports over OTLP and opens no scrape endpoint of its own, so
+  # the target here is the collector's Prometheus exporter, not the application.
   - job_name: 'seedbox-downloader'
     static_configs:
-      - targets: ['seedbox-downloader:2112']
+      - targets: ['otel-collector:8889']
     scrape_interval: 15s
     metrics_path: /metrics
     scrape_timeout: 10s

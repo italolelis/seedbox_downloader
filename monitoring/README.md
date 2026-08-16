@@ -12,7 +12,7 @@ This directory contains the complete monitoring stack for the Seedbox Downloader
 2. **Access the services:**
    - **Grafana Dashboard**: http://localhost:3000 (admin/admin)
    - **Prometheus**: http://localhost:9090
-   - **Application Metrics**: http://localhost:2112/metrics
+   - **Collector Metrics** (scraped by Prometheus): http://localhost:8889/metrics
    - **Main Application**: http://localhost:9091
 
 ## 📊 Dashboard Overview
@@ -132,7 +132,7 @@ monitoring/
 ### Dashboard Not Loading
 1. Check Grafana logs: `docker-compose logs grafana`
 2. Verify Prometheus connectivity: http://localhost:9090/targets
-3. Ensure application is exposing metrics: http://localhost:2112/metrics
+3. Ensure the collector is exposing metrics: http://localhost:8889/metrics
 
 ### Missing Metrics
 1. Verify application is running with telemetry enabled

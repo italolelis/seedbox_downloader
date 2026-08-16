@@ -9,22 +9,30 @@ The telemetry system provides:
 - **HTTP Metrics**: Automatic HTTP instrumentation using `otelhttp` following OpenTelemetry semantic conventions
 - **USE Metrics**: System resource utilization, saturation, and errors
 - **Business Metrics**: Application-specific metrics for downloads, transfers, and client operations
-- **Distributed Tracing**: Request tracing across components using OpenTelemetry
-- **Prometheus Integration**: Metrics exposed in Prometheus format with proper resource attributes
+- **OTLP Export**: Metrics pushed to an OpenTelemetry collector, with resource attributes attached
+
+> **Tracing is not currently wired.** The instrumentation and spans described below all
+> exist, but no tracer provider is installed, so spans are created against a no-op
+> tracer and never leave the process. Metrics work; traces do not. Tracked separately.
 
 ## Configuration
 
 Telemetry is configured via environment variables:
 
 ```bash
-# Enable/disable telemetry (default: true)
+# Enable/disable telemetry (default: false -- telemetry is opt-in)
 TELEMETRY_ENABLED=true
 
-# Metrics server address (default: 0.0.0.0:2112)
-TELEMETRY_METRICS_ADDRESS=0.0.0.0:2112
+# OTLP gRPC collector address (default: 0.0.0.0:4317).
+# Required when telemetry is enabled -- startup fails if it is empty.
+TELEMETRY_OTEL_ADDRESS=otel-collector:4317
 
-# Metrics endpoint path (default: /metrics)
-TELEMETRY_METRICS_PATH=/metrics
+# Send OTLP over plaintext gRPC rather than TLS (default: true).
+# The OTLP exporter defaults to TLS, so against an ordinary plaintext collector
+# this must stay true or the export fails with:
+#   tls: first record does not look like a TLS handshake
+# Set false when the collector is reached over a network you do not trust.
+TELEMETRY_OTEL_INSECURE=true
 
 # Service name for telemetry (default: seedbox_downloader)
 TELEMETRY_SERVICE_NAME=seedbox_downloader
@@ -33,7 +41,9 @@ TELEMETRY_SERVICE_NAME=seedbox_downloader
 TELEMETRY_SERVICE_VERSION=1.0.0
 ```
 
-The metrics server runs on a separate address from the main API server, using chi router for consistency with the main application architecture.
+Telemetry is **opt-in**: with `TELEMETRY_ENABLED` unset or false, no exporter is
+constructed and no connection is attempted. Enabling it without an address is a
+startup error rather than a silent no-op.
 
 ## Metrics Exposed
 
@@ -148,33 +158,34 @@ err := telemetry.InstrumentClientOperation(ctx, "deluge", "get_torrents", func(c
 })
 ```
 
-## Metrics Endpoint
+## How Metrics Leave the Process
 
-Metrics are exposed on a separate HTTP server with OpenTelemetry instrumentation:
+**OTLP is the only export path.** The application opens no metrics endpoint of its
+own -- there is nothing to scrape on the application itself. Metrics are pushed
+over OTLP/gRPC to `TELEMETRY_OTEL_ADDRESS` on a periodic interval.
 
-- **URL**: `http://localhost:2112/metrics` (default)
-- **Format**: Prometheus exposition format
-- **Content-Type**: `text/plain`
-- **Instrumentation**: The metrics endpoint itself is instrumented with `otelhttp` for observability
-
-**Implementation**:
-```go
-// Metrics handler with otelhttp instrumentation
-prometheusHandler := promhttp.Handler()
-return otelhttp.NewHandler(prometheusHandler, "metrics")
-```
+If no collector is listening, export failures are logged at `WARN` and the
+application carries on. An unreachable collector is an operational condition, not
+a startup failure.
 
 ## Integration with Monitoring Stack
 
-### Prometheus Configuration
+Prometheus cannot scrape the application directly. Run a collector that receives
+OTLP and re-exposes the metrics in Prometheus format, then scrape the collector:
 
-Add the following job to your `prometheus.yml`:
+```
+application --OTLP/gRPC--> collector --Prometheus /metrics--> Prometheus --> Grafana
+```
+
+The bundled stack does exactly this. See `monitoring/otel-collector.yml` for the
+collector configuration and `monitoring/prometheus.yml` for the scrape job, which
+targets `otel-collector:8889` rather than the application.
 
 ```yaml
 scrape_configs:
   - job_name: 'seedbox-downloader'
     static_configs:
-      - targets: ['localhost:2112']
+      - targets: ['otel-collector:8889']
     scrape_interval: 15s
     metrics_path: /metrics
 ```
@@ -281,9 +292,23 @@ The telemetry implementation is designed to have minimal performance impact:
 
 ### Metrics Not Appearing
 
-1. Check if telemetry is enabled: `TELEMETRY_ENABLED=true`
-2. Verify metrics endpoint is accessible: `curl http://localhost:2112/metrics`
-3. Check application logs for telemetry initialization errors
+1. Check if telemetry is enabled: `TELEMETRY_ENABLED=true` (it is **off** by default)
+2. Check the application logs for `telemetry export failed` warnings -- that means the
+   collector is unreachable at `TELEMETRY_OTEL_ADDRESS`
+3. If the warning mentions `tls: first record does not look like a TLS handshake`, the
+   collector is plaintext and `TELEMETRY_OTEL_INSECURE` has been set to false
+4. Verify the collector is re-exposing metrics: `curl http://localhost:8889/metrics`
+5. Check Prometheus is scraping the collector: http://localhost:9090/targets
+
+### Verifying the pipeline end to end
+
+With the bundled stack running, this pushes real metrics through the real export path
+and fails if the collector does not accept them:
+
+```sh
+docker compose -f docker-compose.telemetry.yml up -d otel-collector prometheus
+TELEMETRY_LIVE_TEST=1 go test ./internal/telemetry/ -run TestLiveExport -v
+```
 
 ### High Memory Usage
 
