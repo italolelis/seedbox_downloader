@@ -231,7 +231,13 @@ The Transmission RPC proxy lets Sonarr, Radarr, and other *Arr apps use Put.io a
 | URL Base | `/transmission` |
 | Username | Your `TRANSMISSION_USERNAME` |
 | Password | Your `TRANSMISSION_PASSWORD` |
-| Category | An existing folder in your Put.io account |
+| Category | **Leave empty** — see below |
+
+> **Category must be blank.** Sonarr and Radarr append it to the download directory this
+> client reports, so setting it makes them look in `DOWNLOAD_DIR/<category>` and report
+> that the directory does not exist. It also does not choose the Put.io folder —
+> `TARGET_LABEL` does that, and the label on an incoming request is ignored. See
+> [docs/PATHS.md](docs/PATHS.md#sonarr--radarr-download-client-settings).
 
 4. Test the connection and save
 
