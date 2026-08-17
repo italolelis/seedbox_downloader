@@ -81,6 +81,44 @@ derive a name from. In that window the transfer name is advertised as a fallback
 a warning is logged. Nothing has been written to disk yet either, so nothing can be
 imported regardless.
 
+## Sonarr / Radarr download client settings
+
+**Leave the Category field empty.** Sonarr calls it Category, Radarr calls it Category;
+both must be blank.
+
+If you set it, the \*arr app **appends it to the download directory reported by
+`session-get`** when working out where this client puts things:
+
+```csharp
+if (Settings.MovieCategory.IsNotNullOrWhiteSpace())
+{
+    destDir = $"{destDir}/{Settings.MovieCategory}";
+}
+```
+
+So with `DOWNLOAD_DIR=/data/Downloads/itv` and a category of `itv`, the app looks for
+`/data/Downloads/itv/itv`, which does not exist, and reports:
+
+```
+You are using docker; download client Transmission places downloads in
+/data/Downloads/itv/itv but this directory does not appear to exist inside
+the container. Review your remote path mappings and container volume settings.
+```
+
+**The category does not select the Put.io folder.** `TARGET_LABEL` does that. The label
+on an incoming `torrent-add` is parsed and discarded — every transfer is filed under
+`TARGET_LABEL` regardless of what the requesting app asked for. Clearing the field
+therefore cannot move anything on Put.io.
+
+Nor does clearing it lose any filtering. The \*arr apps keep a torrent when its path
+contains the category as a segment, and `DOWNLOAD_DIR` ends in the label, so every
+transfer matched anyway.
+
+> Both apps currently see **every** transfer under `TARGET_LABEL`, not just their own,
+> because the per-request category is ignored. That is tracked separately and is worth
+> knowing about: dismissing a queue item with "remove from client" deletes the transfer
+> from Put.io, including the other app's copy.
+
 ## Remote path mapping
 
 `DOWNLOAD_DIR` is advertised **as this container sees it**. Whether your \*arr apps
