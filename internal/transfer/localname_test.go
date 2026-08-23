@@ -1,7 +1,10 @@
 package transfer
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -186,4 +189,20 @@ func TestLocalName_ResolvesTheLegacyWrapperLayout(t *testing.T) {
 	assert.True(t, derived)
 	assert.Equal(t, "Silo.S03E07.1080p.DUAL-SiGLA", got,
 		"the wrapper folder is what exists on disk today, so that is the honest answer")
+}
+
+// HashString is what gets advertised over RPC, what the *arr apps store as their
+// download id, and what the seedbox client matches on when removing a transfer.
+// Those three have to agree, so the derivation is pinned here.
+func TestHashString(t *testing.T) {
+	t.Parallel()
+
+	tr := &Transfer{ID: "12345"}
+
+	sum := sha1.Sum([]byte("12345"))
+
+	assert.Equal(t, hex.EncodeToString(sum[:]), tr.HashString())
+	assert.Len(t, tr.HashString(), 40, "hex-encoded SHA-1")
+	assert.Equal(t, strings.ToLower(tr.HashString()), tr.HashString(),
+		"advertised lower-case; the *arr apps upper-case it when they store it")
 }

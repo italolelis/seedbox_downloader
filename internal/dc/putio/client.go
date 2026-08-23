@@ -424,6 +424,9 @@ func (c *Client) RemoveTransfers(ctx context.Context, transferIDs []string, dele
 	return nil
 }
 
+// filterMatchingTransferIds resolves the hashes we advertised back to Put.io
+// transfers. The hash must be derived the same way as transfer.Transfer.HashString,
+// which is what produced the values being matched here.
 func (c *Client) filterMatchingTransferIds(transfers []putio.Transfer, transferIDs []string) []putio.Transfer {
 	matchingTransfers := make([]putio.Transfer, 0, len(transferIDs))
 

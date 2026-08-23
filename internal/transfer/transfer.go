@@ -2,6 +2,8 @@ package transfer
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -66,6 +68,19 @@ func (t *Transfer) IsAvailable() bool {
 	status := strings.ToLower(t.Status)
 
 	return status == "completed" || status == "seeding" || status == "seedingwait" || status == "finished"
+}
+
+// HashString is the transfer's identity as a torrent hash: the SHA-1 of its id,
+// hex encoded. This is what gets advertised over RPC as hashString, what the *arr
+// apps then store as their download id, and what the seedbox client matches on
+// when removing a transfer -- so it is derived in exactly one place.
+//
+// SHA-1 is not used here for any security property; it is a stable way to turn a
+// numeric transfer id into something shaped like a torrent hash.
+func (t *Transfer) HashString() string {
+	sum := sha1.Sum([]byte(t.ID)) //nolint:gosec // identity, not integrity
+
+	return hex.EncodeToString(sum[:])
 }
 
 // LocalName returns the name of the single filesystem entry -- a file for a
