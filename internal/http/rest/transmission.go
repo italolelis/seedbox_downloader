@@ -507,8 +507,6 @@ func (h *TransmissionHandler) handleTorrentGet(ctx context.Context) (*Transmissi
 			status = StatusStopped // 0
 		}
 
-		hashBytes := sha1.Sum([]byte(transfer.ID))
-
 		// The advertised path must be the path that was written. The *arr apps join
 		// these two and look for the result on disk, with no branching on whether
 		// the transfer is one file or a folder -- so the name has to come from the
@@ -524,7 +522,7 @@ func (h *TransmissionHandler) handleTorrentGet(ctx context.Context) (*Transmissi
 
 		transmissionTorrents[i] = TransmissionTorrent{
 			ID:            id,
-			HashString:    hex.EncodeToString(hashBytes[:]),
+			HashString:    transfer.HashString(),
 			Name:          name,
 			DownloadDir:   h.localRoot,
 			TotalSize:     transfer.Size,

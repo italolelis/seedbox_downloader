@@ -272,10 +272,24 @@ func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemet
 
 	logger.InfoContext(ctx, "download client ready", "client_type", cfg.DownloadClient)
 
-	arrServices := []*arr.Client{
+	// Only the ones actually configured. Both clients used to be built
+	// unconditionally, so a Sonarr-only deployment issued a request to an empty
+	// base URL on every import check and logged the failure every time.
+	var arrServices []*arr.Client
+
+	for _, candidate := range []*arr.Client{
 		arr.NewClient(cfg.Sonarr.APIKey, cfg.Sonarr.BaseURL),
 		arr.NewClient(cfg.Radarr.APIKey, cfg.Radarr.BaseURL),
+	} {
+		if candidate.Configured() {
+			arrServices = append(arrServices, candidate)
+		}
 	}
+
+	logger.InfoContext(ctx, "arr integrations ready",
+		"configured", len(arrServices),
+		"sonarr", cfg.Sonarr.BaseURL != "",
+		"radarr", cfg.Radarr.BaseURL != "")
 
 	instrumentedTC := transfer.NewInstrumentedTransferClient(dc.(transfer.TransferClient), tel, cfg.DownloadClient)
 

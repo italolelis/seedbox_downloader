@@ -2,8 +2,6 @@ package downloader
 
 import (
 	"context"
-	"crypto/sha1"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -293,11 +291,8 @@ func (d *Downloader) WatchForImported(ctx context.Context, t *transfer.Transfer,
 func (d *Downloader) CleanupTransfer(ctx context.Context, t *transfer.Transfer) {
 	logger := logctx.LoggerFromContext(ctx)
 
-	hash := sha1.Sum([]byte(t.ID))
-	hashStr := hex.EncodeToString(hash[:])
-
 	_, err := backoff.Retry[struct{}](ctx, func() (struct{}, error) {
-		if err := d.tc.RemoveTransfers(ctx, []string{hashStr}, true); err != nil {
+		if err := d.tc.RemoveTransfers(ctx, []string{t.HashString()}, true); err != nil {
 			if strings.Contains(err.Error(), "transfer not found") {
 				logger.InfoContext(ctx, "Put.io transfer already removed, treating as success",
 					"transfer_id", t.ID, "transfer_name", t.Name)
@@ -402,31 +397,35 @@ func (d *Downloader) WatchForSeeding(ctx context.Context, t *transfer.Transfer, 
 	}()
 }
 
-func (d *Downloader) checkForImported(ctx context.Context, transfer *transfer.Transfer) (bool, error) {
+// checkForImported reports whether an *arr application has imported this transfer,
+// and removes the local copy once one has.
+//
+// One query per *arr application per transfer. It used to be one per file per
+// application -- a ten-file season pack with Sonarr and Radarr configured meant
+// twenty full history walks every tick.
+func (d *Downloader) checkForImported(ctx context.Context, t *transfer.Transfer) (bool, error) {
 	logger := logctx.LoggerFromContext(ctx)
-	logger.DebugContext(ctx, "checking if transfer has been imported", "transfer_id", transfer.ID, "transfer_name", transfer.Name)
+	logger.DebugContext(ctx, "checking if transfer has been imported", "transfer_id", t.ID, "transfer_name", t.Name)
 
-	for _, file := range transfer.Files {
-		for _, arrService := range d.arrServices {
-			filePath := filepath.Join(d.downloadDir, file.Path)
-
-			imported, err := arrService.CheckImported(ctx, filePath)
-			if err != nil {
-				return false, fmt.Errorf("failed to check if transfer has been imported: %w", err)
-			}
-
-			if imported {
-				logger.InfoContext(ctx, "transfer has been imported", "transfer_id", transfer.ID, "transfer_name", transfer.Name)
-
-				if err := os.RemoveAll(filePath); err != nil {
-					return false, fmt.Errorf("failed to remove file: %w", err)
-				}
-
-				logger.InfoContext(ctx, "transfer removed", "transfer_id", transfer.ID, "transfer_name", transfer.Name)
-
-				return true, nil
-			}
+	for _, arrService := range d.arrServices {
+		imported, err := arrService.CheckImported(ctx, t.HashString())
+		if err != nil {
+			return false, fmt.Errorf("failed to check if transfer has been imported: %w", err)
 		}
+
+		if !imported {
+			continue
+		}
+
+		logger.InfoContext(ctx, "transfer has been imported", "transfer_id", t.ID, "transfer_name", t.Name)
+
+		// Cleanup failure is logged, not returned. Reporting "not imported" because
+		// a delete failed would leave this transfer being polled forever and block
+		// the seeding and remote-cleanup steps that follow, none of which the failed
+		// delete has anything to do with.
+		d.removeLocalOutput(ctx, logger, t)
+
+		return true, nil
 	}
 
 	return false, nil
