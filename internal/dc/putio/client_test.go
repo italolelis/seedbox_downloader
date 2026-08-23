@@ -78,7 +78,7 @@ func TestAddTransferByBytes_InvalidExtension(t *testing.T) {
 	client := NewClient("test-token")
 
 	torrentBytes := []byte("fake content")
-	_, err := client.AddTransferByBytes(context.Background(), torrentBytes, "test.txt", "")
+	_, err := client.AddTransferByBytes(context.Background(), torrentBytes, "test.txt", "", "")
 
 	if err == nil {
 		t.Fatal("expected error for invalid extension, got nil")
@@ -103,7 +103,7 @@ func TestAddTransferByBytes_FileTooLarge(t *testing.T) {
 
 	// Create 11MB of data (exceeds 10MB limit)
 	torrentBytes := make([]byte, 11*1024*1024)
-	_, err := client.AddTransferByBytes(context.Background(), torrentBytes, "large.torrent", "")
+	_, err := client.AddTransferByBytes(context.Background(), torrentBytes, "large.torrent", "", "")
 
 	if err == nil {
 		t.Fatal("expected error for oversized file, got nil")
@@ -152,7 +152,9 @@ func TestGetTaggedTorrents_SaveParentIDMatching(t *testing.T) {
 		fileStatus   map[string]int    // file ID -> status code
 		wantCount    int
 		wantNames    []string
-		wantLabels   []string
+		// wantCategories is Transfer.Label, which is now the category: empty for a
+		// transfer sitting directly in the target label's folder.
+		wantCategories []string
 	}{
 		{
 			name: "matching_tag",
@@ -167,9 +169,9 @@ func TestGetTaggedTorrents_SaveParentIDMatching(t *testing.T) {
 				"200": `{"file":{"id":200,"name":"mytag","size":0,"file_type":"FOLDER","content_type":"application/x-directory"}}`,
 				"100": `{"file":{"id":100,"name":"test-file.mkv","size":1000,"file_type":"VIDEO","content_type":"video/x-matroska"}}`,
 			},
-			wantCount:  1,
-			wantNames:  []string{"test-transfer"},
-			wantLabels: []string{"mytag"},
+			wantCount:      1,
+			wantNames:      []string{"test-transfer"},
+			wantCategories: []string{""},
 		},
 		{
 			name: "non_matching_tag",
@@ -248,9 +250,9 @@ func TestGetTaggedTorrents_SaveParentIDMatching(t *testing.T) {
 				"100": `{"file":{"id":100,"name":"matching-file.mkv","size":1000,"file_type":"VIDEO","content_type":"video/x-matroska"}}`,
 				"201": `{"file":{"id":201,"name":"othertag","size":0,"file_type":"FOLDER","content_type":"application/x-directory"}}`,
 			},
-			wantCount:  1,
-			wantNames:  []string{"matching-transfer"},
-			wantLabels: []string{"mytag"},
+			wantCount:      1,
+			wantNames:      []string{"matching-transfer"},
+			wantCategories: []string{""},
 		},
 		{
 			name: "in_progress_transfer_returned",
@@ -351,7 +353,7 @@ func TestGetTaggedTorrents_SaveParentIDMatching(t *testing.T) {
 				}
 			}
 
-			for i, label := range tt.wantLabels {
+			for i, label := range tt.wantCategories {
 				if i < len(torrents) {
 					assert.Equal(t, label, torrents[i].Label)
 				}

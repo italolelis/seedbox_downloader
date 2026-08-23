@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -24,11 +26,14 @@ const sessionID = "useless-session-id"
 
 const maxTorrentSize = 10 * 1024 * 1024 // 10MB - matches Phase 4 limit
 
+// categoryDirPerm matches the permissions the downloader creates directories with.
+const categoryDirPerm = 0o755
+
 // DownloadClient defines the interface for torrent client operations.
 // This interface enables mocking in tests while the production code uses *putio.Client.
 type DownloadClient interface {
-	AddTransfer(ctx context.Context, magnetLink, parentName string) (*transfer.Transfer, error)
-	AddTransferByBytes(ctx context.Context, content []byte, filename, parentName string) (*transfer.Transfer, error)
+	AddTransfer(ctx context.Context, magnetLink, label, category string) (*transfer.Transfer, error)
+	AddTransferByBytes(ctx context.Context, content []byte, filename, label, category string) (*transfer.Transfer, error)
 	GetTaggedTorrents(ctx context.Context, label string) ([]*transfer.Transfer, error)
 	RemoveTransfers(ctx context.Context, ids []string, deleteData bool) error
 }
@@ -310,6 +315,25 @@ func generateTorrentFilename(torrentBytes []byte) string {
 	return fmt.Sprintf("%s.torrent", hashStr[:16])
 }
 
+// requestCategory is the category the requesting app asked for. Sonarr and Radarr
+// send it as a label on torrent-add, taken from the client's Category setting:
+//
+//	if (settings.TvCategory.IsNotNullOrWhiteSpace())
+//	    arguments.Add("labels", new List<string> { settings.TvCategory });
+//
+// Empty means the app has no category configured, in which case the transfer goes
+// to the target label's own folder -- which is where everything went before
+// categories were honoured at all.
+func requestCategory(req *TransmissionRequest) string {
+	for _, label := range req.Arguments.Labels {
+		if label != "" {
+			return label
+		}
+	}
+
+	return ""
+}
+
 // handleTorrentAddByMetaInfo processes .torrent file content from MetaInfo field.
 func (h *TransmissionHandler) handleTorrentAddByMetaInfo(ctx context.Context, req *TransmissionRequest) (*transfer.Transfer, error) {
 	logger := logctx.LoggerFromContext(ctx)
@@ -356,7 +380,7 @@ func (h *TransmissionHandler) handleTorrentAddByMetaInfo(ctx context.Context, re
 	logger.DebugContext(ctx, "generated filename", "filename", filename)
 
 	// Upload to Put.io using Phase 4 client method
-	torrent, err := h.dc.AddTransferByBytes(ctx, torrentBytes, filename, h.label)
+	torrent, err := h.dc.AddTransferByBytes(ctx, torrentBytes, filename, h.label, requestCategory(req))
 	if err != nil {
 		logger.ErrorContext(ctx, "failed to add transfer by bytes",
 			"err", err,
@@ -380,6 +404,8 @@ func (h *TransmissionHandler) handleTorrentAdd(ctx context.Context, req *Transmi
 	if err != nil {
 		return nil, err
 	}
+
+	h.ensureCategoryDir(ctx, logger, requestCategory(req))
 
 	// Marshal success response (Transmission format with torrent-added)
 	jsonTorrent, err := json.Marshal(map[string]interface{}{
@@ -424,9 +450,9 @@ func (h *TransmissionHandler) resolveTorrent(
 		}
 
 		magnetLink := req.Arguments.FileName
-		// we use the label as the download directory. When using put.io as a shared download client,
-		// we can't use the download directory from the request.
-		torrent, err := h.dc.AddTransfer(ctx, magnetLink, h.label)
+		// The target label scopes everything this instance owns on a possibly shared
+		// account; the requesting app's category picks a folder within it.
+		torrent, err := h.dc.AddTransfer(ctx, magnetLink, h.label, requestCategory(req))
 		if err != nil {
 			return nil, fmt.Errorf("failed to add transfer: %w", err)
 		}
@@ -435,6 +461,29 @@ func (h *TransmissionHandler) resolveTorrent(
 	}
 
 	return nil, fmt.Errorf("either metainfo or filename must be provided")
+}
+
+// ensureCategoryDir creates the local directory for a category the moment an app
+// first asks for it.
+//
+// Sonarr and Radarr check that "download directory plus category" exists and warn
+// that the client "places downloads in <path> but this directory does not appear
+// to exist" when it doesn't. Waiting for the first completed download to create it
+// would leave that warning showing for however long the first grab takes.
+//
+// Failure is logged, not returned: the transfer has already been accepted by the
+// seedbox at this point, and the downloader creates the directory again when it
+// writes anyway.
+func (h *TransmissionHandler) ensureCategoryDir(ctx context.Context, logger *slog.Logger, category string) {
+	if category == "" || h.localRoot == "" {
+		return
+	}
+
+	dir := filepath.Join(h.localRoot, category)
+	if err := os.MkdirAll(dir, categoryDirPerm); err != nil {
+		logger.WarnContext(ctx, "failed to create category directory",
+			"dir", dir, "category", category, "err", err)
+	}
 }
 
 func (h *TransmissionHandler) handleTorrentRemove(ctx context.Context, req *TransmissionRequest) (*TransmissionResponse, error) {
@@ -520,11 +569,19 @@ func (h *TransmissionHandler) handleTorrentGet(ctx context.Context) (*Transmissi
 				"file_count", len(transfer.Files))
 		}
 
+		// Advertise each transfer under its own category, so Sonarr and Radarr each
+		// keep only their own. Both filter on exactly this: the label when the client
+		// reports labels support, the directory otherwise.
+		labels := []string{h.label}
+		if transfer.Label != "" {
+			labels = []string{transfer.Label}
+		}
+
 		transmissionTorrents[i] = TransmissionTorrent{
 			ID:            id,
 			HashString:    transfer.HashString(),
 			Name:          name,
-			DownloadDir:   h.localRoot,
+			DownloadDir:   filepath.Join(h.localRoot, transfer.LocalSubdir()),
 			TotalSize:     transfer.Size,
 			LeftUntilDone: transfer.Size - transfer.Downloaded,
 			IsFinished: strings.ToLower(transfer.Status) == "completed" ||
@@ -534,7 +591,7 @@ func (h *TransmissionHandler) handleTorrentGet(ctx context.Context) (*Transmissi
 			Status:             status,
 			ErrorString:        errorString,
 			DownloadedEver:     transfer.Downloaded,
-			Labels:             []string{h.label},
+			Labels:             labels,
 			PeersConnected:     transfer.PeersConnected,
 			PeersSendingToUs:   transfer.PeersSendingToUs,
 			PeersGettingFromUs: transfer.PeersGettingFromUs,

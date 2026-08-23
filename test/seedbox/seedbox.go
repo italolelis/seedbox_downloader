@@ -61,6 +61,10 @@ type Transfer struct {
 	// Root is the file or folder the transfer was saved as.
 	Root Entry
 
+	// Category files the transfer into <label>/<category> rather than into the
+	// label folder directly, the way a request carrying an *arr category does.
+	Category string
+
 	// Status defaults to COMPLETED when empty.
 	Status string
 
@@ -84,16 +88,18 @@ type Seedbox struct {
 }
 
 type node struct {
-	entry Entry
-	id    int64
+	entry    Entry
+	id       int64
+	parentID int64
 }
 
 type fakeTransfer struct {
-	id     int64
-	name   string
-	fileID int64
-	status string
-	size   int64
+	id           int64
+	name         string
+	fileID       int64
+	saveParentID int64
+	status       string
+	size         int64
 }
 
 // New starts a fake Put.io serving the given transfers under the given label,
@@ -117,7 +123,12 @@ func New(t *testing.T, label string, transfers ...Transfer) *Seedbox {
 	s.labelID = s.add(Entry{Name: label, Children: []Entry{}}, 0)
 
 	for i, tr := range transfers {
-		rootID := s.add(tr.Root, s.labelID)
+		parentID := s.labelID
+		if tr.Category != "" {
+			parentID = s.ensureCategory(tr.Category)
+		}
+
+		rootID := s.add(tr.Root, parentID)
 
 		status := tr.Status
 		if status == "" {
@@ -125,11 +136,12 @@ func New(t *testing.T, label string, transfers ...Transfer) *Seedbox {
 		}
 
 		ft := fakeTransfer{
-			id:     int64(i + 1),
-			name:   tr.Name,
-			fileID: rootID,
-			status: status,
-			size:   s.sizeOf(rootID),
+			id:           int64(i + 1),
+			name:         tr.Name,
+			fileID:       rootID,
+			saveParentID: parentID,
+			status:       status,
+			size:         s.sizeOf(rootID),
 		}
 
 		if tr.InProgress {
@@ -176,7 +188,7 @@ func (s *Seedbox) DownloadURL(fileID int64) string {
 func (s *Seedbox) add(e Entry, parentID int64) int64 {
 	s.nextID++
 	id := s.nextID
-	s.nodes[id] = &node{entry: e, id: id}
+	s.nodes[id] = &node{entry: e, id: id, parentID: parentID}
 
 	if parentID != 0 {
 		s.children[parentID] = append(s.children[parentID], id)
@@ -187,6 +199,18 @@ func (s *Seedbox) add(e Entry, parentID int64) int64 {
 	}
 
 	return id
+}
+
+// ensureCategory returns the id of a folder named category inside the label
+// folder, creating it the first time it is asked for.
+func (s *Seedbox) ensureCategory(category string) int64 {
+	for _, id := range s.children[s.labelID] {
+		if s.nodes[id].entry.Name == category && s.nodes[id].entry.isDir() {
+			return id
+		}
+	}
+
+	return s.add(Entry{Name: category, Children: []Entry{}}, s.labelID)
 }
 
 func (s *Seedbox) sizeOf(id int64) int64 {
@@ -211,7 +235,7 @@ func (s *Seedbox) handleTransfersList(w http.ResponseWriter, _ *http.Request) {
 			"id":             tr.id,
 			"name":           tr.name,
 			"file_id":        tr.fileID,
-			"save_parent_id": s.labelID,
+			"save_parent_id": tr.saveParentID,
 			"status":         tr.status,
 			"percent_done":   100,
 			"size":           tr.size,
@@ -344,6 +368,7 @@ func (s *Seedbox) fileJSON(id int64) map[string]any {
 
 	return map[string]any{
 		"id":           n.id,
+		"parent_id":    n.parentID,
 		"name":         n.entry.Name,
 		"size":         s.sizeOf(id),
 		"file_type":    fileType,

@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -98,6 +99,7 @@ func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*transfer
 	}
 
 	torrents := make([]*transfer.Transfer, 0, len(transfers))
+	folders := make(map[int64]putio.File)
 
 	for _, t := range transfers {
 		// Use SaveParentID for tag matching (works for both in-progress and completed transfers)
@@ -114,8 +116,9 @@ func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*transfer
 			continue
 		}
 
-		if parent.IsDir() && parent.Name != tag {
-			logger.DebugContext(ctx, "skipping transfer, parent folder doesn't match tag",
+		category, ours := c.categoryOf(ctx, parent, tag, folders)
+		if !ours {
+			logger.DebugContext(ctx, "skipping transfer, not under the target label",
 				"transfer_id", t.ID, "parent_name", parent.Name, "expected_tag", tag)
 
 			continue
@@ -125,14 +128,14 @@ func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*transfer
 		torrent := &transfer.Transfer{
 			ID:                 fmt.Sprintf("%d", t.ID),
 			Name:               t.Name,
-			Label:              tag,
+			Label:              category,
 			Progress:           float64(t.PercentDone),
 			Files:              make([]*transfer.File, 0),
 			Size:               int64(t.Size),
 			Source:             t.Source,
 			Status:             t.Status,
 			EstimatedTime:      t.EstimatedTime,
-			RemoteFolder:       "/" + tag,
+			RemoteFolder:       "/" + path.Join(tag, category),
 			PeersConnected:     int64(t.PeersConnected),
 			PeersGettingFromUs: int64(t.PeersGettingFromUs),
 			PeersSendingToUs:   int64(t.PeersSendingToUs),
@@ -273,15 +276,15 @@ func validateTorrentFilename(filename string) error {
 
 // Deprecated: Use AddTransferByURL for magnet/HTTP(S) links or AddTransferByBytes for .torrent file content.
 // This method will be removed in a future version.
-func (c *Client) AddTransfer(ctx context.Context, url string, downloadDir string) (*transfer.Transfer, error) {
-	logger := logctx.LoggerFromContext(ctx).With("download_dir", downloadDir)
+func (c *Client) AddTransfer(ctx context.Context, url, label, category string) (*transfer.Transfer, error) {
+	logger := logctx.LoggerFromContext(ctx).With("label", label, "category", category)
 
 	var dirID int64
 
-	if downloadDir != "" {
+	if label != "" {
 		var err error
 
-		dirID, err = c.findDirectoryID(ctx, downloadDir)
+		dirID, err = c.resolveTargetFolder(ctx, label, category)
 		if err != nil {
 			return nil, fmt.Errorf("failed to find directory: %w", err)
 		}
@@ -313,8 +316,8 @@ func (c *Client) AddTransfer(ctx context.Context, url string, downloadDir string
 
 // AddTransferByBytes adds a transfer by uploading .torrent file bytes to Put.io.
 // The Put.io service automatically detects .torrent files and creates a transfer.
-func (c *Client) AddTransferByBytes(ctx context.Context, torrentBytes []byte, filename string, downloadDir string) (*transfer.Transfer, error) {
-	logger := logctx.LoggerFromContext(ctx).With("filename", filename, "download_dir", downloadDir)
+func (c *Client) AddTransferByBytes(ctx context.Context, torrentBytes []byte, filename, label, category string) (*transfer.Transfer, error) {
+	logger := logctx.LoggerFromContext(ctx).With("filename", filename, "label", label, "category", category)
 
 	// Validate file size
 	if len(torrentBytes) > maxTorrentSize {
@@ -332,13 +335,13 @@ func (c *Client) AddTransferByBytes(ctx context.Context, torrentBytes []byte, fi
 	// Resolve directory (same logic as magnet links)
 	var dirID int64
 
-	if downloadDir != "" {
+	if label != "" {
 		var err error
 
-		dirID, err = c.findDirectoryID(ctx, downloadDir)
+		dirID, err = c.resolveTargetFolder(ctx, label, category)
 		if err != nil {
 			return nil, &transfer.DirectoryError{
-				DirectoryName: downloadDir,
+				DirectoryName: path.Join(label, category),
 				Reason:        "directory not found or inaccessible",
 				Err:           err,
 			}
@@ -422,6 +425,81 @@ func (c *Client) RemoveTransfers(ctx context.Context, transferIDs []string, dele
 	}
 
 	return nil
+}
+
+// resolveTargetFolder returns the Put.io folder a transfer should be filed into:
+// the label's folder when category is empty, otherwise a folder named after the
+// category inside it, created on first use.
+//
+// Categories are nested under the label rather than sitting at the account root
+// because the account may be shared. Everything this instance owns stays inside
+// one folder, and a category called "movies" cannot collide with someone else's.
+func (c *Client) resolveTargetFolder(ctx context.Context, label, category string) (int64, error) {
+	logger := logctx.LoggerFromContext(ctx)
+
+	rootID, err := c.findDirectoryID(ctx, label)
+	if err != nil {
+		return 0, fmt.Errorf("failed to find label folder %q: %w", label, err)
+	}
+
+	if category == "" || category == label {
+		return rootID, nil
+	}
+
+	children, _, err := c.putioClient.Files.List(ctx, rootID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to list %q: %w", label, err)
+	}
+
+	for _, child := range children {
+		if child.IsDir() && strings.EqualFold(child.Name, category) {
+			return child.ID, nil
+		}
+	}
+
+	created, err := c.putioClient.Files.CreateFolder(ctx, category, rootID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create category folder %q under %q: %w", category, label, err)
+	}
+
+	logger.InfoContext(ctx, "created category folder on Put.io",
+		"label", label, "category", category, "folder_id", created.ID)
+
+	return created.ID, nil
+}
+
+// categoryOf works out which category a transfer belongs to from the folder it
+// was saved into: empty when it sits directly in the label's folder, the folder
+// name when it sits one level below, and not ours otherwise.
+func (c *Client) categoryOf(ctx context.Context, parent putio.File, label string, cache map[int64]putio.File) (string, bool) {
+	if !parent.IsDir() {
+		return "", false
+	}
+
+	if parent.Name == label {
+		return "", true
+	}
+
+	if parent.ParentID == 0 {
+		return "", false
+	}
+
+	grandparent, ok := cache[parent.ParentID]
+	if !ok {
+		fetched, err := c.putioClient.Files.Get(ctx, parent.ParentID)
+		if err != nil {
+			return "", false
+		}
+
+		cache[parent.ParentID] = fetched
+		grandparent = fetched
+	}
+
+	if grandparent.Name != label {
+		return "", false
+	}
+
+	return parent.Name, true
 }
 
 // filterMatchingTransferIds resolves the hashes we advertised back to Put.io

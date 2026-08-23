@@ -152,7 +152,7 @@ func (d *Downloader) DownloadTransfer(ctx context.Context, transfer *transfer.Tr
 		wg.Go(func() error {
 			defer func() { <-sem }() // release the slot
 
-			targetPath := filepath.Join(d.downloadDir, file.Path)
+			targetPath := filepath.Join(d.downloadDir, transfer.LocalSubdir(), file.Path)
 			if err := d.DownloadFile(ctx, transfer.ID, file, targetPath); err != nil {
 				return d.classifyFileError(ctx, logger, transfer, file, err)
 			}
@@ -458,8 +458,9 @@ func (d *Downloader) classifyFileError(
 	return err
 }
 
-// removeLocalOutput deletes what was written for a transfer, addressed by the name
-// derived from its file paths. Addressing it by transfer name removed the wrong
+// removeLocalOutput deletes what was written for a transfer, addressed by its
+// category subdirectory plus the name derived from its file paths -- the same two
+// components the RPC advertises, so this can only ever delete what was written. Addressing it by transfer name removed the wrong
 // path -- or nothing at all -- whenever the two disagreed, which is the same
 // divergence that stopped imports working.
 func (d *Downloader) removeLocalOutput(ctx context.Context, logger *slog.Logger, t *transfer.Transfer) {
@@ -471,7 +472,7 @@ func (d *Downloader) removeLocalOutput(ctx context.Context, logger *slog.Logger,
 		return
 	}
 
-	if err := os.RemoveAll(filepath.Join(d.downloadDir, name)); err != nil {
+	if err := os.RemoveAll(filepath.Join(d.downloadDir, t.LocalSubdir(), name)); err != nil {
 		logger.WarnContext(ctx, "failed to remove partial transfer output",
 			"transfer_id", t.ID, "local_name", name, "err", err)
 	}

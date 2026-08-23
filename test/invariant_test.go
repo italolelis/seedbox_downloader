@@ -211,3 +211,91 @@ func TestInvariant_InProgressTransferIsStillAdvertised(t *testing.T) {
 	assert.Equal(t, "Still.Downloading-GROUP", torrents[0].Name,
 		"an in-progress transfer falls back to the transfer name")
 }
+
+// The invariant has to keep holding once a category is in the path. Sonarr and
+// Radarr are configured with different categories, so each transfer is written
+// into and advertised under its own subdirectory, and the two apps stop seeing
+// each other's downloads.
+func TestInvariant_AdvertisedPathExistsForCategorisedTransfers(t *testing.T) {
+	sb := seedbox.New(t, "itv",
+		seedbox.Transfer{
+			Name:     "Show.S01.1080p-GROUP",
+			Category: "tv",
+			Root: seedbox.Entry{Name: "Show.S01.1080p-GROUP", Children: []seedbox.Entry{
+				{Name: "s01e01.mkv", Content: "episode bytes"},
+			}},
+		},
+		seedbox.Transfer{
+			Name:     "Movie.2024.1080p-GROUP.mkv",
+			Category: "movies",
+			Root:     seedbox.Entry{Name: "Movie.2024.1080p-GROUP.mkv", Content: "movie bytes"},
+		},
+	)
+
+	dl, root := newDownloader(t, sb)
+
+	transfers := fetch(t, sb)
+	require.Len(t, transfers, 2)
+
+	ctx := logctx.WithLogger(context.Background(), testLogger())
+
+	for _, tr := range transfers {
+		_, err := dl.DownloadTransfer(ctx, tr)
+		require.NoError(t, err, "downloading %q", tr.Name)
+	}
+
+	torrents := advertised(t, sb, root)
+	require.Len(t, torrents, 2)
+
+	byCategory := map[string]rest.TransmissionTorrent{}
+
+	for _, tor := range torrents {
+		require.Len(t, tor.Labels, 1)
+		byCategory[tor.Labels[0]] = tor
+
+		importPath := filepath.Join(tor.DownloadDir, tor.Name)
+		_, statErr := os.Stat(importPath)
+		assert.NoError(t, statErr, "advertised path missing: %s", importPath)
+	}
+
+	require.Contains(t, byCategory, "tv")
+	require.Contains(t, byCategory, "movies")
+
+	// Each lands in its own subdirectory, which is what makes the *arr apps stop
+	// picking up each other's transfers.
+	assert.Equal(t, filepath.Join(root, "tv"), byCategory["tv"].DownloadDir)
+	assert.Equal(t, filepath.Join(root, "movies"), byCategory["movies"].DownloadDir)
+
+	assertFile(t, filepath.Join(root, "tv", "Show.S01.1080p-GROUP", "s01e01.mkv"), "episode bytes")
+	assertFile(t, filepath.Join(root, "movies", "Movie.2024.1080p-GROUP.mkv"), "movie bytes")
+}
+
+// Transfers added before categories existed sit directly in the label folder and
+// keep working: written to the root, advertised at the root, still importable.
+func TestInvariant_UncategorisedTransfersStillResolve(t *testing.T) {
+	sb := seedbox.New(t, "itv", seedbox.Transfer{
+		Name: "Legacy.Release-GROUP",
+		Root: seedbox.Entry{Name: "Legacy.Release-GROUP", Children: []seedbox.Entry{
+			{Name: "file.mkv", Content: "legacy bytes"},
+		}},
+	})
+
+	dl, root := newDownloader(t, sb)
+
+	transfers := fetch(t, sb)
+	require.Len(t, transfers, 1)
+	assert.Empty(t, transfers[0].Label, "no category")
+
+	ctx := logctx.WithLogger(context.Background(), testLogger())
+
+	_, err := dl.DownloadTransfer(ctx, transfers[0])
+	require.NoError(t, err)
+
+	torrents := advertised(t, sb, root)
+	require.Len(t, torrents, 1)
+
+	assert.Equal(t, root, torrents[0].DownloadDir, "no subdirectory")
+
+	_, statErr := os.Stat(filepath.Join(torrents[0].DownloadDir, torrents[0].Name))
+	assert.NoError(t, statErr)
+}

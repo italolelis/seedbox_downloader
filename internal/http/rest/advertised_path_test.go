@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -171,4 +173,117 @@ func TestSessionGet_ReportsTheLocalRoot(t *testing.T) {
 	require.NoError(t, json.Unmarshal(resp.Arguments, &cfg))
 
 	assert.Equal(t, localRoot, cfg.DownloadDir)
+}
+
+// Each transfer is advertised under its own category, so Sonarr keeps only its own
+// and Radarr keeps only its own. Both filter on exactly this: the label when the
+// client reports label support, the directory otherwise -- and we now supply both.
+func TestHandleTorrentGet_AdvertisesPerTransferCategories(t *testing.T) {
+	const localRoot = "/data/Downloads/itv"
+
+	got := torrentGet(t, localRoot,
+		&transfer.Transfer{
+			ID: "1", Status: "COMPLETED", Name: "Show.S01", Label: "tv",
+			Files: files("Show.S01/ep.mkv"),
+		},
+		&transfer.Transfer{
+			ID: "2", Status: "COMPLETED", Name: "Movie.2024", Label: "movies",
+			Files: files("Movie.2024/movie.mkv"),
+		},
+	)
+
+	require.Len(t, got, 2)
+
+	assert.Equal(t, []string{"tv"}, got[0].Labels)
+	assert.Equal(t, "/data/Downloads/itv/tv", got[0].DownloadDir)
+
+	assert.Equal(t, []string{"movies"}, got[1].Labels)
+	assert.Equal(t, "/data/Downloads/itv/movies", got[1].DownloadDir)
+}
+
+// A transfer with no category -- anything added before categories were honoured,
+// or by an app with the field left blank -- stays where it was, advertised under
+// the target label. An app with no category configured keeps everything, so these
+// remain visible; an app with one configured will not see them, which is why the
+// upgrade note says to let the queue drain before setting categories.
+func TestHandleTorrentGet_UncategorisedTransfersKeepTheTargetLabel(t *testing.T) {
+	got := torrentGet(t, "/data/Downloads/itv", &transfer.Transfer{
+		ID: "1", Status: "COMPLETED", Name: "Legacy", Label: "",
+		Files: files("Legacy/file.mkv"),
+	})
+
+	require.Len(t, got, 1)
+	assert.Equal(t, []string{"itv"}, got[0].Labels)
+	assert.Equal(t, "/data/Downloads/itv", got[0].DownloadDir, "no category means no subdirectory")
+}
+
+func TestTorrentAdd_PassesTheRequestedCategoryThrough(t *testing.T) {
+	mockClient := &mockPutioClient{}
+	handler := NewTransmissionHandler("u", "p", mockClient, "itv", "/data/Downloads/itv", nil)
+
+	body := `{"method":"torrent-add","arguments":{"filename":"magnet:?xt=urn:btih:abc","labels":["tv"]}}`
+	req := httptest.NewRequest(http.MethodPost, "/transmission/rpc", strings.NewReader(body))
+	req.SetBasicAuth("u", "p")
+
+	w := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "itv", mockClient.lastLabel, "the target label still scopes the account")
+	assert.Equal(t, "tv", mockClient.lastCategory, "the requesting app's category picks the folder")
+}
+
+func TestTorrentAdd_NoCategoryFallsBackToTheTargetLabel(t *testing.T) {
+	mockClient := &mockPutioClient{}
+	handler := NewTransmissionHandler("u", "p", mockClient, "itv", "/data/Downloads/itv", nil)
+
+	body := `{"method":"torrent-add","arguments":{"filename":"magnet:?xt=urn:btih:abc"}}`
+	req := httptest.NewRequest(http.MethodPost, "/transmission/rpc", strings.NewReader(body))
+	req.SetBasicAuth("u", "p")
+
+	w := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "itv", mockClient.lastLabel)
+	assert.Empty(t, mockClient.lastCategory, "no category means the label's own folder, as before")
+}
+
+// The *arr apps check that "download directory plus category" exists and warn when
+// it doesn't, so the directory is created as soon as an app first asks for that
+// category rather than when the first download finishes.
+func TestTorrentAdd_CreatesTheCategoryDirectory(t *testing.T) {
+	root := t.TempDir()
+	handler := NewTransmissionHandler("u", "p", &mockPutioClient{}, "itv", root, nil)
+
+	body := `{"method":"torrent-add","arguments":{"filename":"magnet:?xt=urn:btih:abc","labels":["tv"]}}`
+	req := httptest.NewRequest(http.MethodPost, "/transmission/rpc", strings.NewReader(body))
+	req.SetBasicAuth("u", "p")
+
+	w := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	info, err := os.Stat(filepath.Join(root, "tv"))
+	require.NoError(t, err, "the category directory should exist immediately after the first add")
+	assert.True(t, info.IsDir())
+}
+
+func TestTorrentAdd_NoCategoryCreatesNothing(t *testing.T) {
+	root := t.TempDir()
+	handler := NewTransmissionHandler("u", "p", &mockPutioClient{}, "itv", root, nil)
+
+	body := `{"method":"torrent-add","arguments":{"filename":"magnet:?xt=urn:btih:abc"}}`
+	req := httptest.NewRequest(http.MethodPost, "/transmission/rpc", strings.NewReader(body))
+	req.SetBasicAuth("u", "p")
+
+	w := httptest.NewRecorder()
+	handler.Routes().ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	entries, err := os.ReadDir(root)
+	require.NoError(t, err)
+	assert.Empty(t, entries)
 }
