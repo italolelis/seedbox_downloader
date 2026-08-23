@@ -22,13 +22,19 @@ type DownloadClient interface {
 }
 
 type TransferClient interface {
-	AddTransfer(ctx context.Context, url string, downloadDir string) (*Transfer, error)
-	AddTransferByBytes(ctx context.Context, torrentBytes []byte, filename string, downloadDir string) (*Transfer, error)
+	// AddTransfer files a transfer under label/category on the seedbox. An empty
+	// category means the label's own folder, which is where transfers land when
+	// the requesting app sends no category of its own.
+	AddTransfer(ctx context.Context, url, label, category string) (*Transfer, error)
+	AddTransferByBytes(ctx context.Context, torrentBytes []byte, filename, label, category string) (*Transfer, error)
 	RemoveTransfers(ctx context.Context, transferIDs []string, deleteLocalData bool) error
 }
 
 type Transfer struct {
-	ID    string
+	ID string
+	// Label is the category this transfer belongs to -- which *arr app asked for
+	// it. Empty means it sits directly in the target label's folder, which is
+	// where anything added without a category goes.
 	Label string
 	Name  string
 	// RemoteFolder is where the transfer lives on the seedbox -- a Put.io folder
@@ -68,6 +74,14 @@ func (t *Transfer) IsAvailable() bool {
 	status := strings.ToLower(t.Status)
 
 	return status == "completed" || status == "seeding" || status == "seedingwait" || status == "finished"
+}
+
+// LocalSubdir is the directory beneath the local root that this transfer's
+// content lives in: its category, or nothing when it has none. Both the path
+// written to disk and the path advertised over RPC are built from it, so the two
+// cannot disagree about where a category's content goes.
+func (t *Transfer) LocalSubdir() string {
+	return t.Label
 }
 
 // HashString is the transfer's identity as a torrent hash: the SHA-1 of its id,

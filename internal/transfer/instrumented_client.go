@@ -102,13 +102,13 @@ func NewInstrumentedTransferClient(client TransferClient, tel *telemetry.Telemet
 }
 
 // AddTransfer adds a transfer with telemetry.
-func (c *InstrumentedTransferClient) AddTransfer(ctx context.Context, url string, downloadDir string) (*Transfer, error) {
+func (c *InstrumentedTransferClient) AddTransfer(ctx context.Context, url, label, category string) (*Transfer, error) {
 	var result *Transfer
 
 	var err error
 
 	instrumentedErr := c.telemetry.InstrumentClientOperation(ctx, c.clientType, "add_transfer", func(ctx context.Context) error {
-		result, err = c.client.AddTransfer(ctx, url, downloadDir)
+		result, err = c.client.AddTransfer(ctx, url, label, category)
 
 		return err
 	})
@@ -124,14 +124,14 @@ func (c *InstrumentedTransferClient) AddTransfer(ctx context.Context, url string
 
 // AddTransferByBytes adds a transfer from .torrent file bytes with telemetry.
 func (c *InstrumentedTransferClient) AddTransferByBytes(
-	ctx context.Context, torrentBytes []byte, filename string, downloadDir string,
+	ctx context.Context, torrentBytes []byte, filename, label, category string,
 ) (*Transfer, error) {
 	var result *Transfer
 
 	var err error
 
 	instrumentedErr := c.telemetry.InstrumentClientOperation(ctx, c.clientType, "add_transfer_by_bytes", func(ctx context.Context) error {
-		result, err = c.client.AddTransferByBytes(ctx, torrentBytes, filename, downloadDir)
+		result, err = c.client.AddTransferByBytes(ctx, torrentBytes, filename, label, category)
 
 		return err
 	})

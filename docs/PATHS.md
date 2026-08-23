@@ -83,41 +83,66 @@ imported regardless.
 
 ## Sonarr / Radarr download client settings
 
-**Leave the Category field empty.** Sonarr calls it Category, Radarr calls it Category;
-both must be blank.
+**Give each app its own Category** — for example `tv` in Sonarr and `movies` in
+Radarr. Anything works as long as they differ.
 
-If you set it, the \*arr app **appends it to the download directory reported by
-`session-get`** when working out where this client puts things:
+The category decides which folder a transfer is filed into, on the seedbox and
+locally:
+
+```
+Put.io                                local disk
+  /<TARGET_LABEL>/                      DOWNLOAD_DIR/
+    tv/      <- Sonarr's category         tv/      <- advertised to Sonarr
+    movies/  <- Radarr's category         movies/  <- advertised to Radarr
+```
+
+Each transfer is advertised under its own category, and the \*arr apps filter on
+exactly that, so each sees only its own downloads. Sonarr does this itself:
 
 ```csharp
-if (Settings.MovieCategory.IsNotNullOrWhiteSpace())
+if (Settings.TvCategory.IsNotNullOrWhiteSpace() && SupportsLabels && torrent.Labels is { Count: > 0 })
 {
-    destDir = $"{destDir}/{Settings.MovieCategory}";
+    if (!torrent.Labels.Contains(Settings.TvCategory, ...)) continue;
 }
 ```
 
-So with `DOWNLOAD_DIR=/data/Downloads/itv` and a category of `itv`, the app looks for
-`/data/Downloads/itv/itv`, which does not exist, and reports:
+`TARGET_LABEL` still scopes everything this instance owns — categories are nested
+inside it, so on a shared Put.io account a category named `movies` cannot collide
+with another user's folder of the same name.
+
+### Leaving it empty
+
+Supported, and what happens if you never set it: transfers go to the target
+label's own folder and are advertised under `TARGET_LABEL`. That is the pre-2.1
+behaviour. The cost is that **every app sees every transfer**, so Sonarr shows
+Radarr's movies in its queue as unimportable, and dismissing one with "remove from
+client" deletes that transfer from Put.io — including the other app's copy.
+
+### Upgrading from an earlier version
+
+Do it in this order, or in-flight downloads become invisible:
+
+1. **Deploy first.** Nothing changes: with no category configured, transfers still
+   go to the target label's folder exactly as before.
+2. **Let the queue drain.** Anything already downloaded sits directly in the label
+   folder with no category.
+3. **Then set the categories.** New grabs are filed under them.
+
+Setting categories before the queue drains hides the older transfers from both
+apps: they carry no category, so an app filtering for `tv` will not match them.
+They are not lost — clear the category again, or import them manually.
+
+If you had a category set on an earlier version, you will have seen this:
 
 ```
 You are using docker; download client Transmission places downloads in
 /data/Downloads/itv/itv but this directory does not appear to exist inside
-the container. Review your remote path mappings and container volume settings.
+the container.
 ```
 
-**The category does not select the Put.io folder.** `TARGET_LABEL` does that. The label
-on an incoming `torrent-add` is parsed and discarded — every transfer is filed under
-`TARGET_LABEL` regardless of what the requesting app asked for. Clearing the field
-therefore cannot move anything on Put.io.
-
-Nor does clearing it lose any filtering. The \*arr apps keep a torrent when its path
-contains the category as a segment, and `DOWNLOAD_DIR` ends in the label, so every
-transfer matched anyway.
-
-> Both apps currently see **every** transfer under `TARGET_LABEL`, not just their own,
-> because the per-request category is ignored. That is tracked separately and is worth
-> knowing about: dismissing a queue item with "remove from client" deletes the transfer
-> from Put.io, including the other app's copy.
+That was the app appending the category to a download directory that already
+ended in the label. It no longer happens: the advertised directory is the
+category's own folder, which is created as soon as an app first asks for it.
 
 ## Remote path mapping
 

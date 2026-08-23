@@ -18,32 +18,35 @@ import (
 
 // mockPutioClient implements DownloadClient interface for testing.
 type mockPutioClient struct {
-	addTransferFunc          func(ctx context.Context, magnetLink, parentName string) (*transfer.Transfer, error)
-	addTransferByBytesFunc   func(ctx context.Context, content []byte, filename, parentName string) (*transfer.Transfer, error)
+	addTransferFunc          func(ctx context.Context, magnetLink, label, category string) (*transfer.Transfer, error)
+	addTransferByBytesFunc   func(ctx context.Context, content []byte, filename, label, category string) (*transfer.Transfer, error)
 	getTaggedTorrentsFunc    func(ctx context.Context, label string) ([]*transfer.Transfer, error)
 	addTransferCalled        bool
 	addTransferByBytesCalled bool
 	lastMagnetLink           string
 	lastFilename             string
-	lastParentName           string
+	lastLabel                string
+	lastCategory             string
 }
 
-func (m *mockPutioClient) AddTransfer(ctx context.Context, magnetLink, parentName string) (*transfer.Transfer, error) {
+func (m *mockPutioClient) AddTransfer(ctx context.Context, magnetLink, label, category string) (*transfer.Transfer, error) {
 	m.addTransferCalled = true
 	m.lastMagnetLink = magnetLink
-	m.lastParentName = parentName
+	m.lastLabel = label
+	m.lastCategory = category
 	if m.addTransferFunc != nil {
-		return m.addTransferFunc(ctx, magnetLink, parentName)
+		return m.addTransferFunc(ctx, magnetLink, label, category)
 	}
 	return &transfer.Transfer{ID: "mock-transfer-id", Name: "mock-transfer"}, nil
 }
 
-func (m *mockPutioClient) AddTransferByBytes(ctx context.Context, content []byte, filename, parentName string) (*transfer.Transfer, error) {
+func (m *mockPutioClient) AddTransferByBytes(ctx context.Context, content []byte, filename, label, category string) (*transfer.Transfer, error) {
 	m.addTransferByBytesCalled = true
 	m.lastFilename = filename
-	m.lastParentName = parentName
+	m.lastLabel = label
+	m.lastCategory = category
 	if m.addTransferByBytesFunc != nil {
-		return m.addTransferByBytesFunc(ctx, content, filename, parentName)
+		return m.addTransferByBytesFunc(ctx, content, filename, label, category)
 	}
 	return &transfer.Transfer{ID: "mock-transfer-id", Name: "mock-transfer"}, nil
 }
@@ -337,7 +340,7 @@ func TestHandleTorrentAdd_MetaInfo_Success(t *testing.T) {
 	metainfo := base64.StdEncoding.EncodeToString(validTorrent)
 
 	mockClient := &mockPutioClient{
-		addTransferByBytesFunc: func(ctx context.Context, content []byte, filename, parentName string) (*transfer.Transfer, error) {
+		addTransferByBytesFunc: func(ctx context.Context, content []byte, filename, label, category string) (*transfer.Transfer, error) {
 			return &transfer.Transfer{
 				ID:   "12345",
 				Name: "test-transfer",
@@ -374,7 +377,7 @@ func TestHandleTorrentAdd_MetaInfo_Success(t *testing.T) {
 
 func TestHandleTorrentAdd_MagnetLink_BackwardCompatibility(t *testing.T) {
 	mockClient := &mockPutioClient{
-		addTransferFunc: func(ctx context.Context, magnetLink, parentName string) (*transfer.Transfer, error) {
+		addTransferFunc: func(ctx context.Context, magnetLink, label, category string) (*transfer.Transfer, error) {
 			return &transfer.Transfer{
 				ID:   "67890",
 				Name: "magnet-transfer",
@@ -540,7 +543,7 @@ func TestHandleTorrentAdd_RealTorrentFile(t *testing.T) {
 	metainfo := base64.StdEncoding.EncodeToString(torrentData)
 
 	mockClient := &mockPutioClient{
-		addTransferByBytesFunc: func(ctx context.Context, content []byte, filename, parentName string) (*transfer.Transfer, error) {
+		addTransferByBytesFunc: func(ctx context.Context, content []byte, filename, label, category string) (*transfer.Transfer, error) {
 			// Verify the content matches what we sent
 			require.Equal(t, torrentData, content, "torrent content should match fixture")
 			return &transfer.Transfer{ID: "real-torrent-id", Name: "real-transfer"}, nil
