@@ -72,10 +72,6 @@ type Transfer struct {
 	// InProgress omits the file id, as Put.io does before a transfer completes,
 	// so no file details are discoverable yet.
 	InProgress bool
-
-	// Uploaded is how many bytes the seedbox has seeded so far. The transfer's
-	// ratio is this over its size; SetUploaded moves it while a test runs.
-	Uploaded int64
 }
 
 // Seedbox is a running fake Put.io.
@@ -94,6 +90,9 @@ type Seedbox struct {
 	transfers []fakeTransfer
 	labelID   int64
 	nextID    int64
+
+	// failFileGets makes metadata lookups fail while true.
+	failFileGets bool
 }
 
 type node struct {
@@ -153,7 +152,6 @@ func New(t *testing.T, label string, transfers ...Transfer) *Seedbox {
 			saveParentID: parentID,
 			status:       status,
 			size:         s.sizeOf(rootID),
-			uploaded:     tr.Uploaded,
 		}
 
 		if tr.InProgress {
@@ -221,6 +219,16 @@ func (s *Seedbox) SetStatus(name, status string) {
 	defer s.mu.Unlock()
 
 	s.transfer(name).status = status
+}
+
+// FailFileGets makes every file metadata lookup fail with a server error, or
+// stops doing so -- the transient Put.io outage that makes a transfer drop out of
+// a listing while it is still on the account.
+func (s *Seedbox) FailFileGets(fail bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.failFileGets = fail
 }
 
 // HasTransfer reports whether the named transfer is still on the account, i.e.
@@ -471,6 +479,12 @@ func (s *Seedbox) handleFiles(w http.ResponseWriter, r *http.Request) {
 
 	if _, ok := s.nodes[id]; !ok {
 		http.Error(w, "not found", http.StatusNotFound)
+
+		return
+	}
+
+	if s.failFileGets && !isURL {
+		http.Error(w, "the seedbox is unhappy", http.StatusInternalServerError)
 
 		return
 	}

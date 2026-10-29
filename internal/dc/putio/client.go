@@ -187,7 +187,10 @@ func (c *Client) GetTransferInfo(ctx context.Context, transferID string) (transf
 
 		state := transfer.SeedingState{
 			SecondsSeeding: int64(t.SecondsSeeding),
-			Seeding:        transfer.IsSeedingStatus(t.Status),
+			// Put.io moves a transfer from SEEDING to COMPLETED when it stops
+			// seeding it, and COMPLETED is the status it has from the start when
+			// the account does not seed at all.
+			StoppedSeeding: strings.EqualFold(t.Status, "COMPLETED"),
 		}
 
 		if t.Downloaded != 0 {

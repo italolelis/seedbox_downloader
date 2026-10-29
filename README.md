@@ -188,8 +188,9 @@ All configuration is done via environment variables.
 With neither target set, a transfer is removed from Put.io as soon as it is imported. With
 one or both set, it is removed when **either** is reached, which matches how most private
 trackers judge a hit-and-run: a ratio of 1.0 **or** a minimum seeding time. A transfer
-that Put.io stops seeding on its own is removed straight away, whatever its ratio, because
-it can no longer reach either target. The final ratio is logged when that happens.
+Put.io reports as `COMPLETED` (it has stopped seeding it) is removed straight away, whatever
+its ratio, because it can no longer reach either target. The final ratio is logged when that
+happens. Any other status, such as an error, keeps the transfer waiting.
 
 ### Transmission Proxy (for *Arr)
 

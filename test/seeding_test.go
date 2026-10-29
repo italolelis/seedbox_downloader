@@ -75,6 +75,25 @@ func TestWatchForSeeding_SeedboxStopsSeeding_CleansUp(t *testing.T) {
 	assertCleanedUp(t, sb, dl)
 }
 
+// Only Put.io's own word that seeding is over counts as stopped. Any other
+// status that is not seeding -- an error, a queue -- may be transient, and
+// removing a transfer short of its targets on one such reading is a hit-and-run.
+func TestWatchForSeeding_TransientStatus_KeepsSeeding(t *testing.T) {
+	sb, dl, tr := startSeeding(t)
+
+	watch(t, dl, tr, downloader.SeedPolicy{Ratio: 1.0, Time: 72 * time.Hour})
+
+	sb.SetStatus(seeding, "ERROR")
+
+	select {
+	case <-dl.OnTransferCleanedUp:
+		t.Fatal("a transfer must not be removed on a status that does not say seeding is over")
+	case <-time.After(20 * seedTick):
+	}
+
+	assert.True(t, sb.HasTransfer(seeding))
+}
+
 // startSeeding puts one seeding transfer on a fake seedbox, with nothing
 // uploaded and no time spent seeding yet.
 func startSeeding(t *testing.T) (*seedbox.Seedbox, *downloader.Downloader, *transfer.Transfer) {
