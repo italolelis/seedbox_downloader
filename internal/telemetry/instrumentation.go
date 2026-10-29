@@ -6,6 +6,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // CARDINALITY BEST PRACTICES:
@@ -83,7 +84,17 @@ func (t *Telemetry) InstrumentDBOperation(ctx context.Context, operation string,
 	}
 
 	start := time.Now()
-	err := t.InstrumentOperation(ctx, "db_"+operation, "database", fn)
+
+	// Traced only as part of a trace already under way. The ledger is called
+	// without a request context, so a span here would root a one-span trace of
+	// its own -- one per claim renewal, every few minutes, forever.
+	var err error
+	if trace.SpanFromContext(ctx).SpanContext().IsValid() {
+		err = t.InstrumentOperation(ctx, "db_"+operation, "database", fn)
+	} else {
+		err = fn(ctx)
+	}
+
 	duration := time.Since(start)
 
 	status := "success"
@@ -103,10 +114,7 @@ func (t *Telemetry) InstrumentClientOperation(ctx context.Context, client, opera
 	}
 
 	err := t.InstrumentOperation(ctx, "client_"+operation, "download_client", func(ctx context.Context) error {
-		ctx, span := t.tracer.Start(ctx, "client_"+operation)
-		defer span.End()
-
-		span.SetAttributes(
+		trace.SpanFromContext(ctx).SetAttributes(
 			attribute.String("client.type", client),
 			attribute.String("client.operation", operation),
 		)
@@ -136,12 +144,9 @@ func (t *Telemetry) InstrumentDownload(ctx context.Context, transferID, transfer
 	defer t.DecrementActiveDownloads(ctx)
 
 	err := t.InstrumentOperation(ctx, "download", "downloader", func(ctx context.Context) error {
-		ctx, span := t.tracer.Start(ctx, "download")
-		defer span.End()
-
 		// Note: transfer.id and transfer.name are intentionally NOT added as attributes
 		// to prevent high cardinality issues. They are available in logs if needed.
-		span.SetAttributes(
+		trace.SpanFromContext(ctx).SetAttributes(
 			attribute.String("download.type", "transfer"),
 		)
 
