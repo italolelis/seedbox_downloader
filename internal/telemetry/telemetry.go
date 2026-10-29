@@ -11,12 +11,16 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/metric/noop"
+	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 	"go.opentelemetry.io/otel/trace"
+	tracenoop "go.opentelemetry.io/otel/trace/noop"
 )
 
 // Telemetry holds all telemetry instruments and providers.
@@ -24,9 +28,10 @@ import (
 // Metrics leave the process over OTLP and nothing else. There is no Prometheus
 // scrape endpoint: point a collector at OTELAddress and scrape the collector.
 type Telemetry struct {
-	meterProvider metric.MeterProvider
-	tracer        trace.Tracer
-	meter         metric.Meter
+	meterProvider  metric.MeterProvider
+	tracerProvider trace.TracerProvider
+	tracer         trace.Tracer
+	meter          metric.Meter
 
 	// RED Metrics are handled by otelhttp, and process resources (memory,
 	// goroutines, GC) by the Go runtime instrumentation started in
@@ -93,13 +98,17 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 		return nil, fmt.Errorf("failed to create resource: %w", err)
 	}
 
-	var meterProvider metric.MeterProvider
+	var (
+		meterProvider  metric.MeterProvider
+		tracerProvider trace.TracerProvider
+	)
 
 	switch {
 	case !cfg.Enabled:
 		slog.InfoContext(ctx, "telemetry disabled - metrics and traces will not be exported")
 
 		meterProvider = noop.NewMeterProvider()
+		tracerProvider = tracenoop.NewTracerProvider()
 	case cfg.OTELAddress == "":
 		return nil, ErrMissingOTELAddress
 	default:
@@ -129,19 +138,31 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 			sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exporter)),
 			sdkmetric.WithResource(res),
 		)
+
+		tracerProvider, err = newTracerProvider(ctx, cfg, res)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	// Set global meter provider
+	// Set global providers. The spans created by otelhttp, the instrumented
+	// clients and the repository all come from the global tracer provider, which
+	// is a no-op until one is installed -- so without this they were created and
+	// thrown away, and the trace ids in the logs were always zero.
 	otel.SetMeterProvider(meterProvider)
+	otel.SetTracerProvider(tracerProvider)
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{}, propagation.Baggage{}))
 
 	// Create tracer and meter
 	tracer := otel.Tracer(cfg.ServiceName)
 	meter := otel.Meter(cfg.ServiceName)
 
 	t := &Telemetry{
-		meterProvider: meterProvider,
-		tracer:        tracer,
-		meter:         meter,
+		meterProvider:  meterProvider,
+		tracerProvider: tracerProvider,
+		tracer:         tracer,
+		meter:          meter,
 	}
 
 	// Initialize all metrics
@@ -249,11 +270,36 @@ func (t *Telemetry) RecordTorrentType(ctx context.Context, torrentType string) {
 
 // Shutdown gracefully shuts down the telemetry system.
 func (t *Telemetry) Shutdown(ctx context.Context) error {
+	var errs []error
+
 	if mp, ok := t.meterProvider.(*sdkmetric.MeterProvider); ok {
-		return mp.Shutdown(ctx)
+		errs = append(errs, mp.Shutdown(ctx))
 	}
 
-	return nil
+	if tp, ok := t.tracerProvider.(*sdktrace.TracerProvider); ok {
+		errs = append(errs, tp.Shutdown(ctx))
+	}
+
+	return errors.Join(errs...)
+}
+
+// newTracerProvider exports spans over OTLP to the same collector as metrics,
+// batched so that recording a span never waits on the network.
+func newTracerProvider(ctx context.Context, cfg Config, res *resource.Resource) (*sdktrace.TracerProvider, error) {
+	opts := []otlptracegrpc.Option{otlptracegrpc.WithEndpoint(cfg.OTELAddress)}
+	if cfg.Insecure {
+		opts = append(opts, otlptracegrpc.WithInsecure())
+	}
+
+	exporter, err := otlptracegrpc.New(ctx, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create OTLP trace exporter: %w", err)
+	}
+
+	return sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(exporter),
+		sdktrace.WithResource(res),
+	), nil
 }
 
 // initializeMetrics creates all metric instruments. The instruments are created

@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric/noop"
 )
 
@@ -138,4 +139,46 @@ func TestDisabledTelemetry_RecordingAndShutdownAreSafe(t *testing.T) {
 	})
 
 	assert.NoError(t, tel.Shutdown(ctx))
+}
+
+// Spans were created all along -- by otelhttp, the instrumented clients and the
+// repository -- but against the default no-op tracer, so none was ever
+// recorded and none left the process. Enabled telemetry has to record them.
+func TestNew_Enabled_RecordsSpans(t *testing.T) {
+	tel, err := New(context.Background(), Config{
+		Enabled:        true,
+		ServiceName:    "test",
+		ServiceVersion: "test",
+		OTELAddress:    closedAddr(t),
+		Insecure:       true,
+	})
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+
+		_ = tel.Shutdown(ctx)
+	})
+
+	_, span := otel.Tracer("test").Start(context.Background(), "operation")
+	defer span.End()
+
+	assert.True(t, span.IsRecording(), "an enabled tracer must record spans")
+	assert.True(t, span.SpanContext().IsValid(), "and give them real trace and span ids, which the logs carry")
+
+	// Outgoing requests carry the trace onward only if a propagator is installed;
+	// the default one injects nothing.
+	assert.Contains(t, otel.GetTextMapPropagator().Fields(), "traceparent")
+}
+
+func TestNew_Disabled_RecordsNoSpans(t *testing.T) {
+	tel, err := New(context.Background(), Config{Enabled: false, ServiceName: "test"})
+	require.NoError(t, err)
+
+	_, span := otel.Tracer("test").Start(context.Background(), "operation")
+	defer span.End()
+
+	assert.False(t, span.IsRecording())
+	assert.NoError(t, tel.Shutdown(context.Background()))
 }

@@ -3,7 +3,8 @@
 # This exists because the application exports over OTLP and nothing else -- it
 # opens no scrape endpoint of its own. The collector receives OTLP and re-exposes
 # the metrics in Prometheus format, so Prometheus scrapes the collector rather
-# than the application.
+# than the application. Traces arrive over the same OTLP receiver and are
+# forwarded to Jaeger.
 
 receivers:
   otlp:
@@ -25,9 +26,20 @@ exporters:
     # available on the target_info metric instead -- join against it in Grafana if
     # you need service.name or service.version.
 
+  # Jaeger accepts OTLP natively. Without a traces pipeline the collector would
+  # reject every span export, and the application would warn about it each batch.
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+
 service:
   pipelines:
     metrics:
       receivers: [otlp]
       processors: [batch]
       exporters: [prometheus]
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/jaeger]

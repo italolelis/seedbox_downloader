@@ -38,6 +38,15 @@ services:
       - "8889:8889" # Prometheus exporter, scraped by Prometheus
     networks:
       - monitoring
+    depends_on:
+      - jaeger
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    ports:
+      - "16686:16686" # Jaeger UI
+    networks:
+      - monitoring
 
   prometheus:
     image: prom/prometheus:latest
