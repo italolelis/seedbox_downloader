@@ -373,7 +373,11 @@ func (h *harness) waitForCleanup(sb *seedbox.Seedbox) {
 
 	require.Eventually(h.t, func() bool { return !sb.HasTransfer(transferName) }, settle, tick,
 		"the transfer was never removed from Put.io")
-	require.False(h.t, sb.HasFile(transferName), "the transfer's files must be deleted from Put.io too")
+
+	// Removal is two calls -- cancel the transfer, then delete its files -- so the
+	// files can still be there for a moment after the transfer is gone.
+	require.Eventually(h.t, func() bool { return !sb.HasFile(transferName) }, settle, tick,
+		"the transfer's files must be deleted from Put.io too")
 
 	h.waitForStatus(storage.StatusCleaned)
 }
