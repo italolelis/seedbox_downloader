@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"time"
 
 	"github.com/italolelis/seedbox_downloader/internal/storage"
 	"github.com/italolelis/seedbox_downloader/internal/telemetry"
@@ -15,9 +16,9 @@ type InstrumentedDownloadRepository struct {
 }
 
 // NewInstrumentedDownloadRepository creates a new instrumented download repository.
-func NewInstrumentedDownloadRepository(dbConn *sql.DB, tel *telemetry.Telemetry) *InstrumentedDownloadRepository {
+func NewInstrumentedDownloadRepository(dbConn *sql.DB, lease time.Duration, tel *telemetry.Telemetry) *InstrumentedDownloadRepository {
 	return &InstrumentedDownloadRepository{
-		repo:      NewDownloadRepository(dbConn),
+		repo:      NewDownloadRepository(dbConn, lease),
 		telemetry: tel,
 	}
 }
@@ -64,5 +65,12 @@ func (r *InstrumentedDownloadRepository) ClaimTransfer(transferID string) (bool,
 func (r *InstrumentedDownloadRepository) UpdateTransferStatus(transferID, status string) error {
 	return r.telemetry.InstrumentDBOperation(context.Background(), "update_transfer_status", func(ctx context.Context) error {
 		return r.repo.UpdateTransferStatus(transferID, status)
+	})
+}
+
+// RenewClaims renews this instance's claims with telemetry.
+func (r *InstrumentedDownloadRepository) RenewClaims() error {
+	return r.telemetry.InstrumentDBOperation(context.Background(), "renew_claims", func(ctx context.Context) error {
+		return r.repo.RenewClaims()
 	})
 }

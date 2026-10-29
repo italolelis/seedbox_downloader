@@ -31,4 +31,5 @@ type DownloadRepository interface {
 	GetDownloads() ([]DownloadRecord, error)              // get all downloads
 	ClaimTransfer(transferID string) (bool, error)        // atomically claim a transfer
 	UpdateTransferStatus(transferID, status string) error // update status after download
+	RenewClaims() error                                   // extend this instance's leases on its claims
 }

@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/italolelis/seedbox_downloader/internal/dc/putio"
 )
@@ -43,6 +44,10 @@ type Entry struct {
 	// reports the full size. Reading it produces no error -- the shortfall is only
 	// visible by counting bytes against the reported size.
 	TruncateTo int
+
+	// Delay holds the response back this long before sending it, for a download
+	// that outlasts something else -- a claim's lease, say.
+	Delay time.Duration
 
 	// AbortAfter, when positive, declares the full length and then hangs up after
 	// that many bytes, so the read itself fails mid-stream. This is a different
@@ -93,6 +98,9 @@ type Seedbox struct {
 
 	// failFileGets makes metadata lookups fail while true.
 	failFileGets bool
+
+	// fetches counts how many times each file's bytes were requested.
+	fetches map[int64]int
 }
 
 type node struct {
@@ -125,6 +133,7 @@ func New(t *testing.T, label string, transfers ...Transfer) *Seedbox {
 		label:    label,
 		nodes:    map[int64]*node{},
 		children: map[int64][]int64{},
+		fetches:  map[int64]int{},
 		nextID:   100,
 	}
 
@@ -229,6 +238,23 @@ func (s *Seedbox) FailFileGets(fail bool) {
 	defer s.mu.Unlock()
 
 	s.failFileGets = fail
+}
+
+// Fetches reports how many times the bytes of the file with the given name were
+// requested -- more than once means something downloaded it twice.
+func (s *Seedbox) Fetches(name string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	total := 0
+
+	for id, n := range s.nodes {
+		if n.entry.Name == name {
+			total += s.fetches[id]
+		}
+	}
+
+	return total
 }
 
 // HasTransfer reports whether the named transfer is still on the account, i.e.
@@ -500,9 +526,6 @@ func (s *Seedbox) handleFiles(w http.ResponseWriter, r *http.Request) {
 
 // handleDownload serves file bytes, honouring the entry's injected failures.
 func (s *Seedbox) handleDownload(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	id, err := strconv.ParseInt(strings.TrimPrefix(r.URL.Path, "/download/"), 10, 64)
 	if err != nil {
 		http.Error(w, "bad file id", http.StatusBadRequest)
@@ -510,12 +533,20 @@ func (s *Seedbox) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Looked up under the lock, served without it, so a delayed download does
+	// not stall every other request to the fake.
+	s.mu.Lock()
 	n, ok := s.nodes[id]
+	s.fetches[id]++
+	s.mu.Unlock()
+
 	if !ok {
 		http.Error(w, "not found", http.StatusNotFound)
 
 		return
 	}
+
+	time.Sleep(n.entry.Delay)
 
 	if n.entry.Status != 0 {
 		http.Error(w, "the seedbox is unhappy", n.entry.Status)

@@ -165,6 +165,7 @@ All configuration is done via environment variables.
 | `MAX_PARALLEL` | `5` | Max concurrent file downloads |
 | `LOG_LEVEL` | `INFO` | Log level: `DEBUG`, `INFO`, `WARN`, `ERROR` |
 | `DB_PATH` | `downloads.db` | Path to the SQLite database |
+| `CLAIM_LEASE` | `5m` | How long a claim on a transfer survives without renewal. A running instance renews its claims three times per lease; if it dies mid-download, another instance (or the restarted one) takes the transfer over once the lease lapses |
 | `DISCORD_WEBHOOK_URL` | | Discord webhook for notifications |
 
 ### Deluge Settings
