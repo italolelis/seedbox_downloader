@@ -120,8 +120,8 @@
                         "uid": "prometheus"
                     },
                     "editorMode": "code",
-                    "expr": "rate(http_requests_total[5m])",
-                    "legendFormat": "{{method}} {{path}}",
+                    "expr": "sum by (http_request_method, http_response_status_code) (rate(http_server_request_duration_seconds_count[5m]))",
+                    "legendFormat": "{{http_request_method}} {{http_response_status_code}}",
                     "range": true,
                     "refId": "A"
                 }
@@ -188,7 +188,7 @@
                         "uid": "prometheus"
                     },
                     "editorMode": "code",
-                    "expr": "rate(http_requests_total{status=~\"4..|5..\"}[5m]) / rate(http_requests_total[5m])",
+                    "expr": "sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~\"4..|5..\"}[5m])) / sum(rate(http_server_request_duration_seconds_count[5m]))",
                     "legendFormat": "Error Rate",
                     "range": true,
                     "refId": "A"
@@ -256,7 +256,7 @@
                         "uid": "prometheus"
                     },
                     "editorMode": "code",
-                    "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))",
+                    "expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket[5m])))",
                     "legendFormat": "95th Percentile",
                     "range": true,
                     "refId": "A"
@@ -437,7 +437,8 @@
                                 "value": 5
                             }
                         ]
-                    }
+                    },
+                    "unit": "short"
                 },
                 "overrides": []
             },
@@ -470,13 +471,13 @@
                         "uid": "prometheus"
                     },
                     "editorMode": "code",
-                    "expr": "transfers_active",
-                    "legendFormat": "Active Transfers",
+                    "expr": "sum by (operation) (increase(transfers_total[1h]))",
+                    "legendFormat": "{{operation}}",
                     "range": true,
                     "refId": "A"
                 }
             ],
-            "title": "Active Transfers",
+            "title": "Transfers Added and Removed",
             "type": "stat"
         },
         {
@@ -564,7 +565,7 @@
                         "uid": "prometheus"
                     },
                     "editorMode": "code",
-                    "expr": "histogram_quantile(0.95, rate(download_duration_seconds_bucket[5m]))",
+                    "expr": "histogram_quantile(0.95, sum by (le) (rate(downloads_duration_seconds_bucket[5m])))",
                     "legendFormat": "95th Percentile",
                     "range": true,
                     "refId": "A"
@@ -771,7 +772,7 @@
             },
             "id": 12,
             "panels": [],
-            "title": "System Resources (USE Metrics)",
+            "title": "Go Runtime",
             "type": "row"
         },
         {
@@ -859,13 +860,13 @@
                         "uid": "prometheus"
                     },
                     "editorMode": "code",
-                    "expr": "memory_usage_bytes",
-                    "legendFormat": "Memory Usage",
+                    "expr": "sum(go_memory_used_bytes)",
+                    "legendFormat": "Memory Used",
                     "range": true,
                     "refId": "A"
                 }
             ],
-            "title": "Memory Usage",
+            "title": "Memory Used",
             "type": "timeseries"
         },
         {
@@ -952,7 +953,7 @@
                         "uid": "prometheus"
                     },
                     "editorMode": "code",
-                    "expr": "goroutine_count",
+                    "expr": "go_goroutine_count",
                     "legendFormat": "Goroutines",
                     "range": true,
                     "refId": "A"
@@ -989,7 +990,7 @@
                             }
                         ]
                     },
-                    "unit": "s"
+                    "unit": "bytes"
                 },
                 "overrides": []
             },
@@ -1022,13 +1023,13 @@
                         "uid": "prometheus"
                     },
                     "editorMode": "code",
-                    "expr": "system_uptime_seconds",
-                    "legendFormat": "Uptime",
+                    "expr": "go_memory_gc_goal_bytes",
+                    "legendFormat": "GC Goal",
                     "range": true,
                     "refId": "A"
                 }
             ],
-            "title": "System Uptime",
+            "title": "GC Goal",
             "type": "stat"
         },
         {
@@ -1086,7 +1087,7 @@
                             }
                         ]
                     },
-                    "unit": "ops"
+                    "unit": "Bps"
                 },
                 "overrides": []
             },
@@ -1116,13 +1117,13 @@
                         "uid": "prometheus"
                     },
                     "editorMode": "code",
-                    "expr": "rate(system_errors_total[5m])",
-                    "legendFormat": "{{component}} {{error_type}}",
+                    "expr": "rate(go_memory_allocated_bytes_total[5m])",
+                    "legendFormat": "Allocated",
                     "range": true,
                     "refId": "A"
                 }
             ],
-            "title": "System Error Rate",
+            "title": "Allocation Rate",
             "type": "timeseries"
         },
         {
@@ -1317,7 +1318,7 @@
                         "uid": "prometheus"
                     },
                     "editorMode": "code",
-                    "expr": "histogram_quantile(0.95, rate(db_operation_duration_seconds_bucket[5m]))",
+                    "expr": "histogram_quantile(0.95, sum by (le, operation) (rate(db_operations_duration_seconds_bucket[5m])))",
                     "legendFormat": "{{operation}} (95th percentile)",
                     "range": true,
                     "refId": "A"

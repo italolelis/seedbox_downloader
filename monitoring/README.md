@@ -20,23 +20,23 @@ This directory contains the complete monitoring stack for the Seedbox Downloader
 The Grafana dashboard provides comprehensive monitoring across four key areas:
 
 ### 🔴 RED Metrics (Request-focused)
-- **HTTP Request Rate**: Requests per second by method and path
+- **HTTP Request Rate**: Requests per second by method and status code
 - **HTTP Error Rate**: Percentage of 4xx/5xx responses
 - **HTTP Response Time**: 95th percentile latency
 
 ### 💼 Business Metrics
 - **Downloads by Status**: Pie chart showing success/failure distribution
 - **Active Downloads**: Current number of downloads in progress
-- **Active Transfers**: Current number of transfers being processed
+- **Transfers Added and Removed**: Transfers added to and removed from the seedbox in the last hour
 - **Download Duration**: Time taken for downloads to complete
 - **Client Operations**: Rate of operations per download client
 - **Client Errors**: Error rate by client and operation type
 
-### 📈 USE Metrics (Resource-focused)
-- **Memory Usage**: Application memory consumption over time
-- **Goroutine Count**: Number of active goroutines
-- **System Uptime**: How long the application has been running
-- **System Error Rate**: Application errors by component
+### 📈 Go Runtime (Resource-focused)
+- **Memory Used**: Memory used by the Go runtime over time
+- **Goroutine Count**: Number of live goroutines
+- **GC Goal**: Heap size the garbage collector is aiming for
+- **Allocation Rate**: Bytes allocated per second
 
 ### 🗄️ Database Performance
 - **Database Operations Rate**: Operations per second by type and status

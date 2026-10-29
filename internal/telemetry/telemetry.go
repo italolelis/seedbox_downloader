@@ -28,29 +28,20 @@ type Telemetry struct {
 	tracer        trace.Tracer
 	meter         metric.Meter
 
-	// RED Metrics are now handled by otelhttp automatically
-
-	// USE Metrics (Utilization, Saturation, Errors)
-	cpuUsage       metric.Float64Gauge
-	memoryUsage    metric.Int64Gauge
-	goroutineCount metric.Int64Gauge
-	diskUsage      metric.Int64Gauge
+	// RED Metrics are handled by otelhttp, and process resources (memory,
+	// goroutines, GC) by the Go runtime instrumentation started in
+	// initializeMetrics. Neither needs an instrument here.
 
 	// Business Metrics
 	downloadsTotal        metric.Int64Counter
 	downloadsActive       metric.Int64UpDownCounter
 	downloadDuration      metric.Float64Histogram
 	transfersTotal        metric.Int64Counter
-	transfersActive       metric.Int64UpDownCounter
 	clientOperationsTotal metric.Int64Counter
 	clientErrors          metric.Int64Counter
 	dbOperationsTotal     metric.Int64Counter
 	dbOperationDuration   metric.Float64Histogram
 	torrentTypeCounter    metric.Int64Counter
-
-	// System health
-	systemErrors metric.Int64Counter
-	systemUptime metric.Float64Gauge
 }
 
 // ErrMissingOTELAddress is returned when telemetry is enabled but no collector
@@ -202,20 +193,6 @@ func (t *Telemetry) RecordTransfer(ctx context.Context, operation, status string
 	}
 }
 
-// IncrementActiveTransfers increments active transfers counter.
-func (t *Telemetry) IncrementActiveTransfers(ctx context.Context) {
-	if t.transfersActive != nil {
-		t.transfersActive.Add(ctx, 1)
-	}
-}
-
-// DecrementActiveTransfers decrements active transfers counter.
-func (t *Telemetry) DecrementActiveTransfers(ctx context.Context) {
-	if t.transfersActive != nil {
-		t.transfersActive.Add(ctx, -1)
-	}
-}
-
 // RecordClientOperation records download client operation metrics.
 func (t *Telemetry) RecordClientOperation(ctx context.Context, client, operation, status string) {
 	if t.clientOperationsTotal != nil {
@@ -259,18 +236,6 @@ func (t *Telemetry) RecordDBOperation(ctx context.Context, operation, status str
 	}
 }
 
-// RecordSystemError records system error metrics.
-func (t *Telemetry) RecordSystemError(ctx context.Context, component, errorType string) {
-	if t.systemErrors != nil {
-		t.systemErrors.Add(ctx, 1,
-			metric.WithAttributes(
-				attribute.String("component", component),
-				attribute.String("error_type", errorType),
-			),
-		)
-	}
-}
-
 // RecordTorrentType records a torrent add operation by type.
 func (t *Telemetry) RecordTorrentType(ctx context.Context, torrentType string) {
 	if t.torrentTypeCounter != nil {
@@ -297,10 +262,6 @@ func (t *Telemetry) Shutdown(ctx context.Context) error {
 // memstats to feed a no-op provider is pure waste.
 func (t *Telemetry) initializeMetrics(enabled bool) error {
 	// HTTP metrics are handled by otelhttp automatically
-	if err := t.initializeUSEMetrics(); err != nil {
-		return err
-	}
-
 	if err := t.initializeBusinessMetrics(); err != nil {
 		return err
 	}
@@ -310,48 +271,6 @@ func (t *Telemetry) initializeMetrics(enabled bool) error {
 	}
 
 	return runtime.Start(runtime.WithMinimumReadMemStatsInterval(time.Second))
-}
-
-func (t *Telemetry) initializeUSEMetrics() error {
-	var err error
-
-	t.cpuUsage, err = t.meter.Float64Gauge(
-		"process.cpu.utilization",
-		metric.WithDescription("Process CPU utilization"),
-		metric.WithUnit("1"),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create process.cpu.utilization gauge: %w", err)
-	}
-
-	t.memoryUsage, err = t.meter.Int64Gauge(
-		"process.memory.usage",
-		metric.WithDescription("Process memory usage"),
-		metric.WithUnit("By"),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create process.memory.usage gauge: %w", err)
-	}
-
-	t.goroutineCount, err = t.meter.Int64Gauge(
-		"process.runtime.go.goroutines",
-		metric.WithDescription("Number of goroutines"),
-		metric.WithUnit("{goroutine}"),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create process.runtime.go.goroutines gauge: %w", err)
-	}
-
-	t.diskUsage, err = t.meter.Int64Gauge(
-		"system.filesystem.usage",
-		metric.WithDescription("Filesystem usage"),
-		metric.WithUnit("By"),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create system.filesystem.usage gauge: %w", err)
-	}
-
-	return nil
 }
 
 func (t *Telemetry) initializeBusinessMetrics() error {
@@ -391,15 +310,6 @@ func (t *Telemetry) initializeBusinessMetrics() error {
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create transfers.total counter: %w", err)
-	}
-
-	t.transfersActive, err = t.meter.Int64UpDownCounter(
-		"transfers.active",
-		metric.WithDescription("Number of active transfers"),
-		metric.WithUnit("{transfer}"),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create transfers.active counter: %w", err)
 	}
 
 	t.clientOperationsTotal, err = t.meter.Int64Counter(

@@ -131,12 +131,9 @@ func TestDisabledTelemetry_RecordingAndShutdownAreSafe(t *testing.T) {
 		tel.IncrementActiveDownloads(ctx)
 		tel.DecrementActiveDownloads(ctx)
 		tel.RecordTransfer(ctx, "add", "success")
-		tel.IncrementActiveTransfers(ctx)
-		tel.DecrementActiveTransfers(ctx)
 		tel.RecordClientOperation(ctx, "putio", "list", "success")
 		tel.RecordClientOperation(ctx, "putio", "list", "error")
 		tel.RecordDBOperation(ctx, "claim", "success", time.Second)
-		tel.RecordSystemError(ctx, "downloader", "io")
 		tel.RecordTorrentType(ctx, "metainfo")
 	})
 

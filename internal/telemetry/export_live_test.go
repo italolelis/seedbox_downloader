@@ -55,7 +55,6 @@ func TestLiveExport(t *testing.T) {
 	tel.RecordClientOperation(ctx, "putio", "get_tagged_torrents", "success")
 	tel.RecordDBOperation(ctx, "claim_transfer", "success", 12*time.Millisecond)
 	tel.RecordTorrentType(ctx, "metainfo")
-	tel.RecordSystemError(ctx, "downloader", "size_mismatch")
 
 	// Shutdown flushes, so a successful return means the collector accepted the
 	// export -- this is the assertion, not the recording above.
