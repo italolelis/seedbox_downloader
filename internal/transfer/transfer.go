@@ -234,6 +234,29 @@ func (o *TransferOrchestrator) ProduceTransfers(ctx context.Context) {
 	}()
 }
 
+// KeepClaimsAlive renews this instance's claims every interval until ctx is
+// cancelled. It runs apart from the polling loop because that loop blocks for as
+// long as a download takes, which can be far longer than a lease.
+func (o *TransferOrchestrator) KeepClaimsAlive(ctx context.Context, every time.Duration) {
+	logger := logctx.LoggerFromContext(ctx)
+
+	go func() {
+		ticker := time.NewTicker(every)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := o.repo.RenewClaims(); err != nil {
+					logger.ErrorContext(ctx, "failed to renew claims", "err", err)
+				}
+			}
+		}
+	}()
+}
+
 func (o *TransferOrchestrator) watchTransfers(ctx context.Context) error {
 	logger := logctx.LoggerFromContext(ctx)
 

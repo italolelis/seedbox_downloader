@@ -55,7 +55,11 @@ type config struct {
 	DBPath            string         `envconfig:"DB_PATH" default:"downloads.db"`
 	DBMaxOpenConns    int            `envconfig:"DB_MAX_OPEN_CONNS" default:"25"`
 	DBMaxIdleConns    int            `envconfig:"DB_MAX_IDLE_CONNS" default:"5"`
-	MaxParallel       int            `envconfig:"MAX_PARALLEL" default:"5"`
+	// ClaimLease is how long a claim survives without renewal. A live instance
+	// renews well inside it; one that died stops, and its transfers are taken
+	// over this long after.
+	ClaimLease  time.Duration `envconfig:"CLAIM_LEASE" default:"5m"`
+	MaxParallel int           `envconfig:"MAX_PARALLEL" default:"5"`
 
 	Transmission struct {
 		Username string `split_words:"true"`
@@ -128,6 +132,7 @@ func run(ctx context.Context) error {
 		"max_parallel", cfg.MaxParallel,
 		"download_client", cfg.DownloadClient,
 		"db_path", cfg.DBPath,
+		"claim_lease", cfg.ClaimLease.String(),
 		"bind_address", cfg.Web.BindAddress,
 		"telemetry_enabled", cfg.Telemetry.Enabled,
 		"putio_seed_ratio", cfg.PutioSeedRatio,
@@ -253,7 +258,7 @@ func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemet
 		"max_idle_conns", cfg.DBMaxIdleConns,
 	)
 
-	dr := sqlite.NewInstrumentedDownloadRepository(database, tel)
+	dr := sqlite.NewInstrumentedDownloadRepository(database, cfg.ClaimLease, tel)
 
 	logger.InfoContext(ctx, "initializing download client")
 
@@ -305,6 +310,10 @@ func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemet
 	return nil
 }
 
+// claimRenewalsPerLease is how many times a claim is renewed within one lease,
+// so a single missed or slow renewal never lets a live claim lapse.
+const claimRenewalsPerLease = 3
+
 // startPipeline wires the downloader to the ledger and starts every background
 // loop: polling the seedbox, downloading, and the post-download watches. It is
 // separate from initializeServices so the whole pipeline can be started against
@@ -325,6 +334,7 @@ func startPipeline(
 
 	transferOrchestrator := transfer.NewTransferOrchestrator(repo, dc, cfg.TargetLabel, cfg.PollingInterval)
 	transferOrchestrator.ProduceTransfers(ctx)
+	transferOrchestrator.KeepClaimsAlive(ctx, cfg.ClaimLease/claimRenewalsPerLease)
 	dl.WatchDownloads(ctx, transferOrchestrator.OnDownloadQueued)
 }
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"log/slog"
@@ -26,6 +27,10 @@ const (
 	// tick is the polling interval for every loop in these tests, so a whole
 	// download-import-seed cycle takes milliseconds rather than minutes.
 	tick = 20 * time.Millisecond
+
+	// lease is the claim lease in these tests: long enough to span several
+	// renewals, short enough to let one lapse within a test.
+	lease = 10 * tick
 
 	// settle bounds every wait. Long enough for a slow CI machine, short enough
 	// that a lost watch fails the run instead of hanging it.
@@ -147,12 +152,56 @@ func TestResume_TransferGoneFromTheSeedboxIsClosedOut(t *testing.T) {
 	h.waitForStatusOf(goneID, storage.StatusCleaned)
 }
 
+// A process that dies mid-download leaves its claim behind and never marks the
+// transfer failed. That claim used to hold forever, so the transfer was never
+// downloaded by anyone. Once the lease lapses, the next instance takes it over.
+func TestCrashMidDownload_TransferIsTakenOver(t *testing.T) {
+	sb := newSeedbox(t)
+	h := newHarness(t, sb, newFakeArr(t), 0)
+
+	// The claim of a process that died: made, and never renewed.
+	claimed, err := sqlite.NewDownloadRepository(h.db, lease).ClaimTransfer(fakeTransferID)
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	h.start()
+
+	h.waitForStatus(storage.StatusDownloaded)
+	assert.FileExists(t, filepath.Join(h.cfg.DownloadDir, transferName, "episode.mkv"))
+}
+
+// The other side of the lease: a download that takes many leases' worth of time
+// must not be taken over by a second instance while the first is alive and
+// renewing, or the same transfer is fetched twice.
+func TestTwoInstances_LongDownloadIsNotTakenOver(t *testing.T) {
+	sb := seedbox.New(t, "itv", seedbox.Transfer{
+		Name:   transferName,
+		Status: "SEEDING",
+		Root: seedbox.Entry{
+			Name:     transferName,
+			Children: []seedbox.Entry{{Name: "episode.mkv", Content: content, Delay: 4 * lease}},
+		},
+	})
+	h := newHarness(t, sb, newFakeArr(t), 0)
+
+	h.start()
+	require.Eventually(t, func() bool { return sb.Fetches("episode.mkv") == 1 }, settle, tick)
+
+	h.start() // a second instance sharing the ledger and the seedbox account
+
+	h.waitForStatus(storage.StatusDownloaded)
+	assert.Equal(t, 1, sb.Fetches("episode.mkv"), "a live claim was taken over and the file fetched twice")
+}
+
 // harness runs the real pipeline against a fake seedbox and a fake *arr app,
 // with a ledger on disk that outlives each run -- which is what lets a test
 // restart it.
 type harness struct {
-	t    *testing.T
-	cfg  *config
+	t   *testing.T
+	cfg *config
+	db  *sql.DB
+	// repo reads the ledger for assertions. Each started pipeline gets its own,
+	// because each process is its own instance.
 	repo *sqlite.DownloadRepository
 	sb   *seedbox.Seedbox
 	arr  []*arr.Client
@@ -173,8 +222,10 @@ func newHarness(t *testing.T, sb *seedbox.Seedbox, arrApp *fakeArr, seedRatio fl
 			TargetLabel:     sb.Label(),
 			PollingInterval: tick,
 			PutioSeedRatio:  seedRatio,
+			ClaimLease:      lease,
 		},
-		repo: sqlite.NewDownloadRepository(db),
+		db:   db,
+		repo: sqlite.NewDownloadRepository(db, lease),
 		sb:   sb,
 		arr:  []*arr.Client{arr.NewClient("test-key", arrApp.server.URL)},
 	}
@@ -189,7 +240,7 @@ func (h *harness) start() func() {
 	h.t.Cleanup(cancel)
 
 	client := h.sb.Client()
-	startPipeline(ctx, h.cfg, h.repo, client, client, h.arr)
+	startPipeline(ctx, h.cfg, sqlite.NewDownloadRepository(h.db, lease), client, client, h.arr)
 
 	return func() {
 		cancel()

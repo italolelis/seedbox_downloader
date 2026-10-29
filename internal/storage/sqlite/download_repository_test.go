@@ -2,15 +2,20 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/italolelis/seedbox_downloader/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func newTestRepo(t *testing.T) *DownloadRepository {
+// testLease is short so a lease can be let lapse inside a test.
+const testLease = 100 * time.Millisecond
+
+func newTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 
 	db, err := InitDB(context.Background(), filepath.Join(t.TempDir(), "test.db"), 5, 2)
@@ -18,7 +23,13 @@ func newTestRepo(t *testing.T) *DownloadRepository {
 
 	t.Cleanup(func() { db.Close() })
 
-	return NewDownloadRepository(db)
+	return db
+}
+
+func newTestRepo(t *testing.T) *DownloadRepository {
+	t.Helper()
+
+	return NewDownloadRepository(newTestDB(t), testLease)
 }
 
 func TestClaimTransfer_FirstClaimSucceeds(t *testing.T) {
@@ -116,4 +127,91 @@ func TestClaimTransfer_EveryPostDownloadStatusIsReportedAsDownloaded(t *testing.
 			assert.ErrorIs(t, err, storage.ErrDownloaded)
 		})
 	}
+}
+
+// A process that dies mid-download never marks its transfer failed, so its claim
+// used to hold forever and the transfer was never downloaded by anyone. A claim
+// is now a lease: once it lapses, another instance -- or the same one restarted
+// -- takes the transfer over.
+func TestClaimTransfer_LapsedClaimIsTakenOver(t *testing.T) {
+	db := newTestDB(t)
+	crashed, survivor := NewDownloadRepository(db, testLease), NewDownloadRepository(db, testLease)
+
+	claimed, err := crashed.ClaimTransfer("100")
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	claimed, err = survivor.ClaimTransfer("100")
+	require.NoError(t, err)
+	require.False(t, claimed, "a live claim must not be taken over")
+
+	time.Sleep(2 * testLease)
+
+	claimed, err = survivor.ClaimTransfer("100")
+	require.NoError(t, err)
+	assert.True(t, claimed, "a lapsed claim must be taken over")
+}
+
+// A download can take far longer than the lease, so the instance doing it keeps
+// renewing; only the absence of renewal -- a dead process -- lets it lapse.
+func TestRenewClaims_KeepsALiveClaim(t *testing.T) {
+	db := newTestDB(t)
+	working, other := NewDownloadRepository(db, testLease), NewDownloadRepository(db, testLease)
+
+	claimed, err := working.ClaimTransfer("100")
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	for range 4 {
+		time.Sleep(testLease / 2)
+		require.NoError(t, working.RenewClaims())
+	}
+
+	claimed, err = other.ClaimTransfer("100")
+	require.NoError(t, err)
+	assert.False(t, claimed, "a claim renewed past its original lease must still hold")
+}
+
+// Claims written before leases existed have none. Treating them as lapsed is
+// what frees the transfers already stuck in deployed ledgers.
+func TestClaimTransfer_ClaimWithoutALeaseIsTakenOver(t *testing.T) {
+	db := newTestDB(t)
+
+	_, err := db.Exec(`INSERT INTO downloads (transfer_id, downloaded_at, status, locked_by)
+		VALUES ('100', '2026-01-01T00:00:00Z', 'downloading', 'a-process-long-gone')`)
+	require.NoError(t, err)
+
+	claimed, err := NewDownloadRepository(db, testLease).ClaimTransfer("100")
+	require.NoError(t, err)
+	assert.True(t, claimed)
+}
+
+// Every deployed ledger was created without a lease column. Opening one must
+// add it rather than fail on the first claim.
+func TestInitDB_UpgradesALedgerFromBeforeLeases(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+
+	old, err := sql.Open("sqlite3", path)
+	require.NoError(t, err)
+	_, err = old.Exec(`CREATE TABLE downloads (
+		transfer_id TEXT UNIQUE,
+		downloaded_at DATETIME,
+		status TEXT DEFAULT 'pending',
+		locked_by TEXT
+	)`)
+	require.NoError(t, err)
+	require.NoError(t, old.Close())
+
+	db, err := InitDB(context.Background(), path, 5, 2)
+	require.NoError(t, err)
+	t.Cleanup(func() { db.Close() })
+
+	claimed, err := NewDownloadRepository(db, testLease).ClaimTransfer("100")
+	require.NoError(t, err)
+	assert.True(t, claimed)
+
+	// And opening it again is a no-op, not a duplicate-column error.
+	again, err := InitDB(context.Background(), path, 5, 2)
+	require.NoError(t, err)
+	require.NoError(t, again.Close())
 }
