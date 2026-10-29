@@ -7,10 +7,21 @@ import (
 	"github.com/italolelis/seedbox_downloader/internal/telemetry"
 )
 
+// SeedingState is how a transfer is seeding on the seedbox right now.
+type SeedingState struct {
+	// Ratio is uploaded over downloaded; 0 when nothing was downloaded.
+	Ratio float64
+	// SecondsSeeding is how long the seedbox has seeded it.
+	SecondsSeeding int64
+	// Seeding is false once the seedbox has stopped seeding it, after which
+	// neither number above will grow.
+	Seeding bool
+}
+
 // TransferInfoer is an optional capability for download clients that support
-// querying live transfer upload ratio from the remote service.
+// querying a transfer's live seeding state from the remote service.
 type TransferInfoer interface {
-	GetTransferInfo(ctx context.Context, transferID string) (uploadRatio float64, found bool, err error)
+	GetTransferInfo(ctx context.Context, transferID string) (state SeedingState, found bool, err error)
 }
 
 // InstrumentedDownloadClient wraps DownloadClient with telemetry.
@@ -55,12 +66,12 @@ func (c *InstrumentedDownloadClient) GetTaggedTorrents(ctx context.Context, labe
 	return result, nil
 }
 
-// GetTransferInfo retrieves live transfer upload ratio if the underlying client supports it.
-// Returns (0, false, nil) if the underlying client does not implement TransferInfoer.
-func (c *InstrumentedDownloadClient) GetTransferInfo(ctx context.Context, transferID string) (float64, bool, error) {
+// GetTransferInfo retrieves a transfer's live seeding state if the underlying client supports it.
+// Returns a zero state and false if the underlying client does not implement TransferInfoer.
+func (c *InstrumentedDownloadClient) GetTransferInfo(ctx context.Context, transferID string) (SeedingState, bool, error) {
 	infoer, ok := c.client.(TransferInfoer)
 	if !ok {
-		return 0, false, nil
+		return SeedingState{}, false, nil
 	}
 
 	return infoer.GetTransferInfo(ctx, transferID)
