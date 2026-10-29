@@ -280,7 +280,7 @@ func (d *Downloader) WatchForImported(ctx context.Context, t *transfer.Transfer,
 						"operation", "watch_imported",
 						"transfer_id", t.ID,
 						"reason", "transfer_imported")
-					d.OnTransferImported <- t
+					publish(ctx, d.OnTransferImported, t)
 
 					return
 				}
@@ -354,7 +354,7 @@ func (p SeedPolicy) satisfiedBy(s transfer.SeedingState) (string, bool) {
 	// Once the seedbox stops seeding, neither number grows again: a target not
 	// reached by now never will be, and keeping the transfer does nothing for the
 	// tracker. The final ratio is in the log line this reason goes into.
-	if !s.Seeding {
+	if s.StoppedSeeding {
 		return "seedbox stopped seeding", true
 	}
 
@@ -414,7 +414,7 @@ func (d *Downloader) checkSeeding(ctx context.Context, logger *slog.Logger, t *t
 	if !found {
 		logger.InfoContext(ctx, "transfer no longer exists on Put.io, cleanup already done")
 
-		d.OnTransferCleanedUp <- t
+		publish(ctx, d.OnTransferCleanedUp, t)
 
 		return true
 	}
@@ -440,9 +440,19 @@ func (d *Downloader) checkSeeding(ctx context.Context, logger *slog.Logger, t *t
 		return false
 	}
 
-	d.OnTransferCleanedUp <- t
+	publish(ctx, d.OnTransferCleanedUp, t)
 
 	return true
+}
+
+// publish sends v on ch unless ctx is cancelled first. Shutdown stops the
+// receiver, so a plain send from a watch that fires during shutdown would block
+// its goroutine forever.
+func publish[T any](ctx context.Context, ch chan<- T, v T) {
+	select {
+	case ch <- v:
+	case <-ctx.Done():
+	}
 }
 
 // checkForImported reports whether an *arr application has imported this transfer,

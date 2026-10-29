@@ -561,9 +561,8 @@ func markCleaned(ctx context.Context, logger *slog.Logger, repo storage.Download
 // hands a downloaded transfer back, so without this a restart leaves every
 // transfer that was awaiting import or still seeding on the seedbox forever.
 //
-// The seedbox is asked for the transfers rather than the ledger alone, because
-// the watches need each transfer's files to find its local output. If the
-// seedbox cannot be reached yet, it is asked again every polling interval.
+// Anything that cannot be settled yet -- the ledger unreadable, the seedbox
+// unreachable -- is tried again every polling interval.
 func resumeWatches(
 	ctx context.Context,
 	repo storage.DownloadRepository,
@@ -577,8 +576,19 @@ func resumeWatches(
 		ticker := time.NewTicker(cfg.PollingInterval)
 		defer ticker.Stop()
 
+		var awaitingImport map[string]bool
+
 		for {
-			err := resumeWatchesOnce(ctx, logger, repo, dl, dc, cfg)
+			var err error
+
+			if awaitingImport == nil {
+				awaitingImport, err = resumeFromLedger(ctx, logger, repo, dl, cfg)
+			}
+
+			if err == nil {
+				err = resumeImportWatches(ctx, logger, repo, dl, dc, cfg, awaitingImport)
+			}
+
 			if err == nil {
 				return
 			}
@@ -594,28 +604,54 @@ func resumeWatches(
 	}()
 }
 
-func resumeWatchesOnce(
+// resumeFromLedger resumes every imported transfer and returns the ids of the
+// downloaded ones, which still await import.
+//
+// An imported transfer is resumed from its id alone: checking its seeding and
+// removing it from the seedbox need nothing else, so it never depends on the
+// seedbox listing it -- a listing that silently drops transfers whose folder
+// lookup fails.
+func resumeFromLedger(
+	ctx context.Context,
+	logger *slog.Logger,
+	repo storage.DownloadRepository,
+	dl *downloader.Downloader,
+	cfg *config,
+) (map[string]bool, error) {
+	records, err := repo.GetDownloads()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read the ledger: %w", err)
+	}
+
+	awaitingImport := map[string]bool{}
+
+	for _, r := range records {
+		switch r.Status {
+		case storage.StatusDownloaded:
+			awaitingImport[r.DownloadID] = true
+		case storage.StatusImported:
+			logger.InfoContext(ctx, "resuming seeding watch", "transfer_id", r.DownloadID)
+			retire(ctx, logger, repo, dl, &transfer.Transfer{ID: r.DownloadID}, cfg.PollingInterval, cfg.seedPolicy())
+		}
+	}
+
+	return awaitingImport, nil
+}
+
+// resumeImportWatches re-attaches the import watch of each transfer in
+// awaitingImport, removing it from the set once settled. Unlike seeding, an
+// import watch needs the transfer's files to find its local output, so these
+// have to come from the seedbox listing.
+func resumeImportWatches(
 	ctx context.Context,
 	logger *slog.Logger,
 	repo storage.DownloadRepository,
 	dl *downloader.Downloader,
 	dc transfer.DownloadClient,
 	cfg *config,
+	awaitingImport map[string]bool,
 ) error {
-	records, err := repo.GetDownloads()
-	if err != nil {
-		return fmt.Errorf("failed to read the ledger: %w", err)
-	}
-
-	pending := map[string]string{}
-
-	for _, r := range records {
-		if r.Status == storage.StatusDownloaded || r.Status == storage.StatusImported {
-			pending[r.DownloadID] = r.Status
-		}
-	}
-
-	if len(pending) == 0 {
+	if len(awaitingImport) == 0 {
 		return nil
 	}
 
@@ -625,28 +661,39 @@ func resumeWatchesOnce(
 	}
 
 	for _, t := range transfers {
-		status, ok := pending[t.ID]
-		if !ok {
+		if !awaitingImport[t.ID] {
 			continue
 		}
 
-		delete(pending, t.ID)
+		delete(awaitingImport, t.ID)
 
-		logger.InfoContext(ctx, "resuming watch", "transfer_id", t.ID, "transfer_name", t.Name, "status", status)
-
-		if status == storage.StatusDownloaded {
-			dl.WatchForImported(ctx, t, cfg.PollingInterval)
-		} else {
-			retire(ctx, logger, repo, dl, t, cfg.PollingInterval, cfg.seedPolicy())
-		}
+		logger.InfoContext(ctx, "resuming import watch", "transfer_id", t.ID, "transfer_name", t.Name)
+		dl.WatchForImported(ctx, t, cfg.PollingInterval)
 	}
 
-	// Whatever is left is gone from the seedbox, so there is nothing there to
-	// clean up. That includes every transfer that finished before the ledger
-	// recorded cleanup at all, which is why this is not worth a warning.
-	for id, status := range pending {
-		logger.InfoContext(ctx, "transfer no longer on the seedbox, nothing to resume", "transfer_id", id, "status", status)
+	infoer, _ := dc.(transfer.TransferInfoer)
+
+	for id := range awaitingImport {
+		// Missing from the listing is not proof of being gone from the seedbox,
+		// so it is confirmed before anything is closed out.
+		if infoer != nil {
+			_, found, err := infoer.GetTransferInfo(ctx, id)
+			if err != nil {
+				return fmt.Errorf("failed to look up transfer %s: %w", id, err)
+			}
+
+			if found {
+				return fmt.Errorf("transfer %s is on the seedbox but missing from its listing", id)
+			}
+		}
+
+		// Gone from the seedbox, so nothing is left there to clean up. That
+		// includes every transfer that finished before the ledger recorded
+		// cleanup at all, which is why this is not worth a warning. Its local
+		// copy, if never imported, is left where it is.
+		logger.InfoContext(ctx, "transfer no longer on the seedbox, nothing to resume", "transfer_id", id)
 		markCleaned(ctx, logger, repo, &transfer.Transfer{ID: id})
+		delete(awaitingImport, id)
 	}
 
 	return nil

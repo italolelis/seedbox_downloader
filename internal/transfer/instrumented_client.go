@@ -13,9 +13,10 @@ type SeedingState struct {
 	Ratio float64
 	// SecondsSeeding is how long the seedbox has seeded it.
 	SecondsSeeding int64
-	// Seeding is false once the seedbox has stopped seeding it, after which
-	// neither number above will grow.
-	Seeding bool
+	// StoppedSeeding is the seedbox saying seeding is over, after which neither
+	// number above will grow. Only that explicit word counts: a transfer merely
+	// not seeding right now -- errored, queued -- may yet resume.
+	StoppedSeeding bool
 }
 
 // TransferInfoer is an optional capability for download clients that support

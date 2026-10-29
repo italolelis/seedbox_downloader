@@ -81,6 +81,53 @@ func TestRestart_BeforeImport_TransferIsStillCleanedUp(t *testing.T) {
 	require.NoDirExists(t, local, "once imported, the local copy is removed")
 }
 
+// A transfer missing from one listing is not gone from the seedbox: the listing
+// drops anything whose folder lookup fails, so a Put.io hiccup at startup used to
+// close out a transfer that was still seeding -- leaving it there forever.
+func TestRestart_SeedboxHiccupAtStartup_TransferIsStillCleanedUp(t *testing.T) {
+	sb := newSeedbox(t)
+	arrApp := newFakeArr(t)
+	arrApp.imported.Store(true)
+
+	h := newHarness(t, sb, arrApp, 1.0)
+
+	first := h.start()
+	h.waitForStatus(storage.StatusImported)
+	first()
+
+	sb.FailFileGets(true)
+	h.start()
+	time.Sleep(5 * tick) // let the resume run against the failing seedbox
+
+	sb.FailFileGets(false)
+	sb.SetUploaded(transferName, int64(len(content)))
+
+	h.waitForCleanup(sb)
+}
+
+// The same hiccup before import, where the listing is still needed for the
+// transfer's files: the resume waits for the seedbox to list it again rather
+// than closing it out.
+func TestRestart_SeedboxHiccupBeforeImport_TransferIsStillCleanedUp(t *testing.T) {
+	sb := newSeedbox(t)
+	arrApp := newFakeArr(t)
+
+	h := newHarness(t, sb, arrApp, 0)
+
+	first := h.start()
+	h.waitForStatus(storage.StatusDownloaded)
+	first()
+
+	sb.FailFileGets(true)
+	h.start()
+	time.Sleep(5 * tick)
+
+	sb.FailFileGets(false)
+	arrApp.imported.Store(true)
+
+	h.waitForCleanup(sb)
+}
+
 // A transfer the ledger still calls downloaded but the seedbox no longer has
 // leaves nothing on Put.io to clean up. Every transfer that finished before the
 // ledger recorded cleanup looks like this, so on the first start after upgrading
@@ -138,7 +185,7 @@ func newHarness(t *testing.T, sb *seedbox.Seedbox, arrApp *fakeArr, seedRatio fl
 func (h *harness) start() func() {
 	h.t.Helper()
 
-	ctx, cancel := context.WithCancel(logctx.WithLogger(context.Background(), discardLogger()))
+	ctx, cancel := context.WithCancel(logctx.WithLogger(context.Background(), quietLogger()))
 	h.t.Cleanup(cancel)
 
 	client := h.sb.Client()
@@ -241,7 +288,9 @@ func newFakeArr(t *testing.T) *fakeArr {
 	return f
 }
 
-func discardLogger() *slog.Logger {
+// quietLogger discards output unless TEST_LOG is set, for when a lifecycle
+// test needs debugging.
+func quietLogger() *slog.Logger {
 	if os.Getenv("TEST_LOG") != "" {
 		return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	}
