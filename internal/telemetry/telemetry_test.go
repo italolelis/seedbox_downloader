@@ -11,6 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric/noop"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 // closedAddr returns an address with nothing listening on it.
@@ -181,4 +183,58 @@ func TestNew_Disabled_RecordsNoSpans(t *testing.T) {
 
 	assert.False(t, span.IsRecording())
 	assert.NoError(t, tel.Shutdown(context.Background()))
+}
+
+// spanRecorder points a Telemetry's tracer at an in-memory recorder, so a test
+// can see exactly which spans an instrumented call produced.
+func spanRecorder(t *testing.T) (*Telemetry, *tracetest.SpanRecorder) {
+	t.Helper()
+
+	tel, err := New(context.Background(), Config{Enabled: false, ServiceName: "test"})
+	require.NoError(t, err)
+
+	recorder := tracetest.NewSpanRecorder()
+	tel.tracer = sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder)).Tracer("test")
+
+	return tel, recorder
+}
+
+func spanNames(recorder *tracetest.SpanRecorder) []string {
+	var names []string
+
+	for _, s := range recorder.Ended() {
+		names = append(names, s.Name())
+	}
+
+	return names
+}
+
+// Each instrumented call is one operation, so it is one span. Client calls and
+// downloads used to open a second span of the same name inside the first, which
+// doubled every one of them in a trace view.
+func TestInstrumentedCalls_ProduceOneSpanEach(t *testing.T) {
+	tel, recorder := spanRecorder(t)
+	ctx := context.Background()
+
+	require.NoError(t, tel.InstrumentClientOperation(ctx, "putio", "grab_file", func(context.Context) error { return nil }))
+	require.NoError(t, tel.InstrumentDownload(ctx, "1", "name", func(context.Context) error { return nil }))
+
+	assert.Equal(t, []string{"client_grab_file", "download"}, spanNames(recorder))
+}
+
+// The ledger is called without a request context, so a span of its own would
+// be the root of a one-span trace -- and the claim heartbeat alone would start
+// one every renewal. A database call is traced only as part of a trace already
+// under way; its metrics are recorded either way.
+func TestInstrumentDBOperation_TracedOnlyWithinATrace(t *testing.T) {
+	tel, recorder := spanRecorder(t)
+
+	require.NoError(t, tel.InstrumentDBOperation(context.Background(), "renew_claims", func(context.Context) error { return nil }))
+	assert.Empty(t, spanNames(recorder), "an untraced database call must not start a trace")
+
+	ctx, parent := tel.tracer.Start(context.Background(), "download")
+	require.NoError(t, tel.InstrumentDBOperation(ctx, "claim_transfer", func(context.Context) error { return nil }))
+	parent.End()
+
+	assert.Equal(t, []string{"db_claim_transfer", "download"}, spanNames(recorder))
 }

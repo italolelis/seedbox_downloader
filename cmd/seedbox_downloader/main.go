@@ -792,6 +792,13 @@ func buildDownloadClient(cfg *config) (transfer.DownloadClient, error) {
 	return nil, fmt.Errorf("invalid download client: %s", cfg.DownloadClient)
 }
 
+// instrumentedClient is one seedbox client seen through both instrumented
+// wrappers: listing from one, adding and removing from the other.
+type instrumentedClient struct {
+	*transfer.InstrumentedDownloadClient
+	*transfer.InstrumentedTransferClient
+}
+
 // setupServer prepares the handlers and services to create the http rest server.
 func setupServer(ctx context.Context, cfg *config, tel *telemetry.Telemetry) (*http.Server, error) {
 	r := chi.NewRouter()
@@ -817,7 +824,15 @@ func setupServer(ctx context.Context, cfg *config, tel *telemetry.Telemetry) (*h
 	if putioClient, ok := originalClient.(*putio.Client); ok {
 		// DownloadDir, not a Put.io path: this is advertised to the *arr apps, and
 		// the only path meaningful to them is the one we actually wrote to.
-		tHandler = rest.NewTransmissionHandler(cfg.Transmission.Username, cfg.Transmission.Password, putioClient, cfg.TargetLabel, cfg.DownloadDir, tel)
+		//
+		// The client is instrumented like the pipeline's, so transfers added and
+		// removed by the *arr apps are counted and traced too. Handing over the raw
+		// client left every add out of transfers_total and the client metrics.
+		instrumented := instrumentedClient{
+			InstrumentedDownloadClient: transfer.NewInstrumentedDownloadClient(putioClient, tel, cfg.DownloadClient),
+			InstrumentedTransferClient: transfer.NewInstrumentedTransferClient(putioClient, tel, cfg.DownloadClient),
+		}
+		tHandler = rest.NewTransmissionHandler(cfg.Transmission.Username, cfg.Transmission.Password, instrumented, cfg.TargetLabel, cfg.DownloadDir, tel)
 		r.Mount("/", tHandler.Routes())
 	} else {
 		logger := logctx.LoggerFromContext(ctx)

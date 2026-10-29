@@ -68,8 +68,9 @@ type Config struct {
 	// an obvious diagnosis. Set false when the collector is reached over a network
 	// you do not trust.
 	Insecure bool
-	// Reader, when set, receives the metrics in place of the OTLP exporter, and
-	// no collector is contacted. It is how a test reads back what was recorded.
+	// Reader, when set and telemetry is enabled, receives the metrics in place of
+	// the OTLP exporter, and no collector is contacted. It is how a test reads
+	// back what was recorded. Traces are not recorded in this mode.
 	Reader sdkmetric.Reader
 }
 
@@ -107,13 +108,13 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 	)
 
 	switch {
-	case cfg.Reader != nil:
-		meterProvider = sdkmetric.NewMeterProvider(sdkmetric.WithReader(cfg.Reader), sdkmetric.WithResource(res))
-		tracerProvider = tracenoop.NewTracerProvider()
 	case !cfg.Enabled:
 		slog.InfoContext(ctx, "telemetry disabled - metrics and traces will not be exported")
 
 		meterProvider = noop.NewMeterProvider()
+		tracerProvider = tracenoop.NewTracerProvider()
+	case cfg.Reader != nil:
+		meterProvider = sdkmetric.NewMeterProvider(sdkmetric.WithReader(cfg.Reader), sdkmetric.WithResource(res))
 		tracerProvider = tracenoop.NewTracerProvider()
 	case cfg.OTELAddress == "":
 		return nil, ErrMissingOTELAddress

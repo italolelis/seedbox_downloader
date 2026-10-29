@@ -27,7 +27,7 @@ func TestDownloads_AreCountedByOutcome(t *testing.T) {
 	)
 
 	reader := sdkmetric.NewManualReader()
-	tel, err := telemetry.New(context.Background(), telemetry.Config{ServiceName: "test", Reader: reader})
+	tel, err := telemetry.New(context.Background(), telemetry.Config{Enabled: true, ServiceName: "test", Reader: reader})
 	require.NoError(t, err)
 
 	client := sb.Client()

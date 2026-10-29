@@ -10,7 +10,7 @@ The telemetry system provides:
 - **Go Runtime Metrics**: Memory, goroutines and garbage collection, from the OpenTelemetry runtime instrumentation
 - **Business Metrics**: Application-specific metrics for downloads, transfers, and client operations
 - **OTLP Export**: Metrics and traces pushed to an OpenTelemetry collector, with resource attributes attached
-- **Distributed Tracing**: Spans for HTTP requests, download client calls and database operations, with trace and span ids in every log line
+- **Distributed Tracing**: Spans for HTTP requests, downloads and download client calls; log lines written while handling a traced operation carry its trace and span ids
 
 ## Configuration
 
@@ -245,7 +245,9 @@ groups:
 
 When telemetry is enabled, spans are batched and exported over OTLP to the same collector as
 metrics (`TELEMETRY_OTEL_ADDRESS`, honouring `TELEMETRY_OTEL_INSECURE`). The bundled stack
-forwards them to Jaeger, at http://localhost:16686. Trace context is propagated with W3C
+forwards them to Jaeger, at http://localhost:16686. If you run your own collector, it needs a
+`traces` pipeline: one with only a `metrics` pipeline rejects every span export, and the
+application logs a warning for each rejected batch. Trace context is propagated with W3C
 `traceparent` headers, including on requests to Sonarr and Radarr. When telemetry is
 disabled, no spans are recorded and the trace ids in logs are empty.
 
@@ -255,7 +257,9 @@ disabled, no spans are recorded and the trace ids in logs are empty.
 - **Attributes**: Standard HTTP attributes (method, status code, URL, etc.)
 
 ### Manual Tracing
-- **Database operations**: Custom spans for database queries
+- **Database operations**: Spans for ledger calls made as part of a traced operation. The
+  ledger is mostly called outside any trace (polling, the claim heartbeat), and those calls
+  are counted in the metrics without starting a trace of their own
 - **Download client operations**: Spans for external service calls
 - **File downloads**: Operation-specific spans
 

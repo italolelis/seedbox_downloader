@@ -55,19 +55,20 @@ The Grafana dashboard provides comprehensive monitoring across four key areas:
 ## 📋 Key Metrics Explained
 
 ### RED Metrics
-- **Rate**: `rate(http_requests_total[5m])` - Requests per second
-- **Errors**: `rate(http_requests_total{status=~"4..|5.."}[5m]) / rate(http_requests_total[5m])` - Error percentage
-- **Duration**: `histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))` - 95th percentile latency
+- **Rate**: `sum(rate(http_server_request_duration_seconds_count[5m]))` - Requests per second
+- **Errors**: `sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~"4..|5.."}[5m])) / sum(rate(http_server_request_duration_seconds_count[5m]))` - Error percentage
+- **Duration**: `histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket[5m])))` - 95th percentile latency
 
 ### Business Metrics
 - **Active Downloads**: `downloads_active` - Current downloads
 - **Download Success Rate**: `downloads_total{status="success"}` vs `downloads_total{status="error"}`
 - **Client Performance**: `rate(client_operations_total[5m])` by client type
 
-### USE Metrics
-- **Utilization**: `memory_usage_bytes` - Memory consumption
-- **Saturation**: `goroutine_count` - Goroutine pressure
-- **Errors**: `rate(system_errors_total[5m])` - System error rate
+### Go Runtime
+- **Memory**: `sum(go_memory_used_bytes)` - Memory used by the Go runtime
+- **Goroutines**: `go_goroutine_count` - Goroutine pressure
+- **Allocation**: `rate(go_memory_allocated_bytes_total[5m])` - Heap allocation rate
+- **Client errors**: `rate(client_errors_total[5m])` - Failed calls to the download client
 
 ## 🚨 Alerting
 
