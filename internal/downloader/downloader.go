@@ -20,6 +20,7 @@ import (
 	"github.com/italolelis/seedbox_downloader/internal/logctx"
 	"github.com/italolelis/seedbox_downloader/internal/storage"
 	"github.com/italolelis/seedbox_downloader/internal/svc/arr"
+	"github.com/italolelis/seedbox_downloader/internal/telemetry"
 	"github.com/italolelis/seedbox_downloader/internal/transfer"
 	"golang.org/x/sync/errgroup"
 )
@@ -47,6 +48,7 @@ type Downloader struct {
 	tc          transfer.TransferClient
 	arrServices []*arr.Client
 	maxParallel int
+	telemetry   *telemetry.Telemetry
 
 	// Event channels. These are deliberately never closed: several goroutines
 	// send on them, so no single goroutine can correctly own closing them.
@@ -66,9 +68,11 @@ func NewDownloader(
 	dc transfer.DownloadClient,
 	tc transfer.TransferClient,
 	arrServices []*arr.Client,
+	tel *telemetry.Telemetry,
 ) *Downloader {
 	return &Downloader{
 		downloadDir:                downloadDir,
+		telemetry:                  tel,
 		dc:                         dc,
 		maxParallel:                maxParallel,
 		tc:                         tc,
@@ -97,7 +101,17 @@ func (d *Downloader) WatchDownloads(ctx context.Context, incomingTransfers <-cha
 			case transfer := <-incomingTransfers:
 				logger.DebugContext(ctx, "downloading transfer", "transfer_id", transfer.ID, "transfer_name", transfer.Name)
 
-				downloadedFiles, err := d.DownloadTransfer(ctx, transfer)
+				var downloadedFiles int
+
+				// Counted and timed here, once per transfer, which is what the
+				// downloads metrics and the dashboard's download panels describe.
+				err := d.telemetry.InstrumentDownload(ctx, transfer.ID, transfer.Name, func(ctx context.Context) error {
+					var err error
+
+					downloadedFiles, err = d.DownloadTransfer(ctx, transfer)
+
+					return err
+				})
 				if err != nil {
 					if errors.Is(err, putio.ErrTransferNotFound) {
 						logger.WarnContext(ctx, "transfer removed from Put.io", "transfer_id", transfer.ID, "transfer_name", transfer.Name)

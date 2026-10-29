@@ -24,7 +24,7 @@ func newDownloader(t *testing.T, sb *seedbox.Seedbox) (*downloader.Downloader, s
 	root := t.TempDir()
 	client := sb.Client()
 
-	return downloader.NewDownloader(root, 5, client, client, nil), root
+	return downloader.NewDownloader(root, 5, client, client, nil, nil), root
 }
 
 // fetch resolves the seedbox's transfers the way production does, rather than

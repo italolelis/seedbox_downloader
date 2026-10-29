@@ -312,7 +312,7 @@ func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemet
 
 	instrumentedTC := transfer.NewInstrumentedTransferClient(dc.(transfer.TransferClient), tel, cfg.DownloadClient)
 
-	startPipeline(ctx, cfg, dr, instrumentedDC, instrumentedTC, arrServices)
+	startPipeline(ctx, cfg, dr, instrumentedDC, instrumentedTC, arrServices, tel)
 
 	return nil
 }
@@ -337,8 +337,9 @@ func startPipeline(
 	dc transfer.DownloadClient,
 	tc transfer.TransferClient,
 	arrServices []*arr.Client,
+	tel *telemetry.Telemetry,
 ) {
-	dl := downloader.NewDownloader(cfg.DownloadDir, cfg.MaxParallel, dc, tc, arrServices)
+	dl := downloader.NewDownloader(cfg.DownloadDir, cfg.MaxParallel, dc, tc, arrServices, tel)
 
 	setupNotificationForDownloader(ctx, repo, dl, cfg)
 	resumeWatches(ctx, repo, dl, dc, cfg)
