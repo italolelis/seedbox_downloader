@@ -103,13 +103,14 @@ type node struct {
 }
 
 type fakeTransfer struct {
-	id           int64
-	name         string
-	fileID       int64
-	saveParentID int64
-	status       string
-	size         int64
-	uploaded     int64
+	id             int64
+	name           string
+	fileID         int64
+	saveParentID   int64
+	status         string
+	size           int64
+	uploaded       int64
+	secondsSeeding int64
 }
 
 // New starts a fake Put.io serving the given transfers under the given label,
@@ -204,6 +205,22 @@ func (s *Seedbox) SetUploaded(name string, uploaded int64) {
 	defer s.mu.Unlock()
 
 	s.transfer(name).uploaded = uploaded
+}
+
+// SetSecondsSeeding sets how long the named transfer has been seeding.
+func (s *Seedbox) SetSecondsSeeding(name string, seconds int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.transfer(name).secondsSeeding = seconds
+}
+
+// SetStatus sets the named transfer's status, as Put.io reports it.
+func (s *Seedbox) SetStatus(name, status string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.transfer(name).status = status
 }
 
 // HasTransfer reports whether the named transfer is still on the account, i.e.
@@ -321,16 +338,17 @@ func (s *Seedbox) handleTransfersList(w http.ResponseWriter, _ *http.Request) {
 
 	for _, tr := range s.transfers {
 		out = append(out, map[string]any{
-			"id":             tr.id,
-			"name":           tr.name,
-			"file_id":        tr.fileID,
-			"save_parent_id": tr.saveParentID,
-			"status":         tr.status,
-			"percent_done":   100,
-			"size":           tr.size,
-			"downloaded":     tr.size,
-			"uploaded":       tr.uploaded,
-			"source":         "magnet:test",
+			"id":              tr.id,
+			"name":            tr.name,
+			"file_id":         tr.fileID,
+			"save_parent_id":  tr.saveParentID,
+			"status":          tr.status,
+			"percent_done":    100,
+			"size":            tr.size,
+			"downloaded":      tr.size,
+			"uploaded":        tr.uploaded,
+			"seconds_seeding": tr.secondsSeeding,
+			"source":          "magnet:test",
 		})
 	}
 

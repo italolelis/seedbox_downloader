@@ -26,7 +26,7 @@ Seedbox Downloader is an event-driven Go service that automatically downloads co
 - **Dual seedbox support** — Deluge (JSON-RPC) and Put.io (OAuth2 API)
 - **Transmission RPC proxy** — *Arr apps see it as a Transmission client, no extra config needed
 - **Automatic import detection** — Monitors Sonarr/Radarr until files are imported, then cleans up
-- **Seed ratio enforcement** — Optionally wait for a target seed ratio before removing transfers
+- **Seed ratio and time enforcement** — Optionally keep transfers seeding until a target ratio or seeding time is reached
 - **Parallel downloads** — Configurable concurrency with progress tracking
 - **Discord notifications** — Rich embeds for download events, failures, and missing transfers
 - **Observability** — OpenTelemetry metrics over OTLP, with a collector + Prometheus + Grafana stack included
@@ -65,7 +65,7 @@ Seedbox Downloader is an event-driven Go service that automatically downloads co
 2. Claims transfers atomically in SQLite (safe for multiple instances)
 3. Downloads files in parallel to local storage
 4. Monitors *Arr APIs until import is confirmed
-5. Waits for seed ratio threshold (if configured)
+5. Waits for the seed ratio or seed time target, whichever comes first (if configured)
 6. Cleans up transfer from seedbox and local storage
 7. Sends Discord notifications at each stage
 
@@ -182,7 +182,14 @@ All configuration is done via environment variables.
 | Variable | Default | Description |
 |---|---|---|
 | `PUTIO_TOKEN` | *required* | Your Put.io OAuth token |
-| `PUTIO_SEED_RATIO` | `0` | Target seed ratio before cleanup (0 = immediate) |
+| `PUTIO_SEED_RATIO` | `0` | Target seed ratio before cleanup (0 = no ratio target) |
+| `PUTIO_SEED_TIME` | `0` | Minimum seeding time before cleanup, e.g. `72h` (0 = no time target) |
+
+With neither target set, a transfer is removed from Put.io as soon as it is imported. With
+one or both set, it is removed when **either** is reached, which matches how most private
+trackers judge a hit-and-run: a ratio of 1.0 **or** a minimum seeding time. A transfer
+that Put.io stops seeding on its own is removed straight away, whatever its ratio, because
+it can no longer reach either target. The final ratio is logged when that happens.
 
 ### Transmission Proxy (for *Arr)
 

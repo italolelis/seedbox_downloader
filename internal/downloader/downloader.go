@@ -324,19 +324,54 @@ func (d *Downloader) CleanupTransfer(ctx context.Context, t *transfer.Transfer) 
 	return nil
 }
 
-// WatchForSeeding watches until the Put.io transfer reaches the target seed ratio, then cleans it up.
-func (d *Downloader) WatchForSeeding(ctx context.Context, t *transfer.Transfer, pollingInterval time.Duration, seedRatio float64) {
-	logger := logctx.LoggerFromContext(ctx)
+// SeedPolicy says when an imported transfer has seeded enough to be removed from
+// the seedbox: whichever target is reached first. A zero target is disabled.
+type SeedPolicy struct {
+	// Ratio is the upload ratio to reach.
+	Ratio float64
+	// Time is how long to seed for. Most private trackers accept this in place
+	// of a ratio, and it is the only way an unpopular torrent ever finishes.
+	Time time.Duration
+}
+
+// Enabled reports whether imported transfers are kept seeding at all, rather
+// than removed as soon as they are imported.
+func (p SeedPolicy) Enabled() bool {
+	return p.Ratio > 0 || p.Time > 0
+}
+
+// satisfiedBy reports whether a transfer seeding like this can be removed, and
+// why, for the log.
+func (p SeedPolicy) satisfiedBy(s transfer.SeedingState) (string, bool) {
+	if p.Ratio > 0 && s.Ratio >= p.Ratio {
+		return "seed ratio reached", true
+	}
+
+	if p.Time > 0 && time.Duration(s.SecondsSeeding)*time.Second >= p.Time {
+		return "seed time reached", true
+	}
+
+	// Once the seedbox stops seeding, neither number grows again: a target not
+	// reached by now never will be, and keeping the transfer does nothing for the
+	// tracker. The final ratio is in the log line this reason goes into.
+	if !s.Seeding {
+		return "seedbox stopped seeding", true
+	}
+
+	return "", false
+}
+
+// WatchForSeeding watches until the Put.io transfer satisfies the seed policy, then cleans it up.
+func (d *Downloader) WatchForSeeding(ctx context.Context, t *transfer.Transfer, pollingInterval time.Duration, policy SeedPolicy) {
+	logger := logctx.LoggerFromContext(ctx).With("operation", "watch_seeding", "transfer_id", t.ID)
 
 	logger.InfoContext(ctx, "watching for seeding transfers",
-		"transfer_id", t.ID, "polling_interval", pollingInterval, "seed_ratio", seedRatio)
+		"polling_interval", pollingInterval, "seed_ratio", policy.Ratio, "seed_time", policy.Time)
 
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
 				logger.ErrorContext(ctx, "watch seeding panic",
-					"operation", "watch_seeding",
-					"transfer_id", t.ID,
 					"panic", r,
 					"stack", string(debug.Stack()))
 			}
@@ -348,68 +383,66 @@ func (d *Downloader) WatchForSeeding(ctx context.Context, t *transfer.Transfer, 
 		for {
 			select {
 			case <-ctx.Done():
-				logger.InfoContext(ctx, "watch seeding shutdown",
-					"operation", "watch_seeding",
-					"transfer_id", t.ID,
-					"reason", "context_cancelled")
+				logger.InfoContext(ctx, "watch seeding shutdown", "reason", "context_cancelled")
 
 				return
 			case <-ticker.C:
-				infoer, ok := d.dc.(transfer.TransferInfoer)
-				if !ok {
-					logger.ErrorContext(ctx, "download client does not support transfer info, cannot watch seeding",
-						"operation", "watch_seeding",
-						"transfer_id", t.ID)
-
+				if d.checkSeeding(ctx, logger, t, policy) {
 					return
 				}
-
-				uploadRatio, found, err := infoer.GetTransferInfo(ctx, t.ID)
-				if err != nil {
-					logger.ErrorContext(ctx, "failed to get transfer info, retrying next tick",
-						"operation", "watch_seeding",
-						"transfer_id", t.ID,
-						"err", err)
-
-					continue
-				}
-
-				if !found {
-					logger.InfoContext(ctx, "transfer no longer exists on Put.io, cleanup already done",
-						"operation", "watch_seeding",
-						"transfer_id", t.ID)
-
-					d.OnTransferCleanedUp <- t
-
-					return
-				}
-
-				if uploadRatio >= seedRatio {
-					logger.InfoContext(ctx, "seed ratio reached, cleaning up transfer",
-						"operation", "watch_seeding",
-						"transfer_id", t.ID,
-						"upload_ratio", uploadRatio,
-						"target_ratio", seedRatio)
-
-					// A failed cleanup keeps the watch alive: the ratio is still met on
-					// the next tick, so it is simply tried again.
-					if err := d.CleanupTransfer(ctx, t); err != nil {
-						continue
-					}
-
-					d.OnTransferCleanedUp <- t
-
-					return
-				}
-
-				logger.DebugContext(ctx, "seed ratio not yet reached",
-					"operation", "watch_seeding",
-					"transfer_id", t.ID,
-					"upload_ratio", uploadRatio,
-					"target_ratio", seedRatio)
 			}
 		}
 	}()
+}
+
+// checkSeeding makes one seeding check and reports whether the watch is over.
+func (d *Downloader) checkSeeding(ctx context.Context, logger *slog.Logger, t *transfer.Transfer, policy SeedPolicy) bool {
+	infoer, ok := d.dc.(transfer.TransferInfoer)
+	if !ok {
+		logger.ErrorContext(ctx, "download client does not support transfer info, cannot watch seeding")
+
+		return true
+	}
+
+	state, found, err := infoer.GetTransferInfo(ctx, t.ID)
+	if err != nil {
+		logger.ErrorContext(ctx, "failed to get transfer info, retrying next tick", "err", err)
+
+		return false
+	}
+
+	if !found {
+		logger.InfoContext(ctx, "transfer no longer exists on Put.io, cleanup already done")
+
+		d.OnTransferCleanedUp <- t
+
+		return true
+	}
+
+	logger = logger.With(
+		"upload_ratio", state.Ratio,
+		"target_ratio", policy.Ratio,
+		"seconds_seeding", state.SecondsSeeding,
+		"target_seed_time", policy.Time)
+
+	reason, done := policy.satisfiedBy(state)
+	if !done {
+		logger.DebugContext(ctx, "seed policy not yet satisfied")
+
+		return false
+	}
+
+	logger.InfoContext(ctx, reason+", cleaning up transfer")
+
+	// A failed cleanup keeps the watch alive: the policy is still satisfied on
+	// the next tick, so it is simply tried again.
+	if err := d.CleanupTransfer(ctx, t); err != nil {
+		return false
+	}
+
+	d.OnTransferCleanedUp <- t
+
+	return true
 }
 
 // checkForImported reports whether an *arr application has imported this transfer,

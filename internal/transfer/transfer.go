@@ -63,7 +63,15 @@ type File struct {
 }
 
 func (t *Transfer) IsSeeding() bool {
-	return t.Status == "seeding" || t.Status == "seedingwait"
+	return IsSeedingStatus(t.Status)
+}
+
+// IsSeedingStatus reports whether a seedbox status means the transfer is still
+// seeding. Put.io reports statuses upper-case, so the comparison ignores case.
+func IsSeedingStatus(status string) bool {
+	status = strings.ToLower(status)
+
+	return status == "seeding" || status == "seedingwait"
 }
 
 func (t *Transfer) IsDownloadable() bool {

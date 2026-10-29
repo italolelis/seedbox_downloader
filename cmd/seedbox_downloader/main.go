@@ -42,7 +42,8 @@ type config struct {
 	// PUTIO_BASE_DIR is deliberately absent. Its only use was being advertised to
 	// the *arr apps as a download directory, which was the bug: it is a Put.io-side
 	// path and means nothing locally. Transfers are filed under TARGET_LABEL.
-	PutioSeedRatio float64 `envconfig:"PUTIO_SEED_RATIO" default:"0"`
+	PutioSeedRatio float64       `envconfig:"PUTIO_SEED_RATIO" default:"0"`
+	PutioSeedTime  time.Duration `envconfig:"PUTIO_SEED_TIME" default:"0"`
 
 	TargetLabel       string         `envconfig:"TARGET_LABEL"`
 	DownloadDir       string         `envconfig:"DOWNLOAD_DIR" required:"true"`
@@ -86,6 +87,11 @@ type config struct {
 	Radarr arrConfig `envconfig:"RADARR"`
 }
 
+// seedPolicy is when an imported transfer has seeded enough to leave Put.io.
+func (c *config) seedPolicy() downloader.SeedPolicy {
+	return downloader.SeedPolicy{Ratio: c.PutioSeedRatio, Time: c.PutioSeedTime}
+}
+
 type arrConfig struct {
 	APIKey  string `envconfig:"API_KEY"`
 	BaseURL string `envconfig:"BASE_URL"`
@@ -125,6 +131,7 @@ func run(ctx context.Context) error {
 		"bind_address", cfg.Web.BindAddress,
 		"telemetry_enabled", cfg.Telemetry.Enabled,
 		"putio_seed_ratio", cfg.PutioSeedRatio,
+		"putio_seed_time", cfg.PutioSeedTime.String(),
 	)
 
 	logger.InfoContext(ctx, "initializing telemetry")
@@ -313,7 +320,7 @@ func startPipeline(
 ) {
 	dl := downloader.NewDownloader(cfg.DownloadDir, cfg.MaxParallel, dc, tc, arrServices)
 
-	setupNotificationForDownloader(ctx, repo, dl, cfg, cfg.PutioSeedRatio)
+	setupNotificationForDownloader(ctx, repo, dl, cfg)
 	resumeWatches(ctx, repo, dl, dc, cfg)
 
 	transferOrchestrator := transfer.NewTransferOrchestrator(repo, dc, cfg.TargetLabel, cfg.PollingInterval)
@@ -390,7 +397,6 @@ func setupNotificationForDownloader(
 	repo storage.DownloadRepository,
 	downloader *downloader.Downloader,
 	cfg *config,
-	seedRatio float64,
 ) {
 	logger := logctx.LoggerFromContext(ctx).WithGroup("notification")
 
@@ -412,7 +418,7 @@ func setupNotificationForDownloader(
 					logger.InfoContext(ctx, "restarting notification loop after panic",
 						"operation", "notification_loop")
 					time.Sleep(time.Second) // Brief backoff before restart
-					setupNotificationForDownloader(ctx, repo, downloader, cfg, seedRatio)
+					setupNotificationForDownloader(ctx, repo, downloader, cfg)
 				}
 			}
 		}()
@@ -430,7 +436,7 @@ func setupNotificationForDownloader(
 			case t := <-downloader.OnTransferDownloadFinished:
 				handleDownloadFinished(ctx, logger, repo, notif, downloader, t, cfg.PollingInterval)
 			case t := <-downloader.OnTransferImported:
-				handleTransferImported(ctx, logger, repo, notif, downloader, t, cfg.PollingInterval, seedRatio)
+				handleTransferImported(ctx, logger, repo, notif, downloader, t, cfg.PollingInterval, cfg.seedPolicy())
 			case event := <-downloader.OnTransferMissing:
 				handleTransferMissing(ctx, logger, repo, notif, event)
 			case t := <-downloader.OnTransferCleanedUp:
@@ -502,7 +508,7 @@ func handleTransferImported(
 	dl *downloader.Downloader,
 	t *transfer.Transfer,
 	pollingInterval time.Duration,
-	seedRatio float64,
+	policy downloader.SeedPolicy,
 ) {
 	// Recorded before seeding or cleanup starts, so a restart part-way through
 	// either resumes it rather than waiting for an import that already happened.
@@ -510,7 +516,7 @@ func handleTransferImported(
 		logger.ErrorContext(ctx, "failed to update transfer status", "transfer_id", t.ID, "err", err)
 	}
 
-	retire(ctx, logger, repo, dl, t, pollingInterval, seedRatio)
+	retire(ctx, logger, repo, dl, t, pollingInterval, policy)
 
 	if notif != nil {
 		if notifyErr := notif.Notify(
@@ -522,7 +528,7 @@ func handleTransferImported(
 }
 
 // retire takes an imported transfer off the seedbox: straight away, or once it
-// has seeded to the target ratio.
+// has seeded enough by the policy.
 func retire(
 	ctx context.Context,
 	logger *slog.Logger,
@@ -530,10 +536,10 @@ func retire(
 	dl *downloader.Downloader,
 	t *transfer.Transfer,
 	pollingInterval time.Duration,
-	seedRatio float64,
+	policy downloader.SeedPolicy,
 ) {
-	if seedRatio > 0 {
-		dl.WatchForSeeding(ctx, t, pollingInterval, seedRatio)
+	if policy.Enabled() {
+		dl.WatchForSeeding(ctx, t, pollingInterval, policy)
 
 		return
 	}
@@ -631,7 +637,7 @@ func resumeWatchesOnce(
 		if status == storage.StatusDownloaded {
 			dl.WatchForImported(ctx, t, cfg.PollingInterval)
 		} else {
-			retire(ctx, logger, repo, dl, t, cfg.PollingInterval, cfg.PutioSeedRatio)
+			retire(ctx, logger, repo, dl, t, cfg.PollingInterval, cfg.seedPolicy())
 		}
 	}
 
