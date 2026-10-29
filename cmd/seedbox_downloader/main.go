@@ -592,13 +592,16 @@ func markCleaned(ctx context.Context, logger *slog.Logger, repo storage.Download
 	}
 }
 
-// resumeWatches re-attaches the post-download watches a previous process was
-// running when it stopped. They live only in memory, and the orchestrator never
-// hands a downloaded transfer back, so without this a restart leaves every
-// transfer that was awaiting import or still seeding on the seedbox forever.
+// resumeWatches adopts the post-download watches that no live instance is
+// running -- this instance's own from before a restart, or those of a peer
+// sharing the ledger that stopped or died -- and runs them here. Watches live
+// only in memory, and the orchestrator never hands a downloaded transfer back,
+// so without this a transfer awaiting import or still seeding would stay on the
+// seedbox forever once its watcher was gone.
 //
-// Anything that cannot be settled yet -- the ledger unreadable, the seedbox
-// unreachable -- is tried again every polling interval.
+// It runs at startup and then every polling interval, for as long as the
+// instance lives: a peer can die at any time. A watch held by a live instance is
+// never adopted, so no transfer is watched twice.
 func resumeWatches(
 	ctx context.Context,
 	repo storage.DownloadRepository,
@@ -612,24 +615,18 @@ func resumeWatches(
 		ticker := time.NewTicker(cfg.PollingInterval)
 		defer ticker.Stop()
 
-		var awaitingImport map[string]bool
+		// Adopted transfers whose import watch could not be attached yet. They
+		// stay claimed by this instance meanwhile, so nobody else adopts them.
+		awaitingImport := map[string]bool{}
 
 		for {
-			var err error
-
-			if awaitingImport == nil {
-				awaitingImport, err = resumeFromLedger(ctx, logger, repo, dl, cfg)
+			if err := adoptWatches(ctx, logger, repo, dl, cfg, awaitingImport); err != nil {
+				logger.WarnContext(ctx, "failed to adopt watches, retrying", "err", err)
 			}
 
-			if err == nil {
-				err = resumeImportWatches(ctx, logger, repo, dl, dc, cfg, awaitingImport)
+			if err := resumeImportWatches(ctx, logger, repo, dl, dc, cfg, awaitingImport); err != nil {
+				logger.WarnContext(ctx, "failed to resume import watches, retrying", "err", err)
 			}
-
-			if err == nil {
-				return
-			}
-
-			logger.WarnContext(ctx, "failed to resume watches, retrying", "err", err)
 
 			select {
 			case <-ctx.Done():
@@ -640,28 +637,26 @@ func resumeWatches(
 	}()
 }
 
-// resumeFromLedger resumes every imported transfer and returns the ids of the
-// downloaded ones, which still await import.
-//
-// An imported transfer is resumed from its id alone: checking its seeding and
-// removing it from the seedbox need nothing else, so it never depends on the
-// seedbox listing it -- a listing that silently drops transfers whose folder
-// lookup fails.
-func resumeFromLedger(
+// adoptWatches claims every watch no live instance holds. An imported transfer
+// is resumed from its id alone: checking its seeding and removing it from the
+// seedbox need nothing else, so it never depends on the seedbox listing it -- a
+// listing that silently drops transfers whose folder lookup fails. A downloaded
+// one is added to awaitingImport, for its import watch to be attached once the
+// listing has its files.
+func adoptWatches(
 	ctx context.Context,
 	logger *slog.Logger,
 	repo storage.DownloadRepository,
 	dl *downloader.Downloader,
 	cfg *config,
-) (map[string]bool, error) {
-	records, err := repo.GetDownloads()
+	awaitingImport map[string]bool,
+) error {
+	adopted, err := repo.ClaimWatches()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read the ledger: %w", err)
+		return fmt.Errorf("failed to claim watches: %w", err)
 	}
 
-	awaitingImport := map[string]bool{}
-
-	for _, r := range records {
+	for _, r := range adopted {
 		switch r.Status {
 		case storage.StatusDownloaded:
 			awaitingImport[r.DownloadID] = true
@@ -671,7 +666,7 @@ func resumeFromLedger(
 		}
 	}
 
-	return awaitingImport, nil
+	return nil
 }
 
 // resumeImportWatches re-attaches the import watch of each transfer in

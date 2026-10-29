@@ -235,8 +235,10 @@ func (o *TransferOrchestrator) ProduceTransfers(ctx context.Context) {
 }
 
 // KeepClaimsAlive renews this instance's claims every interval until ctx is
-// cancelled. It runs apart from the polling loop because that loop blocks for as
-// long as a download takes, which can be far longer than a lease.
+// cancelled, and then releases them. It runs apart from the polling loop because
+// that loop blocks for as long as a download takes, which can be far longer than
+// a lease. Releasing on the way out lets a restart, or a peer, take the work over
+// at once instead of a whole lease later.
 func (o *TransferOrchestrator) KeepClaimsAlive(ctx context.Context, every time.Duration) {
 	logger := logctx.LoggerFromContext(ctx)
 
@@ -247,6 +249,10 @@ func (o *TransferOrchestrator) KeepClaimsAlive(ctx context.Context, every time.D
 		for {
 			select {
 			case <-ctx.Done():
+				if err := o.repo.ReleaseClaims(); err != nil {
+					logger.WarnContext(ctx, "failed to release claims on shutdown", "err", err)
+				}
+
 				return
 			case <-ticker.C:
 				if err := o.repo.RenewClaims(); err != nil {

@@ -242,7 +242,115 @@ func TestUpdateTransferStatus_HolderThatLostItsClaimCannotRecordAnOutcome(t *tes
 	require.NoError(t, takeover.UpdateTransferStatus("100", storage.StatusDownloaded),
 		"the current holder records its outcome as usual")
 
-	// After the download, the lifecycle is no longer anyone's claim: any instance
-	// may move it on.
-	require.NoError(t, stalled.UpdateTransferStatus("100", storage.StatusImported))
+	// The new holder goes on to watch it, so it stays theirs to move on.
+	require.ErrorIs(t, stalled.UpdateTransferStatus("100", storage.StatusImported), storage.ErrClaimLost)
+	require.NoError(t, takeover.UpdateTransferStatus("100", storage.StatusImported))
+}
+
+// downloadedBy has repo claim a transfer and record it downloaded -- the state in
+// which repo's instance is watching it for import.
+func downloadedBy(t *testing.T, repo *DownloadRepository, id string) {
+	t.Helper()
+
+	claimed, err := repo.ClaimTransfer(id)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.NoError(t, repo.UpdateTransferStatus(id, storage.StatusDownloaded))
+}
+
+func watchIDs(records []storage.DownloadRecord) []string {
+	var ids []string
+	for _, r := range records {
+		ids = append(ids, r.DownloadID)
+	}
+
+	return ids
+}
+
+// The instance that downloaded a transfer goes on to watch it, so its claim
+// carries over: a second instance sharing the ledger must not take the watch
+// too, or every import check, notification and cleanup happens twice.
+func TestClaimWatches_LeavesAWatchHeldByALiveInstance(t *testing.T) {
+	db := newTestDB(t)
+	watcher, other := NewDownloadRepository(db, testLease), NewDownloadRepository(db, testLease)
+
+	downloadedBy(t, watcher, "100")
+
+	adopted, err := other.ClaimWatches()
+	require.NoError(t, err)
+	assert.Empty(t, adopted, "a watch under a live claim must not be adopted")
+
+	// Renewal keeps it that way for as long as the watcher lives.
+	for range 4 {
+		time.Sleep(testLease / 2)
+		require.NoError(t, watcher.RenewClaims())
+	}
+
+	adopted, err = other.ClaimWatches()
+	require.NoError(t, err)
+	assert.Empty(t, adopted)
+}
+
+// When the watcher dies, its claim lapses and a live instance adopts the watch
+// -- without having to be the one that restarts.
+func TestClaimWatches_AdoptsAWatchWhoseClaimLapsed(t *testing.T) {
+	db := newTestDB(t)
+	crashed, survivor := NewDownloadRepository(db, testLease), NewDownloadRepository(db, testLease)
+
+	downloadedBy(t, crashed, "100")
+	time.Sleep(2 * testLease)
+
+	adopted, err := survivor.ClaimWatches()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"100"}, watchIDs(adopted))
+	assert.Equal(t, storage.StatusDownloaded, adopted[0].Status)
+
+	// Adopted once, by one instance.
+	again, err := NewDownloadRepository(db, testLease).ClaimWatches()
+	require.NoError(t, err)
+	assert.Empty(t, again, "an adopted watch is held, not adoptable again")
+
+	// The adopter can now move it on; the instance that died cannot.
+	require.ErrorIs(t, crashed.UpdateTransferStatus("100", storage.StatusImported), storage.ErrClaimLost)
+	require.NoError(t, survivor.UpdateTransferStatus("100", storage.StatusImported))
+}
+
+// A graceful stop gives its claims up at once, so a restart -- or a peer --
+// resumes the work immediately rather than a whole lease later.
+func TestReleaseClaims_MakesWorkAvailableAtOnce(t *testing.T) {
+	db := newTestDB(t)
+	stopping, next := NewDownloadRepository(db, time.Hour), NewDownloadRepository(db, time.Hour)
+
+	downloadedBy(t, stopping, "100")
+
+	claimed, err := stopping.ClaimTransfer("200")
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	require.NoError(t, stopping.ReleaseClaims())
+
+	adopted, err := next.ClaimWatches()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"100"}, watchIDs(adopted))
+
+	claimed, err = next.ClaimTransfer("200")
+	require.NoError(t, err)
+	assert.True(t, claimed, "a released download is claimable at once")
+}
+
+// Watches recorded before they had claims, and every transfer whose watch
+// outlived the process that started it, have no holder. They are adoptable.
+func TestClaimWatches_AdoptsUnheldWatchesButNotFinishedTransfers(t *testing.T) {
+	db := newTestDB(t)
+
+	_, err := db.Exec(`INSERT INTO downloads (transfer_id, downloaded_at, status) VALUES
+		('1', '2026-01-01T00:00:00Z', 'downloaded'),
+		('2', '2026-01-01T00:00:00Z', 'imported'),
+		('3', '2026-01-01T00:00:00Z', 'cleaned'),
+		('4', '2026-01-01T00:00:00Z', 'failed')`)
+	require.NoError(t, err)
+
+	adopted, err := NewDownloadRepository(db, testLease).ClaimWatches()
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"1", "2"}, watchIDs(adopted))
 }

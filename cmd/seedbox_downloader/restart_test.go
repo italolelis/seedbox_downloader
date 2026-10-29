@@ -193,6 +193,71 @@ func TestTwoInstances_LongDownloadIsNotTakenOver(t *testing.T) {
 	assert.Equal(t, 1, sb.Fetches("episode.mkv"), "a live claim was taken over and the file fetched twice")
 }
 
+// Instances sharing a ledger used to re-watch every downloaded transfer on
+// start, including those a live peer was already watching -- so the import was
+// checked, notified and cleaned up twice. A watch held by a live instance is now
+// left to it, however long it runs.
+func TestTwoInstances_AWatchIsRunByOneInstance(t *testing.T) {
+	sb := newSeedbox(t)
+	watcherArr, peerArr := newFakeArr(t), newFakeArr(t)
+	h := newHarness(t, sb, watcherArr, 0)
+
+	h.startWith(watcherArr.client())
+	h.waitForStatus(storage.StatusDownloaded)
+
+	h.startWith(peerArr.client())
+
+	// Several leases' worth: long enough for a lapsed or unrenewed claim to be
+	// adopted, if renewal were not keeping it.
+	time.Sleep(3 * lease)
+	assert.Zero(t, peerArr.checks.Load(), "the peer must not watch a transfer a live instance is watching")
+
+	watcherArr.imported.Store(true)
+	h.waitForCleanup(sb)
+}
+
+// A peer that is already running adopts the watch of an instance that dies
+// after it started -- the dead instance may never come back to resume it.
+func TestPeerAdoptsTheWatchOfAnInstanceThatDied(t *testing.T) {
+	sb := newSeedbox(t)
+	arrApp := newFakeArr(t)
+	arrApp.imported.Store(true)
+	h := newHarness(t, sb, arrApp, 0)
+
+	// The peer has been running since before anything was downloaded, and its own
+	// orchestrator must not be the one to pick this transfer up: it sits in the
+	// ledger as downloaded, claimed by an instance that then dies.
+	died := sqlite.NewDownloadRepository(h.db, lease)
+	claimed, err := died.ClaimTransfer(fakeTransferID)
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	h.start()
+	time.Sleep(3 * tick) // the peer is up and has made its first adoption pass
+
+	require.NoError(t, died.UpdateTransferStatus(fakeTransferID, storage.StatusDownloaded))
+
+	h.waitForCleanup(sb)
+}
+
+// A restart releases the stopping instance's claims, so the next one resumes its
+// watches straight away instead of waiting a whole lease for them to lapse.
+func TestGracefulRestart_ResumesWithoutWaitingOutTheLease(t *testing.T) {
+	sb := newSeedbox(t)
+	arrApp := newFakeArr(t)
+	h := newHarness(t, sb, arrApp, 0)
+	h.cfg.ClaimLease = time.Hour
+
+	first := h.start()
+	h.waitForStatus(storage.StatusDownloaded)
+	first()
+
+	h.start()
+	arrApp.imported.Store(true)
+
+	h.waitForCleanup(sb)
+}
+
 // harness runs the real pipeline against a fake seedbox and a fake *arr app,
 // with a ledger on disk that outlives each run -- which is what lets a test
 // restart it.
@@ -236,11 +301,19 @@ func newHarness(t *testing.T, sb *seedbox.Seedbox, arrApp *fakeArr, seedRatio fl
 func (h *harness) start() func() {
 	h.t.Helper()
 
+	return h.startWith(h.arr)
+}
+
+// startWith starts an instance that checks imports against its own *arr apps,
+// so a test can tell which instance is running a watch.
+func (h *harness) startWith(arrApps []*arr.Client) func() {
+	h.t.Helper()
+
 	ctx, cancel := context.WithCancel(logctx.WithLogger(context.Background(), quietLogger()))
 	h.t.Cleanup(cancel)
 
 	client := h.sb.Client()
-	startPipeline(ctx, h.cfg, sqlite.NewDownloadRepository(h.db, h.cfg.ClaimLease), client, client, h.arr, nil)
+	startPipeline(ctx, h.cfg, sqlite.NewDownloadRepository(h.db, h.cfg.ClaimLease), client, client, arrApps, nil)
 
 	return func() {
 		cancel()
@@ -314,6 +387,13 @@ func newSeedbox(t *testing.T) *seedbox.Seedbox {
 type fakeArr struct {
 	server   *httptest.Server
 	imported atomic.Bool
+	// checks counts import checks, i.e. whether any instance is watching through
+	// this app at all.
+	checks atomic.Int32
+}
+
+func (f *fakeArr) client() []*arr.Client {
+	return []*arr.Client{arr.NewClient("test-key", f.server.URL)}
 }
 
 func newFakeArr(t *testing.T) *fakeArr {
@@ -321,6 +401,7 @@ func newFakeArr(t *testing.T) *fakeArr {
 
 	f := &fakeArr{}
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		f.checks.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 
 		if !f.imported.Load() {

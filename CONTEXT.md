@@ -56,10 +56,12 @@ construction, never two independent derivations.
 
 **Claim**:
 An exclusive hold one instance takes on a Transfer before downloading it, so that two
-instances sharing a seedbox account cannot fetch the same content twice. A Claim is a lease:
-the instance renews it while alive, and once it lapses -- the instance died or stalled --
-another instance takes the Transfer over. An instance whose Claim was taken over can no
-longer record the Transfer's outcome.
+instances sharing a seedbox account cannot fetch the same content twice. The Claim lasts
+until the Transfer is cleaned up, failed or missing: the instance that downloaded it goes on
+to watch it for import and while it seeds, and no other instance does. A Claim is a lease:
+the instance renews it while alive and releases it when it stops; once it lapses -- the
+instance died or stalled -- another instance takes the Transfer over, at whatever step it had
+reached. An instance whose Claim was taken over can no longer move the Transfer on.
 
 **Downloaded**:
 Every one of a Transfer's files was written with a byte count matching the size the

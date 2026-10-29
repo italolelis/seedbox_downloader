@@ -35,4 +35,6 @@ type DownloadRepository interface {
 	ClaimTransfer(transferID string) (bool, error)        // atomically claim a transfer
 	UpdateTransferStatus(transferID, status string) error // update status after download
 	RenewClaims() error                                   // extend this instance's leases on its claims
+	ReleaseClaims() error                                 // give up every claim this instance holds
+	ClaimWatches() ([]DownloadRecord, error)              // adopt watches no live instance holds
 }
