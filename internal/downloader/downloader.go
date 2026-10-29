@@ -55,6 +55,9 @@ type Downloader struct {
 	OnTransferDownloadFinished chan *transfer.Transfer
 	OnTransferImported         chan *transfer.Transfer
 	OnTransferMissing          chan MissingTransferEvent
+	// OnTransferCleanedUp fires once a watched transfer is gone from the seedbox,
+	// whether this process removed it or something else did first.
+	OnTransferCleanedUp chan *transfer.Transfer
 }
 
 func NewDownloader(
@@ -74,6 +77,7 @@ func NewDownloader(
 		OnTransferDownloadFinished: make(chan *transfer.Transfer),
 		OnTransferImported:         make(chan *transfer.Transfer),
 		OnTransferMissing:          make(chan MissingTransferEvent),
+		OnTransferCleanedUp:        make(chan *transfer.Transfer),
 	}
 }
 
@@ -287,8 +291,9 @@ func (d *Downloader) WatchForImported(ctx context.Context, t *transfer.Transfer,
 
 // CleanupTransfer removes the Put.io transfer and its file data with exponential backoff retry.
 // If the transfer is not found on Put.io (already deleted), this is treated as success.
-// Cleanup failures after retries are logged but do not crash or stall the pipeline.
-func (d *Downloader) CleanupTransfer(ctx context.Context, t *transfer.Transfer) {
+// A failure after retries is returned so the caller can leave the transfer marked as
+// still needing cleanup, rather than forgetting it with its files still on Put.io.
+func (d *Downloader) CleanupTransfer(ctx context.Context, t *transfer.Transfer) error {
 	logger := logctx.LoggerFromContext(ctx)
 
 	_, err := backoff.Retry[struct{}](ctx, func() (struct{}, error) {
@@ -307,14 +312,16 @@ func (d *Downloader) CleanupTransfer(ctx context.Context, t *transfer.Transfer) 
 	}, backoff.WithMaxTries(3))
 
 	if err != nil {
-		logger.ErrorContext(ctx, "failed to clean up Put.io transfer after retries, continuing",
+		logger.ErrorContext(ctx, "failed to clean up Put.io transfer after retries",
 			"transfer_id", t.ID, "err", err)
 
-		return
+		return fmt.Errorf("failed to clean up transfer %s: %w", t.ID, err)
 	}
 
 	logger.InfoContext(ctx, "Put.io transfer and files cleaned up",
 		"transfer_id", t.ID, "transfer_name", t.Name)
+
+	return nil
 }
 
 // WatchForSeeding watches until the Put.io transfer reaches the target seed ratio, then cleans it up.
@@ -372,6 +379,8 @@ func (d *Downloader) WatchForSeeding(ctx context.Context, t *transfer.Transfer, 
 						"operation", "watch_seeding",
 						"transfer_id", t.ID)
 
+					d.OnTransferCleanedUp <- t
+
 					return
 				}
 
@@ -382,7 +391,13 @@ func (d *Downloader) WatchForSeeding(ctx context.Context, t *transfer.Transfer, 
 						"upload_ratio", uploadRatio,
 						"target_ratio", seedRatio)
 
-					d.CleanupTransfer(ctx, t)
+					// A failed cleanup keeps the watch alive: the ratio is still met on
+					// the next tick, so it is simply tried again.
+					if err := d.CleanupTransfer(ctx, t); err != nil {
+						continue
+					}
+
+					d.OnTransferCleanedUp <- t
 
 					return
 				}

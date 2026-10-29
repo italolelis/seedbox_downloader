@@ -29,7 +29,7 @@ func (r *DownloadRepository) GetDownloads() ([]storage.DownloadRecord, error) {
 
 		var lockedBy sql.NullString
 
-		err := rows.Scan(&record.DownloadID, &record.FilePath, &record.DownloadedAt, &record.Status, &lockedBy)
+		err := rows.Scan(&record.DownloadID, &record.DownloadedAt, &record.Status, &lockedBy)
 		if err != nil {
 			return nil, err
 		}
@@ -54,7 +54,8 @@ func (r *DownloadRepository) ClaimTransfer(transferID string) (bool, error) {
 		return false, err
 	}
 
-	if status == "downloaded" {
+	switch status {
+	case storage.StatusDownloaded, storage.StatusImported, storage.StatusCleaned:
 		return false, storage.ErrDownloaded
 	}
 

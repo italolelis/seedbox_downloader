@@ -73,3 +73,47 @@ func TestClaimTransfer_DownloadedTransferIsNotClaimedAgain(t *testing.T) {
 	assert.ErrorIs(t, err, storage.ErrDownloaded,
 		"an already-downloaded transfer must be reported as such, not silently skipped")
 }
+
+// Resuming after a restart starts from what the ledger holds, so reading it back
+// has to work. It used to scan five destinations out of a four-column query and
+// fail on the first row.
+func TestGetDownloads_ReturnsEachTransferWithItsStatus(t *testing.T) {
+	repo := newTestRepo(t)
+
+	for _, id := range []string{"100", "200"} {
+		claimed, err := repo.ClaimTransfer(id)
+		require.NoError(t, err)
+		require.True(t, claimed)
+	}
+
+	require.NoError(t, repo.UpdateTransferStatus("200", "downloaded"))
+
+	records, err := repo.GetDownloads()
+	require.NoError(t, err)
+
+	statuses := map[string]string{}
+	for _, r := range records {
+		statuses[r.DownloadID] = r.Status
+	}
+
+	assert.Equal(t, map[string]string{"100": "downloading", "200": "downloaded"}, statuses)
+}
+
+// A transfer stays on the seedbox while it seeds, so it keeps turning up in every
+// poll after it was imported. It must keep being recognised as downloaded, not
+// mistaken for one another instance is still working on.
+func TestClaimTransfer_EveryPostDownloadStatusIsReportedAsDownloaded(t *testing.T) {
+	for _, status := range []string{storage.StatusDownloaded, storage.StatusImported, storage.StatusCleaned} {
+		t.Run(status, func(t *testing.T) {
+			repo := newTestRepo(t)
+
+			_, err := repo.ClaimTransfer("100")
+			require.NoError(t, err)
+			require.NoError(t, repo.UpdateTransferStatus("100", status))
+
+			claimed, err := repo.ClaimTransfer("100")
+			assert.False(t, claimed)
+			assert.ErrorIs(t, err, storage.ErrDownloaded)
+		})
+	}
+}

@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/italolelis/seedbox_downloader/internal/dc/putio"
@@ -71,6 +72,10 @@ type Transfer struct {
 	// InProgress omits the file id, as Put.io does before a transfer completes,
 	// so no file details are discoverable yet.
 	InProgress bool
+
+	// Uploaded is how many bytes the seedbox has seeded so far. The transfer's
+	// ratio is this over its size; SetUploaded moves it while a test runs.
+	Uploaded int64
 }
 
 // Seedbox is a running fake Put.io.
@@ -78,6 +83,10 @@ type Seedbox struct {
 	t     *testing.T
 	srv   *httptest.Server
 	label string
+
+	// mu guards everything below. Watches poll the fake from their own goroutines
+	// while a test moves seeding state or the client removes transfers.
+	mu sync.Mutex
 
 	// nodes maps a synthetic file id to its entry and full path within the account.
 	nodes     map[int64]*node
@@ -100,6 +109,7 @@ type fakeTransfer struct {
 	saveParentID int64
 	status       string
 	size         int64
+	uploaded     int64
 }
 
 // New starts a fake Put.io serving the given transfers under the given label,
@@ -142,6 +152,7 @@ func New(t *testing.T, label string, transfers ...Transfer) *Seedbox {
 			saveParentID: parentID,
 			status:       status,
 			size:         s.sizeOf(rootID),
+			uploaded:     tr.Uploaded,
 		}
 
 		if tr.InProgress {
@@ -153,7 +164,9 @@ func New(t *testing.T, label string, transfers ...Transfer) *Seedbox {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v2/transfers/list", s.handleTransfersList)
+	mux.HandleFunc("/v2/transfers/cancel", s.handleTransfersCancel)
 	mux.HandleFunc("/v2/files/list", s.handleFilesList)
+	mux.HandleFunc("/v2/files/delete", s.handleFilesDelete)
 	mux.HandleFunc("/v2/files/", s.handleFiles)
 	mux.HandleFunc("/download/", s.handleDownload)
 
@@ -182,6 +195,79 @@ func (s *Seedbox) Label() string { return s.label }
 // can assert on the fake's own behaviour without going through a client.
 func (s *Seedbox) DownloadURL(fileID int64) string {
 	return fmt.Sprintf("%s/download/%d", s.srv.URL, fileID)
+}
+
+// SetUploaded sets how many bytes the named transfer has seeded, which is what
+// moves its ratio.
+func (s *Seedbox) SetUploaded(name string, uploaded int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.transfer(name).uploaded = uploaded
+}
+
+// HasTransfer reports whether the named transfer is still on the account, i.e.
+// has not been cancelled.
+func (s *Seedbox) HasTransfer(name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, tr := range s.transfers {
+		if tr.name == name {
+			return true
+		}
+	}
+
+	return false
+}
+
+// HasFile reports whether a file or folder with the given name still exists
+// anywhere on the account.
+func (s *Seedbox) HasFile(name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, n := range s.nodes {
+		if n.entry.Name == name {
+			return true
+		}
+	}
+
+	return false
+}
+
+// transfer returns the named transfer for mutation. Callers hold mu.
+func (s *Seedbox) transfer(name string) *fakeTransfer {
+	for i := range s.transfers {
+		if s.transfers[i].name == name {
+			return &s.transfers[i]
+		}
+	}
+
+	s.t.Fatalf("no transfer named %q on the fake seedbox", name)
+
+	return nil
+}
+
+// remove deletes a node and its descendants. Callers hold mu.
+func (s *Seedbox) remove(id int64) {
+	for _, childID := range s.children[id] {
+		s.remove(childID)
+	}
+
+	if n, ok := s.nodes[id]; ok {
+		siblings := s.children[n.parentID]
+		for i, sibling := range siblings {
+			if sibling == id {
+				s.children[n.parentID] = append(siblings[:i], siblings[i+1:]...)
+
+				break
+			}
+		}
+	}
+
+	delete(s.children, id)
+	delete(s.nodes, id)
 }
 
 // add registers an entry and its descendants, returning the new id.
@@ -228,6 +314,9 @@ func (s *Seedbox) sizeOf(id int64) int64 {
 }
 
 func (s *Seedbox) handleTransfersList(w http.ResponseWriter, _ *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	out := make([]map[string]any, 0, len(s.transfers))
 
 	for _, tr := range s.transfers {
@@ -240,6 +329,7 @@ func (s *Seedbox) handleTransfersList(w http.ResponseWriter, _ *http.Request) {
 			"percent_done":   100,
 			"size":           tr.size,
 			"downloaded":     tr.size,
+			"uploaded":       tr.uploaded,
 			"source":         "magnet:test",
 		})
 	}
@@ -247,7 +337,75 @@ func (s *Seedbox) handleTransfersList(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]any{"transfers": out})
 }
 
+// handleTransfersCancel removes transfers from the account, as Put.io's cancel
+// does for a finished transfer. Its files are left in place; deleting them is a
+// separate call.
+func (s *Seedbox) handleTransfersCancel(w http.ResponseWriter, r *http.Request) {
+	ids, ok := formIDs(w, r, "transfer_ids")
+	if !ok {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	kept := s.transfers[:0]
+
+	for _, tr := range s.transfers {
+		if !ids[tr.id] {
+			kept = append(kept, tr)
+		}
+	}
+
+	s.transfers = kept
+
+	writeJSON(w, map[string]any{"status": "OK"})
+}
+
+func (s *Seedbox) handleFilesDelete(w http.ResponseWriter, r *http.Request) {
+	ids, ok := formIDs(w, r, "file_ids")
+	if !ok {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for id := range ids {
+		s.remove(id)
+	}
+
+	writeJSON(w, map[string]any{"status": "OK"})
+}
+
+// formIDs parses a comma-separated id list from a form field.
+func formIDs(w http.ResponseWriter, r *http.Request, field string) (map[int64]bool, bool) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+
+		return nil, false
+	}
+
+	ids := map[int64]bool{}
+
+	for _, part := range strings.Split(r.PostForm.Get(field), ",") {
+		id, err := strconv.ParseInt(part, 10, 64)
+		if err != nil {
+			http.Error(w, "bad "+field, http.StatusBadRequest)
+
+			return nil, false
+		}
+
+		ids[id] = true
+	}
+
+	return ids, true
+}
+
 func (s *Seedbox) handleFilesList(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	parentID, err := strconv.ParseInt(r.URL.Query().Get("parent_id"), 10, 64)
 	if err != nil {
 		http.Error(w, "bad parent_id", http.StatusBadRequest)
@@ -276,6 +434,9 @@ func (s *Seedbox) handleFilesList(w http.ResponseWriter, r *http.Request) {
 
 // handleFiles serves both /v2/files/{id} and /v2/files/{id}/url.
 func (s *Seedbox) handleFiles(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	rest := strings.TrimPrefix(r.URL.Path, "/v2/files/")
 
 	idPart, isURL := rest, false
@@ -307,6 +468,9 @@ func (s *Seedbox) handleFiles(w http.ResponseWriter, r *http.Request) {
 
 // handleDownload serves file bytes, honouring the entry's injected failures.
 func (s *Seedbox) handleDownload(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	id, err := strconv.ParseInt(strings.TrimPrefix(r.URL.Path, "/download/"), 10, 64)
 	if err != nil {
 		http.Error(w, "bad file id", http.StatusBadRequest)
