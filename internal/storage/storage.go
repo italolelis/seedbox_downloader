@@ -4,6 +4,9 @@ import "errors"
 
 var (
 	ErrDownloaded = errors.New("Download already completed")
+	// ErrClaimLost reports an outcome recorded for a transfer this instance no
+	// longer holds the claim on: its lease lapsed and another instance took over.
+	ErrClaimLost = errors.New("claim on transfer was lost to another instance")
 )
 
 // The statuses a transfer moves through after it is Downloaded. Each one is

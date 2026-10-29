@@ -240,7 +240,7 @@ func (h *harness) start() func() {
 	h.t.Cleanup(cancel)
 
 	client := h.sb.Client()
-	startPipeline(ctx, h.cfg, sqlite.NewDownloadRepository(h.db, lease), client, client, h.arr)
+	startPipeline(ctx, h.cfg, sqlite.NewDownloadRepository(h.db, h.cfg.ClaimLease), client, client, h.arr)
 
 	return func() {
 		cancel()
