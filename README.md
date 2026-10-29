@@ -165,7 +165,7 @@ All configuration is done via environment variables.
 | `MAX_PARALLEL` | `5` | Max concurrent file downloads |
 | `LOG_LEVEL` | `INFO` | Log level: `DEBUG`, `INFO`, `WARN`, `ERROR` |
 | `DB_PATH` | `downloads.db` | Path to the SQLite database |
-| `CLAIM_LEASE` | `5m` | How long a claim on a transfer survives without renewal. A running instance renews its claims three times per lease; if it dies mid-download, another instance (or the restarted one) takes the transfer over once the lease lapses |
+| `CLAIM_LEASE` | `5m` | How long a claim on a transfer survives without renewal. An instance holds a transfer from download until cleanup, renews its claims three times per lease, and releases them when it stops. If it dies, another instance (or the restarted one) takes its transfers over, mid-download or mid-watch, once the lease lapses |
 | `DISCORD_WEBHOOK_URL` | | Discord webhook for notifications |
 
 > **Sharing a ledger between instances.** Claims are leases compared against each host's

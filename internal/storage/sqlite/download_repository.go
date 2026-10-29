@@ -94,11 +94,16 @@ func (r *DownloadRepository) ClaimTransfer(transferID string) (bool, error) {
 	return affected > 0, nil
 }
 
-// RenewClaims extends the lease on every transfer this instance is downloading.
-// Called on a heartbeat while the process is alive, it is what tells a live
-// claim from a dead one.
+// leasedStatuses are the statuses in which a transfer is held by one instance:
+// downloading it, then watching it for import, then watching it seed. Only the
+// holder moves such a transfer on.
+const leasedStatuses = `'downloading', 'downloaded', 'imported'`
+
+// RenewClaims extends the lease on every transfer this instance holds. Called on
+// a heartbeat while the process is alive, it is what tells a live claim from a
+// dead one.
 func (r *DownloadRepository) RenewClaims() error {
-	_, err := r.db.Exec(`UPDATE downloads SET lease_until = ? WHERE locked_by = ? AND status = 'downloading'`,
+	_, err := r.db.Exec(`UPDATE downloads SET lease_until = ? WHERE locked_by = ? AND status IN (`+leasedStatuses+`)`,
 		time.Now().Add(r.lease).UnixMilli(), r.instanceID)
 	if err != nil {
 		return fmt.Errorf("failed to renew claims: %w", err)
@@ -107,18 +112,71 @@ func (r *DownloadRepository) RenewClaims() error {
 	return nil
 }
 
-// UpdateTransferStatus sets the status for a download and releases its claim.
+// ReleaseClaims gives up every claim this instance holds, keeping each
+// transfer's status, so that whoever starts next takes the work over at once
+// rather than a lease later. Called on a graceful stop.
+func (r *DownloadRepository) ReleaseClaims() error {
+	_, err := r.db.Exec(`UPDATE downloads SET locked_by = NULL, lease_until = NULL WHERE locked_by = ?`, r.instanceID)
+	if err != nil {
+		return fmt.Errorf("failed to release claims: %w", err)
+	}
+
+	return nil
+}
+
+// ClaimWatches claims every transfer awaiting import or still seeding that no
+// live instance holds -- its holder died or stopped, or it was recorded before
+// watches were claimed -- and returns them. Claimed in one statement, so two
+// instances adopting at once never both get the same transfer.
+func (r *DownloadRepository) ClaimWatches() ([]storage.DownloadRecord, error) {
+	now := time.Now()
+
+	rows, err := r.db.Query(`
+		UPDATE downloads SET locked_by = ?, lease_until = ?
+		WHERE status IN ('downloaded', 'imported')
+			AND (locked_by IS NULL OR locked_by = '' OR lease_until IS NULL OR lease_until < ?)
+		RETURNING transfer_id, status
+	`, r.instanceID, now.Add(r.lease).UnixMilli(), now.UnixMilli())
+	if err != nil {
+		return nil, fmt.Errorf("failed to claim watches: %w", err)
+	}
+	defer rows.Close()
+
+	var claimed []storage.DownloadRecord
+
+	for rows.Next() {
+		record := storage.DownloadRecord{LockedBy: r.instanceID}
+		if err := rows.Scan(&record.DownloadID, &record.Status); err != nil {
+			return nil, fmt.Errorf("failed to claim watches: %w", err)
+		}
+
+		claimed = append(claimed, record)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to claim watches: %w", err)
+	}
+
+	return claimed, nil
+}
+
+// UpdateTransferStatus moves a transfer to status.
 //
-// While a transfer is downloading, only the instance holding its claim may
-// record the outcome. One that stalled past its lease has been taken over, and
-// its outcome is stale: it gets ErrClaimLost and the ledger is left to the
-// current holder. Once a transfer is downloaded it is nobody's claim, and any
-// instance may move it on.
+// A transfer in a leased status is moved on only by the instance holding it. One
+// that stalled past its lease has been taken over, and what it has to record is
+// stale: it gets ErrClaimLost and the ledger is left to the current holder.
+//
+// Moving into a leased status keeps the claim, because the holder goes on to
+// watch the transfer; it is renewed there and then. Any other status -- cleaned,
+// failed, missing -- releases it.
 func (r *DownloadRepository) UpdateTransferStatus(transferID, status string) error {
 	res, err := r.db.Exec(`
-		UPDATE downloads SET status = ?, locked_by = NULL, lease_until = NULL
-		WHERE transfer_id = ? AND (status != 'downloading' OR locked_by = ?)
-	`, status, transferID, r.instanceID)
+		UPDATE downloads SET
+			status = ?1,
+			locked_by = CASE WHEN ?1 IN (`+leasedStatuses+`) THEN locked_by END,
+			lease_until = CASE WHEN ?1 IN (`+leasedStatuses+`) THEN ?2 END
+		WHERE transfer_id = ?3 AND (status NOT IN (`+leasedStatuses+`) OR locked_by = ?4)
+	`, status, time.Now().Add(r.lease).UnixMilli(), transferID, r.instanceID)
 	if err != nil {
 		return fmt.Errorf("failed to update status of transfer %s: %w", transferID, err)
 	}
@@ -130,7 +188,7 @@ func (r *DownloadRepository) UpdateTransferStatus(transferID, status string) err
 	var current string
 
 	err = r.db.QueryRow(`SELECT status FROM downloads WHERE transfer_id = ?`, transferID).Scan(&current)
-	if err == nil && current == "downloading" {
+	if err == nil && (current == "downloading" || current == storage.StatusDownloaded || current == storage.StatusImported) {
 		return fmt.Errorf("cannot record %s for transfer %s: %w", status, transferID, storage.ErrClaimLost)
 	}
 

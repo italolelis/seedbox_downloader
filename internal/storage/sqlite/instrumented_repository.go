@@ -74,3 +74,25 @@ func (r *InstrumentedDownloadRepository) RenewClaims() error {
 		return r.repo.RenewClaims()
 	})
 }
+
+// ReleaseClaims releases this instance's claims with telemetry.
+func (r *InstrumentedDownloadRepository) ReleaseClaims() error {
+	return r.telemetry.InstrumentDBOperation(context.Background(), "release_claims", func(ctx context.Context) error {
+		return r.repo.ReleaseClaims()
+	})
+}
+
+// ClaimWatches adopts unheld watches with telemetry.
+func (r *InstrumentedDownloadRepository) ClaimWatches() ([]storage.DownloadRecord, error) {
+	var result []storage.DownloadRecord
+
+	err := r.telemetry.InstrumentDBOperation(context.Background(), "claim_watches", func(ctx context.Context) error {
+		var err error
+
+		result, err = r.repo.ClaimWatches()
+
+		return err
+	})
+
+	return result, err
+}
