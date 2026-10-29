@@ -8,7 +8,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"runtime/debug"
+	"syscall"
 	"time"
 
 	"github.com/go-chi/chi"
@@ -102,7 +104,10 @@ type arrConfig struct {
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
+	// SIGTERM is how a container is stopped. Without this the process was simply
+	// killed: the graceful shutdown below never ran, and every claim was left to
+	// lapse instead of being released.
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	if err := run(ctx); err != nil {
@@ -155,9 +160,11 @@ func run(ctx context.Context) error {
 
 	logger.InfoContext(ctx, "initializing services")
 
-	// The services run as goroutines that stop on context cancellation; there is
-	// nothing to tear down here, so no handle is kept.
-	if err := initializeServices(ctx, cfg, tel); err != nil {
+	// The services run as goroutines that stop on context cancellation. The one
+	// thing kept is word of when they have released their claims, which shutdown
+	// waits for.
+	claimsReleased, err := initializeServices(ctx, cfg, tel)
+	if err != nil {
 		return err
 	}
 
@@ -176,7 +183,7 @@ func run(ctx context.Context) error {
 		"version", version,
 	)
 
-	return runMainLoop(ctx, cfg, servers)
+	return runMainLoop(ctx, cfg, servers, claimsReleased)
 }
 
 // servers holds the HTTP listeners. There is only one: metrics leave over OTLP,
@@ -242,7 +249,7 @@ func initializeTelemetry(ctx context.Context, cfg *config) (*telemetry.Telemetry
 	return tel, nil
 }
 
-func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemetry) error {
+func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemetry) (<-chan struct{}, error) {
 	logger := logctx.LoggerFromContext(ctx)
 
 	logger.InfoContext(ctx, "initializing database")
@@ -256,7 +263,7 @@ func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemet
 			"max_idle_conns", cfg.DBMaxIdleConns,
 			"err", err)
 
-		return fmt.Errorf("failed to initialize the database: %w", err)
+		return nil, fmt.Errorf("failed to initialize the database: %w", err)
 	}
 
 	logger.InfoContext(ctx, "database ready",
@@ -276,7 +283,7 @@ func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemet
 			"client_type", cfg.DownloadClient,
 			"err", err)
 
-		return fmt.Errorf("failed to build download client: %w", err)
+		return nil, fmt.Errorf("failed to build download client: %w", err)
 	}
 
 	instrumentedDC := transfer.NewInstrumentedDownloadClient(dc, tel, cfg.DownloadClient)
@@ -286,7 +293,7 @@ func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemet
 			"client_type", cfg.DownloadClient,
 			"err", err)
 
-		return fmt.Errorf("failed to authenticate with the download client: %w", err)
+		return nil, fmt.Errorf("failed to authenticate with the download client: %w", err)
 	}
 
 	logger.InfoContext(ctx, "download client ready", "client_type", cfg.DownloadClient)
@@ -312,9 +319,7 @@ func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemet
 
 	instrumentedTC := transfer.NewInstrumentedTransferClient(dc.(transfer.TransferClient), tel, cfg.DownloadClient)
 
-	startPipeline(ctx, cfg, dr, instrumentedDC, instrumentedTC, arrServices, tel)
-
-	return nil
+	return startPipeline(ctx, cfg, dr, instrumentedDC, instrumentedTC, arrServices, tel), nil
 }
 
 // claimRenewalsPerLease is how many times a claim is renewed within one lease,
@@ -338,16 +343,47 @@ func startPipeline(
 	tc transfer.TransferClient,
 	arrServices []*arr.Client,
 	tel *telemetry.Telemetry,
-) {
+) <-chan struct{} {
 	dl := downloader.NewDownloader(cfg.DownloadDir, cfg.MaxParallel, dc, tc, arrServices, tel)
 
 	setupNotificationForDownloader(ctx, repo, dl, cfg)
-	resumeWatches(ctx, repo, dl, dc, cfg)
+	adopting := resumeWatches(ctx, repo, dl, dc, cfg)
 
 	transferOrchestrator := transfer.NewTransferOrchestrator(repo, dc, cfg.TargetLabel, cfg.PollingInterval)
 	transferOrchestrator.ProduceTransfers(ctx)
-	transferOrchestrator.KeepClaimsAlive(ctx, cfg.ClaimLease/claimRenewalsPerLease)
+	renewing := transferOrchestrator.KeepClaimsAlive(ctx, cfg.ClaimLease/claimRenewalsPerLease)
 	dl.WatchDownloads(ctx, transferOrchestrator.OnDownloadQueued)
+
+	return releaseClaimsOnStop(ctx, repo, adopting, renewing)
+}
+
+// releaseClaimsOnStop gives up this instance's claims once ctx is cancelled, so
+// a restart or a peer takes the work over at once rather than a lease later, and
+// reports when that is done. It waits for adoption and renewal to stop first:
+// either could otherwise re-take or extend a claim just released.
+func releaseClaimsOnStop(ctx context.Context, repo storage.DownloadRepository, stopped ...<-chan struct{}) <-chan struct{} {
+	logger := logctx.LoggerFromContext(ctx)
+	released := make(chan struct{})
+
+	go func() {
+		defer close(released)
+
+		<-ctx.Done()
+
+		for _, done := range stopped {
+			<-done
+		}
+
+		if err := repo.ReleaseClaims(); err != nil {
+			logger.WarnContext(ctx, "failed to release claims on shutdown", "err", err)
+
+			return
+		}
+
+		logger.InfoContext(ctx, "released claims for the next instance")
+	}()
+
+	return released
 }
 
 func startServers(ctx context.Context, cfg *config, tel *telemetry.Telemetry) (*servers, error) {
@@ -376,7 +412,7 @@ func startServers(ctx context.Context, cfg *config, tel *telemetry.Telemetry) (*
 	}, nil
 }
 
-func runMainLoop(ctx context.Context, cfg *config, servers *servers) error {
+func runMainLoop(ctx context.Context, cfg *config, servers *servers, claimsReleased <-chan struct{}) error {
 	logger := logctx.LoggerFromContext(ctx)
 
 	for {
@@ -405,7 +441,13 @@ func runMainLoop(ctx context.Context, cfg *config, servers *servers) error {
 
 			// Phase 2: the background services stop on their own, since every one of
 			// them selects on this context. Nothing closes their event channels --
-			// several goroutines send on each, so there is no correct closer.
+			// several goroutines send on each, so there is no correct closer. Their
+			// claims are released before the process exits, within the timeout.
+			select {
+			case <-claimsReleased:
+			case <-shutdownCtx.Done():
+				logger.WarnContext(shutdownCtx, "claims not released before the shutdown timeout; they will lapse instead")
+			}
 
 			logger.InfoContext(shutdownCtx, "graceful shutdown complete")
 
@@ -536,6 +578,12 @@ func handleTransferImported(
 	// either resumes it rather than waiting for an import that already happened.
 	if err := repo.UpdateTransferStatus(t.ID, storage.StatusImported); err != nil {
 		logStatusError(ctx, logger, t, err)
+
+		// Another instance holds it now and is watching it; retiring it here too
+		// would remove it from the seedbox and notify twice.
+		if errors.Is(err, storage.ErrClaimLost) {
+			return
+		}
 	}
 
 	retire(ctx, logger, repo, dl, t, pollingInterval, policy)
@@ -566,10 +614,17 @@ func retire(
 		return
 	}
 
-	// On failure the transfer stays marked imported, so the next start retries it.
-	if err := dl.CleanupTransfer(ctx, t); err == nil {
-		markCleaned(ctx, logger, repo, t)
+	if err := dl.CleanupTransfer(ctx, t); err != nil {
+		// Handed back, still imported, so the next adoption pass retries it.
+		if err := repo.ReleaseClaim(t.ID); err != nil {
+			logger.WarnContext(ctx, "failed to hand back a transfer that could not be cleaned up",
+				"transfer_id", t.ID, "err", err)
+		}
+
+		return
 	}
+
+	markCleaned(ctx, logger, repo, t)
 }
 
 // logStatusError reports a ledger write that failed. Losing the claim is not a
@@ -608,10 +663,13 @@ func resumeWatches(
 	dl *downloader.Downloader,
 	dc transfer.DownloadClient,
 	cfg *config,
-) {
+) <-chan struct{} {
 	logger := logctx.LoggerFromContext(ctx).WithGroup("resume")
+	done := make(chan struct{})
 
 	go func() {
+		defer close(done)
+
 		ticker := time.NewTicker(cfg.PollingInterval)
 		defer ticker.Stop()
 
@@ -620,6 +678,12 @@ func resumeWatches(
 		awaitingImport := map[string]bool{}
 
 		for {
+			// A tick can be chosen over a cancellation that arrived at the same
+			// moment; adopting then would re-take what shutdown is about to release.
+			if ctx.Err() != nil {
+				return
+			}
+
 			if err := adoptWatches(ctx, logger, repo, dl, cfg, awaitingImport); err != nil {
 				logger.WarnContext(ctx, "failed to adopt watches, retrying", "err", err)
 			}
@@ -635,6 +699,8 @@ func resumeWatches(
 			}
 		}
 	}()
+
+	return done
 }
 
 // adoptWatches claims every watch no live instance holds. An imported transfer
@@ -653,7 +719,7 @@ func adoptWatches(
 ) error {
 	adopted, err := repo.ClaimWatches()
 	if err != nil {
-		return fmt.Errorf("failed to claim watches: %w", err)
+		return err
 	}
 
 	for _, r := range adopted {
@@ -704,17 +770,25 @@ func resumeImportWatches(
 
 	infoer, _ := dc.(transfer.TransferInfoer)
 
+	// One transfer that cannot be settled yet must not hold up the rest, so each
+	// is tried and the failures reported together.
+	var unsettled []error
+
 	for id := range awaitingImport {
 		// Missing from the listing is not proof of being gone from the seedbox,
 		// so it is confirmed before anything is closed out.
 		if infoer != nil {
 			_, found, err := infoer.GetTransferInfo(ctx, id)
 			if err != nil {
-				return fmt.Errorf("failed to look up transfer %s: %w", id, err)
+				unsettled = append(unsettled, fmt.Errorf("failed to look up transfer %s: %w", id, err))
+
+				continue
 			}
 
 			if found {
-				return fmt.Errorf("transfer %s is on the seedbox but missing from its listing", id)
+				unsettled = append(unsettled, fmt.Errorf("transfer %s is on the seedbox but missing from its listing", id))
+
+				continue
 			}
 		}
 
@@ -727,7 +801,7 @@ func resumeImportWatches(
 		delete(awaitingImport, id)
 	}
 
-	return nil
+	return errors.Join(unsettled...)
 }
 
 func handleTransferMissing(

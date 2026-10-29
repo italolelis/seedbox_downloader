@@ -94,10 +94,18 @@ func (r *DownloadRepository) ClaimTransfer(transferID string) (bool, error) {
 	return affected > 0, nil
 }
 
-// leasedStatuses are the statuses in which a transfer is held by one instance:
-// downloading it, then watching it for import, then watching it seed. Only the
-// holder moves such a transfer on.
-const leasedStatuses = `'downloading', 'downloaded', 'imported'`
+// The statuses in which a transfer is held by one instance: downloading it, then
+// watching it for import and while it seeds. Only the holder moves such a
+// transfer on. As SQL lists, since that is where they are used.
+const (
+	watchStatuses  = `'downloaded', 'imported'`
+	leasedStatuses = `'downloading', ` + watchStatuses
+)
+
+// isLeased is leasedStatuses, for a status read back into Go.
+func isLeased(status string) bool {
+	return status == "downloading" || status == storage.StatusDownloaded || status == storage.StatusImported
+}
 
 // RenewClaims extends the lease on every transfer this instance holds. Called on
 // a heartbeat while the process is alive, it is what tells a live claim from a
@@ -124,17 +132,34 @@ func (r *DownloadRepository) ReleaseClaims() error {
 	return nil
 }
 
+// ReleaseClaim hands one transfer this instance holds back, keeping its status,
+// for the next adoption pass -- here or on a peer -- to pick up. For a step this
+// instance could not finish and will not retry itself.
+func (r *DownloadRepository) ReleaseClaim(transferID string) error {
+	_, err := r.db.Exec(`UPDATE downloads SET locked_by = NULL, lease_until = NULL WHERE transfer_id = ? AND locked_by = ?`,
+		transferID, r.instanceID)
+	if err != nil {
+		return fmt.Errorf("failed to release claim on transfer %s: %w", transferID, err)
+	}
+
+	return nil
+}
+
 // ClaimWatches claims every transfer awaiting import or still seeding that no
 // live instance holds -- its holder died or stopped, or it was recorded before
 // watches were claimed -- and returns them. Claimed in one statement, so two
 // instances adopting at once never both get the same transfer.
+//
+// Never this instance's own: if its lease lapsed while it was suspended, it is
+// still running those watches, and its heartbeat renews them.
 func (r *DownloadRepository) ClaimWatches() ([]storage.DownloadRecord, error) {
 	now := time.Now()
 
 	rows, err := r.db.Query(`
-		UPDATE downloads SET locked_by = ?, lease_until = ?
-		WHERE status IN ('downloaded', 'imported')
-			AND (locked_by IS NULL OR locked_by = '' OR lease_until IS NULL OR lease_until < ?)
+		UPDATE downloads SET locked_by = ?1, lease_until = ?2
+		WHERE status IN (`+watchStatuses+`)
+			AND (locked_by IS NULL OR locked_by = '' OR lease_until IS NULL OR lease_until < ?3)
+			AND (locked_by IS NULL OR locked_by != ?1)
 		RETURNING transfer_id, status
 	`, r.instanceID, now.Add(r.lease).UnixMilli(), now.UnixMilli())
 	if err != nil {
@@ -188,7 +213,7 @@ func (r *DownloadRepository) UpdateTransferStatus(transferID, status string) err
 	var current string
 
 	err = r.db.QueryRow(`SELECT status FROM downloads WHERE transfer_id = ?`, transferID).Scan(&current)
-	if err == nil && (current == "downloading" || current == storage.StatusDownloaded || current == storage.StatusImported) {
+	if err == nil && isLeased(current) {
 		return fmt.Errorf("cannot record %s for transfer %s: %w", status, transferID, storage.ErrClaimLost)
 	}
 

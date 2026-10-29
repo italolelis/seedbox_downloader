@@ -297,7 +297,7 @@ func newHarness(t *testing.T, sb *seedbox.Seedbox, arrApp *fakeArr, seedRatio fl
 }
 
 // start runs one process's worth of pipeline and returns the function that
-// stops it. Stopping is a cancelled context, exactly as on SIGTERM.
+// stops it. Stopping is a cancelled context, which is what SIGTERM becomes.
 func (h *harness) start() func() {
 	h.t.Helper()
 
@@ -313,12 +313,20 @@ func (h *harness) startWith(arrApps []*arr.Client) func() {
 	h.t.Cleanup(cancel)
 
 	client := h.sb.Client()
-	startPipeline(ctx, h.cfg, sqlite.NewDownloadRepository(h.db, h.cfg.ClaimLease), client, client, arrApps, nil)
+	released := startPipeline(ctx, h.cfg, sqlite.NewDownloadRepository(h.db, h.cfg.ClaimLease), client, client, arrApps, nil)
 
 	return func() {
 		cancel()
-		// Let the goroutines observe the cancellation before the next run starts,
-		// so the old process cannot act on anything the new one is meant to.
+
+		// Shutdown waits for the claims to be released; so does the next start.
+		select {
+		case <-released:
+		case <-time.After(settle):
+			h.t.Fatal("claims were never released on stop")
+		}
+
+		// And the old process's watches observe the cancellation before the next
+		// run starts, so it cannot act on anything the new one is meant to.
 		time.Sleep(5 * tick)
 	}
 }

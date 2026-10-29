@@ -23,25 +23,6 @@ func NewInstrumentedDownloadRepository(dbConn *sql.DB, lease time.Duration, tel 
 	}
 }
 
-// GetDownloads retrieves all downloads with telemetry.
-func (r *InstrumentedDownloadRepository) GetDownloads() ([]storage.DownloadRecord, error) {
-	var result []storage.DownloadRecord
-
-	var err error
-
-	instrumentedErr := r.telemetry.InstrumentDBOperation(context.Background(), "get_downloads", func(ctx context.Context) error {
-		result, err = r.repo.GetDownloads()
-
-		return err
-	})
-
-	if instrumentedErr != nil {
-		return nil, instrumentedErr
-	}
-
-	return result, nil
-}
-
 // ClaimTransfer claims a transfer with telemetry.
 func (r *InstrumentedDownloadRepository) ClaimTransfer(transferID string) (bool, error) {
 	var result bool
@@ -95,4 +76,11 @@ func (r *InstrumentedDownloadRepository) ClaimWatches() ([]storage.DownloadRecor
 	})
 
 	return result, err
+}
+
+// ReleaseClaim hands one transfer back with telemetry.
+func (r *InstrumentedDownloadRepository) ReleaseClaim(transferID string) error {
+	return r.telemetry.InstrumentDBOperation(context.Background(), "release_claim", func(ctx context.Context) error {
+		return r.repo.ReleaseClaim(transferID)
+	})
 }
