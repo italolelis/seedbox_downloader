@@ -235,24 +235,22 @@ func (o *TransferOrchestrator) ProduceTransfers(ctx context.Context) {
 }
 
 // KeepClaimsAlive renews this instance's claims every interval until ctx is
-// cancelled, and then releases them. It runs apart from the polling loop because
-// that loop blocks for as long as a download takes, which can be far longer than
-// a lease. Releasing on the way out lets a restart, or a peer, take the work over
-// at once instead of a whole lease later.
-func (o *TransferOrchestrator) KeepClaimsAlive(ctx context.Context, every time.Duration) {
+// cancelled, and reports when it has stopped. It runs apart from the polling
+// loop because that loop blocks for as long as a download takes, which can be
+// far longer than a lease.
+func (o *TransferOrchestrator) KeepClaimsAlive(ctx context.Context, every time.Duration) <-chan struct{} {
 	logger := logctx.LoggerFromContext(ctx)
+	done := make(chan struct{})
 
 	go func() {
+		defer close(done)
+
 		ticker := time.NewTicker(every)
 		defer ticker.Stop()
 
 		for {
 			select {
 			case <-ctx.Done():
-				if err := o.repo.ReleaseClaims(); err != nil {
-					logger.WarnContext(ctx, "failed to release claims on shutdown", "err", err)
-				}
-
 				return
 			case <-ticker.C:
 				if err := o.repo.RenewClaims(); err != nil {
@@ -261,6 +259,8 @@ func (o *TransferOrchestrator) KeepClaimsAlive(ctx context.Context, every time.D
 			}
 		}
 	}()
+
+	return done
 }
 
 func (o *TransferOrchestrator) watchTransfers(ctx context.Context) error {
@@ -280,6 +280,12 @@ func (o *TransferOrchestrator) watchTransfers(ctx context.Context) error {
 	}
 
 	for _, transfer := range transfers {
+		// Claiming after shutdown has begun would hold a transfer for a whole
+		// lease that this instance will never download.
+		if ctx.Err() != nil {
+			return nil
+		}
+
 		transferLogger := logger.With("transfer_id", transfer.ID, "status", transfer.Status)
 
 		if !transfer.IsAvailable() || !transfer.IsDownloadable() {

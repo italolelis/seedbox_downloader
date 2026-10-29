@@ -335,7 +335,7 @@ func TestReleaseClaims_MakesWorkAvailableAtOnce(t *testing.T) {
 
 	claimed, err = next.ClaimTransfer("200")
 	require.NoError(t, err)
-	assert.True(t, claimed, "a released download is claimable at once")
+	assert.True(t, claimed, "a released transfer is claimable at once")
 }
 
 // Watches recorded before they had claims, and every transfer whose watch
@@ -353,4 +353,36 @@ func TestClaimWatches_AdoptsUnheldWatchesButNotFinishedTransfers(t *testing.T) {
 	adopted, err := NewDownloadRepository(db, testLease).ClaimWatches()
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"1", "2"}, watchIDs(adopted))
+}
+
+// An instance whose own lease lapsed -- a suspended host, a long GC pause -- is
+// still running its watches. Adopting them again would run each twice in one
+// process, and both copies would hold the claim, so neither could be fenced out.
+// Its heartbeat renews them instead.
+func TestClaimWatches_NeverAdoptsItsOwnWatches(t *testing.T) {
+	repo := newTestRepo(t)
+
+	downloadedBy(t, repo, "100")
+	time.Sleep(2 * testLease)
+
+	adopted, err := repo.ClaimWatches()
+	require.NoError(t, err)
+	assert.Empty(t, adopted)
+}
+
+// A step this instance could not finish -- a removal from the seedbox that kept
+// failing -- is handed back, so the next adoption pass, here or on a peer, tries
+// it again instead of it sitting under a live claim with nothing running.
+func TestReleaseClaim_HandsOneTransferBack(t *testing.T) {
+	db := newTestDB(t)
+	holder, next := NewDownloadRepository(db, time.Hour), NewDownloadRepository(db, time.Hour)
+
+	downloadedBy(t, holder, "100")
+	downloadedBy(t, holder, "200")
+
+	require.NoError(t, holder.ReleaseClaim("100"))
+
+	adopted, err := next.ClaimWatches()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"100"}, watchIDs(adopted), "only the released transfer is handed back")
 }
