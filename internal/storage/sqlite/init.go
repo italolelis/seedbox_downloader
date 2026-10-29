@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/cenkalti/backoff/v5"
 	// Import the SQLite driver.
@@ -53,7 +54,7 @@ func InitDB(ctx context.Context, dbPath string, maxOpenConns, maxIdleConns int) 
 		return nil, err
 	}
 
-	if err := addColumnIfMissing(db, "downloads", "lease_until", "INTEGER"); err != nil {
+	if err := addLeaseColumn(ctx, db); err != nil {
 		db.Close()
 
 		return nil, err
@@ -62,32 +63,14 @@ func InitDB(ctx context.Context, dbPath string, maxOpenConns, maxIdleConns int) 
 	return db, nil
 }
 
-// addColumnIfMissing brings a ledger created by an older version up to date.
-// SQLite has no ADD COLUMN IF NOT EXISTS, so the table is inspected first.
-func addColumnIfMissing(db *sql.DB, table, column, columnType string) error {
-	rows, err := db.Query(`SELECT name FROM pragma_table_info(?)`, table)
-	if err != nil {
-		return fmt.Errorf("failed to inspect table %s: %w", table, err)
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return fmt.Errorf("failed to inspect table %s: %w", table, err)
-		}
-
-		if name == column {
-			return nil
-		}
-	}
-
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("failed to inspect table %s: %w", table, err)
-	}
-
-	if _, err := db.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, column, columnType)); err != nil {
-		return fmt.Errorf("failed to add column %s.%s: %w", table, column, err)
+// addLeaseColumn brings a ledger created before claims had leases up to date.
+// SQLite has no ADD COLUMN IF NOT EXISTS, so the ALTER is attempted and an
+// existing column accepted -- which also settles two instances upgrading the
+// same ledger at once, where checking first would let both try to add it.
+func addLeaseColumn(ctx context.Context, db *sql.DB) error {
+	_, err := db.ExecContext(ctx, `ALTER TABLE downloads ADD COLUMN lease_until INTEGER`)
+	if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+		return fmt.Errorf("failed to add lease_until to the ledger: %w", err)
 	}
 
 	return nil

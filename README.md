@@ -168,6 +168,11 @@ All configuration is done via environment variables.
 | `CLAIM_LEASE` | `5m` | How long a claim on a transfer survives without renewal. A running instance renews its claims three times per lease; if it dies mid-download, another instance (or the restarted one) takes the transfer over once the lease lapses |
 | `DISCORD_WEBHOOK_URL` | | Discord webhook for notifications |
 
+> **Sharing a ledger between instances.** Claims are leases compared against each host's
+> clock, so hosts sharing `DB_PATH` must keep their clocks in sync (NTP) to well within
+> `CLAIM_LEASE`. Upgrade such instances together: stop them all, then start the new
+> version. Older versions write claims without a lease, which newer ones treat as lapsed.
+
 ### Deluge Settings
 
 | Variable | Description |

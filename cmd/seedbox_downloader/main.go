@@ -192,6 +192,13 @@ func initializeConfig() (*config, *slog.Logger, error) {
 		return nil, nil, fmt.Errorf("failed to load the env vars: %w", err)
 	}
 
+	// Renewal runs on a ticker at a fraction of the lease, which panics on a
+	// non-positive interval; and a lease shorter than a renewal round trip would
+	// let live claims be taken over.
+	if cfg.ClaimLease < minClaimLease {
+		return nil, nil, fmt.Errorf("CLAIM_LEASE must be at least %s, got %s", minClaimLease, cfg.ClaimLease)
+	}
+
 	jsonHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel})
 	traceHandler := logctx.NewTraceHandler(jsonHandler)
 	logger := slog.New(traceHandler)
@@ -313,6 +320,10 @@ func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemet
 // claimRenewalsPerLease is how many times a claim is renewed within one lease,
 // so a single missed or slow renewal never lets a live claim lapse.
 const claimRenewalsPerLease = 3
+
+// minClaimLease is the shortest lease accepted: comfortably longer than the few
+// milliseconds a renewal takes.
+const minClaimLease = 3 * time.Second
 
 // startPipeline wires the downloader to the ledger and starts every background
 // loop: polling the seedbox, downloading, and the post-download watches. It is
@@ -465,7 +476,7 @@ func handleDownloadError(
 ) {
 	err := repo.UpdateTransferStatus(t.ID, "failed")
 	if err != nil {
-		logger.ErrorContext(ctx, "failed to update transfer status", "transfer_id", t.ID, "err", err)
+		logStatusError(ctx, logger, t, err)
 
 		return
 	}
@@ -492,7 +503,7 @@ func handleDownloadFinished(
 ) {
 	err := repo.UpdateTransferStatus(t.ID, storage.StatusDownloaded)
 	if err != nil {
-		logger.ErrorContext(ctx, "failed to update transfer status", "transfer_id", t.ID, "err", err)
+		logStatusError(ctx, logger, t, err)
 
 		return
 	}
@@ -523,7 +534,7 @@ func handleTransferImported(
 	// Recorded before seeding or cleanup starts, so a restart part-way through
 	// either resumes it rather than waiting for an import that already happened.
 	if err := repo.UpdateTransferStatus(t.ID, storage.StatusImported); err != nil {
-		logger.ErrorContext(ctx, "failed to update transfer status", "transfer_id", t.ID, "err", err)
+		logStatusError(ctx, logger, t, err)
 	}
 
 	retire(ctx, logger, repo, dl, t, pollingInterval, policy)
@@ -560,9 +571,23 @@ func retire(
 	}
 }
 
+// logStatusError reports a ledger write that failed. Losing the claim is not a
+// fault of this instance's making: it stalled past its lease, another instance
+// took the transfer over, and the transfer is now that instance's to finish.
+func logStatusError(ctx context.Context, logger *slog.Logger, t *transfer.Transfer, err error) {
+	if errors.Is(err, storage.ErrClaimLost) {
+		logger.WarnContext(ctx, "transfer was taken over by another instance, leaving it to that one",
+			"transfer_id", t.ID, "transfer_name", t.Name, "err", err)
+
+		return
+	}
+
+	logger.ErrorContext(ctx, "failed to update transfer status", "transfer_id", t.ID, "err", err)
+}
+
 func markCleaned(ctx context.Context, logger *slog.Logger, repo storage.DownloadRepository, t *transfer.Transfer) {
 	if err := repo.UpdateTransferStatus(t.ID, storage.StatusCleaned); err != nil {
-		logger.ErrorContext(ctx, "failed to update transfer status", "transfer_id", t.ID, "err", err)
+		logStatusError(ctx, logger, t, err)
 	}
 }
 

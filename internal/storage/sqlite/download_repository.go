@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/italolelis/seedbox_downloader/internal/storage"
@@ -99,13 +100,39 @@ func (r *DownloadRepository) ClaimTransfer(transferID string) (bool, error) {
 func (r *DownloadRepository) RenewClaims() error {
 	_, err := r.db.Exec(`UPDATE downloads SET lease_until = ? WHERE locked_by = ? AND status = 'downloading'`,
 		time.Now().Add(r.lease).UnixMilli(), r.instanceID)
+	if err != nil {
+		return fmt.Errorf("failed to renew claims: %w", err)
+	}
 
-	return err
+	return nil
 }
 
-// UpdateTransferStatus sets the status for a download.
+// UpdateTransferStatus sets the status for a download and releases its claim.
+//
+// While a transfer is downloading, only the instance holding its claim may
+// record the outcome. One that stalled past its lease has been taken over, and
+// its outcome is stale: it gets ErrClaimLost and the ledger is left to the
+// current holder. Once a transfer is downloaded it is nobody's claim, and any
+// instance may move it on.
 func (r *DownloadRepository) UpdateTransferStatus(transferID, status string) error {
-	_, err := r.db.Exec(`UPDATE downloads SET status = ?, locked_by = NULL WHERE transfer_id = ?`, status, transferID)
+	res, err := r.db.Exec(`
+		UPDATE downloads SET status = ?, locked_by = NULL, lease_until = NULL
+		WHERE transfer_id = ? AND (status != 'downloading' OR locked_by = ?)
+	`, status, transferID, r.instanceID)
+	if err != nil {
+		return fmt.Errorf("failed to update status of transfer %s: %w", transferID, err)
+	}
 
-	return err
+	if affected, err := res.RowsAffected(); err != nil || affected > 0 {
+		return nil
+	}
+
+	var current string
+
+	err = r.db.QueryRow(`SELECT status FROM downloads WHERE transfer_id = ?`, transferID).Scan(&current)
+	if err == nil && current == "downloading" {
+		return fmt.Errorf("cannot record %s for transfer %s: %w", status, transferID, storage.ErrClaimLost)
+	}
+
+	return nil
 }

@@ -215,3 +215,34 @@ func TestInitDB_UpgradesALedgerFromBeforeLeases(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, again.Close())
 }
+
+// An instance that stalls past its lease -- a paused container, a suspended
+// host -- has had its transfer taken over by the time it resumes. Its outcome is
+// stale: recording it would mark the transfer downloaded while the new holder is
+// still writing it, or failed, releasing it to a third instance.
+func TestUpdateTransferStatus_HolderThatLostItsClaimCannotRecordAnOutcome(t *testing.T) {
+	db := newTestDB(t)
+	stalled, takeover := NewDownloadRepository(db, testLease), NewDownloadRepository(db, testLease)
+
+	claimed, err := stalled.ClaimTransfer("100")
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	time.Sleep(2 * testLease)
+
+	claimed, err = takeover.ClaimTransfer("100")
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	for _, outcome := range []string{storage.StatusDownloaded, "failed"} {
+		err = stalled.UpdateTransferStatus("100", outcome)
+		assert.ErrorIs(t, err, storage.ErrClaimLost, "a %s outcome from a lost claim must be refused", outcome)
+	}
+
+	require.NoError(t, takeover.UpdateTransferStatus("100", storage.StatusDownloaded),
+		"the current holder records its outcome as usual")
+
+	// After the download, the lifecycle is no longer anyone's claim: any instance
+	// may move it on.
+	require.NoError(t, stalled.UpdateTransferStatus("100", storage.StatusImported))
+}
