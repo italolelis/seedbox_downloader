@@ -302,8 +302,8 @@ Prometheus to scrape. The application itself opens no metrics endpoint.
 ### Included Metrics
 
 - **RED** — HTTP request rate, error rate, response latency (p95)
-- **Business** — Downloads by status, active transfers, download duration, client operations
-- **USE** — Memory usage, goroutine count, uptime, error rates by component
+- **Business** — Downloads by status, active downloads, download duration, transfers added and removed, client operations
+- **Go runtime** — Memory used, goroutine count, GC goal, allocation rate
 - **Database** — Operation rates by type, query duration histograms
 
 See [TELEMETRY.md](TELEMETRY.md) for full details on the instrumentation.

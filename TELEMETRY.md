@@ -7,7 +7,7 @@ This document describes the comprehensive telemetry implementation for the Seedb
 The telemetry system provides:
 
 - **HTTP Metrics**: Automatic HTTP instrumentation using `otelhttp` following OpenTelemetry semantic conventions
-- **USE Metrics**: System resource utilization, saturation, and errors
+- **Go Runtime Metrics**: Memory, goroutines and garbage collection, from the OpenTelemetry runtime instrumentation
 - **Business Metrics**: Application-specific metrics for downloads, transfers, and client operations
 - **OTLP Export**: Metrics pushed to an OpenTelemetry collector, with resource attributes attached
 
@@ -62,15 +62,18 @@ The following metrics are automatically collected by `otelhttp` middleware follo
 - `server.port` - Server port
 - `url.scheme` - URL scheme (http/https)
 
-### USE Metrics (System Resources)
+### Go Runtime Metrics (System Resources)
 
-Following OpenTelemetry semantic conventions:
+Collected by the OpenTelemetry Go runtime instrumentation whenever telemetry is enabled.
+The Prometheus names are in brackets:
 
-- `process.cpu.utilization` - Process CPU utilization (0-1 scale)
-- `process.memory.usage` - Process memory usage in bytes
-- `process.runtime.go.goroutines` - Number of active goroutines
-- `system.filesystem.usage` - Filesystem usage in bytes
-- `process.uptime` - Process uptime in seconds
+- `go.memory.used` (`go_memory_used_bytes`) - Memory used by the Go runtime, by memory type
+- `go.memory.allocated` (`go_memory_allocated_bytes_total`) - Bytes allocated on the heap
+- `go.memory.allocations` (`go_memory_allocations_total`) - Heap allocations
+- `go.memory.gc.goal` (`go_memory_gc_goal_bytes`) - Heap size target for the next GC
+- `go.goroutine.count` (`go_goroutine_count`) - Live goroutines
+- `go.processor.limit` (`go_processor_limit`) - GOMAXPROCS
+- `go.config.gogc` (`go_config_gogc_percent`) - GOGC
 
 ### Business Metrics
 
@@ -82,8 +85,7 @@ Application-specific metrics following OpenTelemetry naming conventions:
 - `downloads.duration` - Download duration histogram (seconds)
 
 #### Transfers
-- `transfers.total` - Total number of transfers by operation and status
-- `transfers.active` - Number of active transfers
+- `transfers.total` - Transfers added to and removed from the seedbox, by operation and status
 
 #### Download Client Operations
 - `client.operations.total` - Total client operations by client type, operation, and status
@@ -92,9 +94,6 @@ Application-specific metrics following OpenTelemetry naming conventions:
 #### Database Operations
 - `db.operations.total` - Total database operations by operation and status
 - `db.operations.duration` - Database operation duration histogram (seconds)
-
-#### System Health
-- `system.errors.total` - Total system errors by component and error type
 
 **Note**: All business metrics are automatically associated with the service through OpenTelemetry resource attributes (`service.name`, `service.version`).
 
@@ -194,13 +193,15 @@ scrape_configs:
 
 Key metrics to monitor:
 
-1. **Request Rate**: `rate(http_server_request_duration_sum[5m])`
-2. **Error Rate**: `rate(http_server_request_duration_count{http_response_status_code=~"5.."}[5m])`
-3. **Request Duration**: `histogram_quantile(0.95, rate(http_server_request_duration_bucket[5m]))`
+1. **Request Rate**: `sum(rate(http_server_request_duration_seconds_count[5m]))`
+2. **Error Rate**: `sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[5m]))`
+3. **Request Duration**: `histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket[5m])))`
 4. **Active Downloads**: `downloads_active`
-5. **System Resources**: `process_memory_usage`, `process_runtime_go_goroutines`
+5. **System Resources**: `go_memory_used_bytes`, `go_goroutine_count`
 
-**Note**: Metric names in Prometheus may have underscores instead of dots due to Prometheus naming conventions.
+**Note**: In Prometheus, dots become underscores and the unit is appended, so
+`downloads.duration` (seconds) is queried as `downloads_duration_seconds_bucket`. otelhttp
+emits no request counter. Request rates come from the duration histogram's `_count`.
 
 ### Alerting Rules
 
@@ -211,7 +212,7 @@ groups:
   - name: seedbox-downloader
     rules:
       - alert: HighErrorRate
-        expr: rate(http_server_request_duration_count{http_response_status_code=~"5.."}[5m]) > 0.1
+        expr: sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[5m])) > 0.1
         for: 5m
         labels:
           severity: warning
@@ -219,7 +220,7 @@ groups:
           summary: "High HTTP error rate detected"
           
       - alert: HighMemoryUsage
-        expr: process_memory_usage > 1000000000  # 1GB
+        expr: sum(go_memory_used_bytes) > 1000000000  # 1GB
         for: 5m
         labels:
           severity: warning
@@ -235,7 +236,7 @@ groups:
           summary: "Download client errors detected"
           
       - alert: HighRequestDuration
-        expr: histogram_quantile(0.95, rate(http_server_request_duration_bucket[5m])) > 2
+        expr: histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket[5m]))) > 2
         for: 5m
         labels:
           severity: warning

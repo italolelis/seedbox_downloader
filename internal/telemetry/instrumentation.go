@@ -159,24 +159,3 @@ func (t *Telemetry) InstrumentDownload(ctx context.Context, transferID, transfer
 
 	return err
 }
-
-// InstrumentTransfer instruments transfer operations.
-func (t *Telemetry) InstrumentTransfer(ctx context.Context, operation string, fn InstrumentedFunc) error {
-	if t == nil {
-		return fn(ctx)
-	}
-
-	t.IncrementActiveTransfers(ctx)
-	defer t.DecrementActiveTransfers(ctx)
-
-	err := t.InstrumentOperation(ctx, "transfer_"+operation, "transfer", fn)
-
-	status := "success"
-	if err != nil {
-		status = "error"
-	}
-
-	t.RecordTransfer(ctx, operation, status)
-
-	return err
-}
