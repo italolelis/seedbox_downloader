@@ -293,21 +293,32 @@ func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemet
 
 	instrumentedTC := transfer.NewInstrumentedTransferClient(dc.(transfer.TransferClient), tel, cfg.DownloadClient)
 
-	downloader := downloader.NewDownloader(
-		cfg.DownloadDir,
-		cfg.MaxParallel,
-		instrumentedDC,
-		instrumentedTC,
-		arrServices,
-	)
-
-	setupNotificationForDownloader(ctx, dr, downloader, cfg, cfg.PutioSeedRatio)
-
-	transferOrchestrator := transfer.NewTransferOrchestrator(dr, instrumentedDC, cfg.TargetLabel, cfg.PollingInterval)
-	transferOrchestrator.ProduceTransfers(ctx)
-	downloader.WatchDownloads(ctx, transferOrchestrator.OnDownloadQueued)
+	startPipeline(ctx, cfg, dr, instrumentedDC, instrumentedTC, arrServices)
 
 	return nil
+}
+
+// startPipeline wires the downloader to the ledger and starts every background
+// loop: polling the seedbox, downloading, and the post-download watches. It is
+// separate from initializeServices so the whole pipeline can be started against
+// a fake seedbox -- and started twice against one ledger, which is what a
+// restart is.
+func startPipeline(
+	ctx context.Context,
+	cfg *config,
+	repo storage.DownloadRepository,
+	dc transfer.DownloadClient,
+	tc transfer.TransferClient,
+	arrServices []*arr.Client,
+) {
+	dl := downloader.NewDownloader(cfg.DownloadDir, cfg.MaxParallel, dc, tc, arrServices)
+
+	setupNotificationForDownloader(ctx, repo, dl, cfg, cfg.PutioSeedRatio)
+	resumeWatches(ctx, repo, dl, dc, cfg)
+
+	transferOrchestrator := transfer.NewTransferOrchestrator(repo, dc, cfg.TargetLabel, cfg.PollingInterval)
+	transferOrchestrator.ProduceTransfers(ctx)
+	dl.WatchDownloads(ctx, transferOrchestrator.OnDownloadQueued)
 }
 
 func startServers(ctx context.Context, cfg *config, tel *telemetry.Telemetry) (*servers, error) {
@@ -419,9 +430,11 @@ func setupNotificationForDownloader(
 			case t := <-downloader.OnTransferDownloadFinished:
 				handleDownloadFinished(ctx, logger, repo, notif, downloader, t, cfg.PollingInterval)
 			case t := <-downloader.OnTransferImported:
-				handleTransferImported(ctx, logger, notif, downloader, t, cfg.PollingInterval, seedRatio)
+				handleTransferImported(ctx, logger, repo, notif, downloader, t, cfg.PollingInterval, seedRatio)
 			case event := <-downloader.OnTransferMissing:
 				handleTransferMissing(ctx, logger, repo, notif, event)
+			case t := <-downloader.OnTransferCleanedUp:
+				markCleaned(ctx, logger, repo, t)
 			}
 		}
 	}()
@@ -461,7 +474,7 @@ func handleDownloadFinished(
 	t *transfer.Transfer,
 	pollingInterval time.Duration,
 ) {
-	err := repo.UpdateTransferStatus(t.ID, "downloaded")
+	err := repo.UpdateTransferStatus(t.ID, storage.StatusDownloaded)
 	if err != nil {
 		logger.ErrorContext(ctx, "failed to update transfer status", "transfer_id", t.ID, "err", err)
 
@@ -484,17 +497,20 @@ func handleDownloadFinished(
 func handleTransferImported(
 	ctx context.Context,
 	logger *slog.Logger,
+	repo storage.DownloadRepository,
 	notif notifier.Notifier,
 	dl *downloader.Downloader,
 	t *transfer.Transfer,
 	pollingInterval time.Duration,
 	seedRatio float64,
 ) {
-	if seedRatio > 0 {
-		dl.WatchForSeeding(ctx, t, pollingInterval, seedRatio)
-	} else {
-		dl.CleanupTransfer(ctx, t)
+	// Recorded before seeding or cleanup starts, so a restart part-way through
+	// either resumes it rather than waiting for an import that already happened.
+	if err := repo.UpdateTransferStatus(t.ID, storage.StatusImported); err != nil {
+		logger.ErrorContext(ctx, "failed to update transfer status", "transfer_id", t.ID, "err", err)
 	}
+
+	retire(ctx, logger, repo, dl, t, pollingInterval, seedRatio)
 
 	if notif != nil {
 		if notifyErr := notif.Notify(
@@ -503,6 +519,131 @@ func handleTransferImported(
 			logger.ErrorContext(ctx, "failed to send notification", "err", notifyErr)
 		}
 	}
+}
+
+// retire takes an imported transfer off the seedbox: straight away, or once it
+// has seeded to the target ratio.
+func retire(
+	ctx context.Context,
+	logger *slog.Logger,
+	repo storage.DownloadRepository,
+	dl *downloader.Downloader,
+	t *transfer.Transfer,
+	pollingInterval time.Duration,
+	seedRatio float64,
+) {
+	if seedRatio > 0 {
+		dl.WatchForSeeding(ctx, t, pollingInterval, seedRatio)
+
+		return
+	}
+
+	// On failure the transfer stays marked imported, so the next start retries it.
+	if err := dl.CleanupTransfer(ctx, t); err == nil {
+		markCleaned(ctx, logger, repo, t)
+	}
+}
+
+func markCleaned(ctx context.Context, logger *slog.Logger, repo storage.DownloadRepository, t *transfer.Transfer) {
+	if err := repo.UpdateTransferStatus(t.ID, storage.StatusCleaned); err != nil {
+		logger.ErrorContext(ctx, "failed to update transfer status", "transfer_id", t.ID, "err", err)
+	}
+}
+
+// resumeWatches re-attaches the post-download watches a previous process was
+// running when it stopped. They live only in memory, and the orchestrator never
+// hands a downloaded transfer back, so without this a restart leaves every
+// transfer that was awaiting import or still seeding on the seedbox forever.
+//
+// The seedbox is asked for the transfers rather than the ledger alone, because
+// the watches need each transfer's files to find its local output. If the
+// seedbox cannot be reached yet, it is asked again every polling interval.
+func resumeWatches(
+	ctx context.Context,
+	repo storage.DownloadRepository,
+	dl *downloader.Downloader,
+	dc transfer.DownloadClient,
+	cfg *config,
+) {
+	logger := logctx.LoggerFromContext(ctx).WithGroup("resume")
+
+	go func() {
+		ticker := time.NewTicker(cfg.PollingInterval)
+		defer ticker.Stop()
+
+		for {
+			err := resumeWatchesOnce(ctx, logger, repo, dl, dc, cfg)
+			if err == nil {
+				return
+			}
+
+			logger.WarnContext(ctx, "failed to resume watches, retrying", "err", err)
+
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+}
+
+func resumeWatchesOnce(
+	ctx context.Context,
+	logger *slog.Logger,
+	repo storage.DownloadRepository,
+	dl *downloader.Downloader,
+	dc transfer.DownloadClient,
+	cfg *config,
+) error {
+	records, err := repo.GetDownloads()
+	if err != nil {
+		return fmt.Errorf("failed to read the ledger: %w", err)
+	}
+
+	pending := map[string]string{}
+
+	for _, r := range records {
+		if r.Status == storage.StatusDownloaded || r.Status == storage.StatusImported {
+			pending[r.DownloadID] = r.Status
+		}
+	}
+
+	if len(pending) == 0 {
+		return nil
+	}
+
+	transfers, err := dc.GetTaggedTorrents(ctx, cfg.TargetLabel)
+	if err != nil {
+		return fmt.Errorf("failed to list transfers: %w", err)
+	}
+
+	for _, t := range transfers {
+		status, ok := pending[t.ID]
+		if !ok {
+			continue
+		}
+
+		delete(pending, t.ID)
+
+		logger.InfoContext(ctx, "resuming watch", "transfer_id", t.ID, "transfer_name", t.Name, "status", status)
+
+		if status == storage.StatusDownloaded {
+			dl.WatchForImported(ctx, t, cfg.PollingInterval)
+		} else {
+			retire(ctx, logger, repo, dl, t, cfg.PollingInterval, cfg.PutioSeedRatio)
+		}
+	}
+
+	// Whatever is left is gone from the seedbox, so there is nothing there to
+	// clean up. That includes every transfer that finished before the ledger
+	// recorded cleanup at all, which is why this is not worth a warning.
+	for id, status := range pending {
+		logger.InfoContext(ctx, "transfer no longer on the seedbox, nothing to resume", "transfer_id", id, "status", status)
+		markCleaned(ctx, logger, repo, &transfer.Transfer{ID: id})
+	}
+
+	return nil
 }
 
 func handleTransferMissing(
