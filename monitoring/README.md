@@ -13,6 +13,7 @@ This directory contains the complete monitoring stack for the Seedbox Downloader
    - **Grafana Dashboard**: http://localhost:3000 (admin/admin)
    - **Prometheus**: http://localhost:9090
    - **Collector Metrics** (scraped by Prometheus): http://localhost:8889/metrics
+   - **Jaeger** (traces): http://localhost:16686
    - **Main Application**: http://localhost:9091
 
 ## 📊 Dashboard Overview

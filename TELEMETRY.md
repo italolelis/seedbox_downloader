@@ -9,11 +9,8 @@ The telemetry system provides:
 - **HTTP Metrics**: Automatic HTTP instrumentation using `otelhttp` following OpenTelemetry semantic conventions
 - **Go Runtime Metrics**: Memory, goroutines and garbage collection, from the OpenTelemetry runtime instrumentation
 - **Business Metrics**: Application-specific metrics for downloads, transfers, and client operations
-- **OTLP Export**: Metrics pushed to an OpenTelemetry collector, with resource attributes attached
-
-> **Tracing is not currently wired.** The instrumentation and spans described below all
-> exist, but no tracer provider is installed, so spans are created against a no-op
-> tracer and never leave the process. Metrics work; traces do not. Tracked separately.
+- **OTLP Export**: Metrics and traces pushed to an OpenTelemetry collector, with resource attributes attached
+- **Distributed Tracing**: Spans for HTTP requests, download client calls and database operations, with trace and span ids in every log line
 
 ## Configuration
 
@@ -246,7 +243,11 @@ groups:
 
 ## Distributed Tracing
 
-The application uses OpenTelemetry for distributed tracing with automatic instrumentation:
+When telemetry is enabled, spans are batched and exported over OTLP to the same collector as
+metrics (`TELEMETRY_OTEL_ADDRESS`, honouring `TELEMETRY_OTEL_INSECURE`). The bundled stack
+forwards them to Jaeger, at http://localhost:16686. Trace context is propagated with W3C
+`traceparent` headers, including on requests to Sonarr and Radarr. When telemetry is
+disabled, no spans are recorded and the trace ids in logs are empty.
 
 ### Automatic Tracing (via otelhttp)
 - **HTTP requests**: Automatic span creation with HTTP semantic conventions
@@ -271,7 +272,8 @@ The telemetry implementation is designed to have minimal performance impact:
 
 ### HTTP Instrumentation
 - **otelhttp**: Optimized for production use with minimal overhead
-- **Automatic sampling**: Configurable trace sampling to control overhead
+- **Sampling**: Every trace is sampled by default. Set the standard `OTEL_TRACES_SAMPLER`
+  (and `OTEL_TRACES_SAMPLER_ARG`), e.g. `parentbased_traceidratio` with `0.1`, to sample less
 - **Efficient metrics**: Histogram buckets optimized for HTTP request patterns
 
 ### System Metrics

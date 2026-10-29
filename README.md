@@ -29,7 +29,7 @@ Seedbox Downloader is an event-driven Go service that automatically downloads co
 - **Seed ratio and time enforcement** — Optionally keep transfers seeding until a target ratio or seeding time is reached
 - **Parallel downloads** — Configurable concurrency with progress tracking
 - **Discord notifications** — Rich embeds for download events, failures, and missing transfers
-- **Observability** — OpenTelemetry metrics over OTLP, with a collector + Prometheus + Grafana stack included
+- **Observability** — OpenTelemetry metrics and traces over OTLP, with a collector + Prometheus + Grafana + Jaeger stack included
 - **SQLite state tracking** — Atomic transfer claiming prevents duplicate processing
 - **Distroless Docker image** — Minimal, secure, non-root container
 
@@ -295,6 +295,7 @@ docker compose -f docker-compose.telemetry.yml up -d
 | Grafana | `http://localhost:3000` (admin/admin) |
 | Prometheus | `http://localhost:9090` |
 | Collector metrics | `http://localhost:8889/metrics` |
+| Jaeger (traces) | `http://localhost:16686` |
 
 Metrics leave the application over OTLP only; the collector re-exposes them for
 Prometheus to scrape. The application itself opens no metrics endpoint.
