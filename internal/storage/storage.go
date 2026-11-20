@@ -20,7 +20,21 @@ const (
 	StatusImported = "imported"
 	// StatusCleaned: removed from the seedbox. Terminal.
 	StatusCleaned = "cleaned"
+	// StatusFailed: the last local download attempt failed. The transfer is
+	// claimed again, and the download retried, on the next poll.
+	StatusFailed = "failed"
+	// StatusMissing: the transfer, or its files, disappeared from the seedbox
+	// before its local download finished.
+	StatusMissing = "missing"
 )
+
+// IsLocal reports whether a transfer in status has been written to local disk in
+// full. Only from Downloaded on is that so: a transfer that is pending,
+// downloading, failed or missing may have a partial file on disk, and nothing
+// should treat that file as the finished content.
+func IsLocal(status string) bool {
+	return status == StatusDownloaded || status == StatusImported || status == StatusCleaned
+}
 
 // DownloadRecord represents a record of a downloaded file.
 type DownloadRecord struct {

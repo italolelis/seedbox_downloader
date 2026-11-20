@@ -163,14 +163,14 @@ func run(ctx context.Context) error {
 	// The services run as goroutines that stop on context cancellation. The one
 	// thing kept is word of when they have released their claims, which shutdown
 	// waits for.
-	claimsReleased, err := initializeServices(ctx, cfg, tel)
+	ledger, claimsReleased, err := initializeServices(ctx, cfg, tel)
 	if err != nil {
 		return err
 	}
 
 	logger.InfoContext(ctx, "starting HTTP server")
 
-	servers, err := startServers(ctx, cfg, tel)
+	servers, err := startServers(ctx, cfg, tel, ledger)
 	if err != nil {
 		return err
 	}
@@ -249,7 +249,12 @@ func initializeTelemetry(ctx context.Context, cfg *config) (*telemetry.Telemetry
 	return tel, nil
 }
 
-func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemetry) (<-chan struct{}, error) {
+// initializeServices starts the pipeline and returns the ledger it records into,
+// which the RPC handler reads to tell the *arr apps when a transfer is on local
+// disk, along with word of when the pipeline has released its claims.
+func initializeServices(
+	ctx context.Context, cfg *config, tel *telemetry.Telemetry,
+) (*sqlite.InstrumentedDownloadRepository, <-chan struct{}, error) {
 	logger := logctx.LoggerFromContext(ctx)
 
 	logger.InfoContext(ctx, "initializing database")
@@ -263,7 +268,7 @@ func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemet
 			"max_idle_conns", cfg.DBMaxIdleConns,
 			"err", err)
 
-		return nil, fmt.Errorf("failed to initialize the database: %w", err)
+		return nil, nil, fmt.Errorf("failed to initialize the database: %w", err)
 	}
 
 	logger.InfoContext(ctx, "database ready",
@@ -283,7 +288,7 @@ func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemet
 			"client_type", cfg.DownloadClient,
 			"err", err)
 
-		return nil, fmt.Errorf("failed to build download client: %w", err)
+		return nil, nil, fmt.Errorf("failed to build download client: %w", err)
 	}
 
 	instrumentedDC := transfer.NewInstrumentedDownloadClient(dc, tel, cfg.DownloadClient)
@@ -293,7 +298,7 @@ func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemet
 			"client_type", cfg.DownloadClient,
 			"err", err)
 
-		return nil, fmt.Errorf("failed to authenticate with the download client: %w", err)
+		return nil, nil, fmt.Errorf("failed to authenticate with the download client: %w", err)
 	}
 
 	logger.InfoContext(ctx, "download client ready", "client_type", cfg.DownloadClient)
@@ -319,7 +324,7 @@ func initializeServices(ctx context.Context, cfg *config, tel *telemetry.Telemet
 
 	instrumentedTC := transfer.NewInstrumentedTransferClient(dc.(transfer.TransferClient), tel, cfg.DownloadClient)
 
-	return startPipeline(ctx, cfg, dr, instrumentedDC, instrumentedTC, arrServices, tel), nil
+	return dr, startPipeline(ctx, cfg, dr, instrumentedDC, instrumentedTC, arrServices, tel), nil
 }
 
 // claimRenewalsPerLease is how many times a claim is renewed within one lease,
@@ -386,12 +391,12 @@ func releaseClaimsOnStop(ctx context.Context, repo storage.DownloadRepository, s
 	return released
 }
 
-func startServers(ctx context.Context, cfg *config, tel *telemetry.Telemetry) (*servers, error) {
+func startServers(ctx context.Context, cfg *config, tel *telemetry.Telemetry, ledger rest.TransferLedger) (*servers, error) {
 	logger := logctx.LoggerFromContext(ctx)
 
 	serverErrors := make(chan error, 1)
 
-	server, err := setupServer(ctx, cfg, tel)
+	server, err := setupServer(ctx, cfg, tel, ledger)
 	if err != nil {
 		logger.ErrorContext(ctx, "server setup failed",
 			"component", "http_server",
@@ -517,7 +522,7 @@ func handleDownloadError(
 	notif notifier.Notifier,
 	t *transfer.Transfer,
 ) {
-	err := repo.UpdateTransferStatus(t.ID, "failed")
+	err := repo.UpdateTransferStatus(t.ID, storage.StatusFailed)
 	if err != nil {
 		logStatusError(ctx, logger, t, err)
 
@@ -811,7 +816,7 @@ func handleTransferMissing(
 	notif notifier.Notifier,
 	event downloader.MissingTransferEvent,
 ) {
-	if err := repo.UpdateTransferStatus(event.Transfer.ID, "missing"); err != nil {
+	if err := repo.UpdateTransferStatus(event.Transfer.ID, storage.StatusMissing); err != nil {
 		logger.ErrorContext(ctx, "failed to update transfer status to missing", "transfer_id", event.Transfer.ID, "err", err)
 	}
 
@@ -869,7 +874,7 @@ type instrumentedClient struct {
 }
 
 // setupServer prepares the handlers and services to create the http rest server.
-func setupServer(ctx context.Context, cfg *config, tel *telemetry.Telemetry) (*http.Server, error) {
+func setupServer(ctx context.Context, cfg *config, tel *telemetry.Telemetry, ledger rest.TransferLedger) (*http.Server, error) {
 	r := chi.NewRouter()
 
 	// Middleware order is critical:
@@ -901,7 +906,10 @@ func setupServer(ctx context.Context, cfg *config, tel *telemetry.Telemetry) (*h
 			InstrumentedDownloadClient: transfer.NewInstrumentedDownloadClient(putioClient, tel, cfg.DownloadClient),
 			InstrumentedTransferClient: transfer.NewInstrumentedTransferClient(putioClient, tel, cfg.DownloadClient),
 		}
-		tHandler = rest.NewTransmissionHandler(cfg.Transmission.Username, cfg.Transmission.Password, instrumented, cfg.TargetLabel, cfg.DownloadDir, tel)
+		// The ledger is the pipeline's own: a transfer is reported complete only
+		// once the pipeline has recorded it as written to local disk.
+		tHandler = rest.NewTransmissionHandler(
+			cfg.Transmission.Username, cfg.Transmission.Password, instrumented, ledger, cfg.TargetLabel, cfg.DownloadDir, tel)
 		r.Mount("/", tHandler.Routes())
 	} else {
 		logger := logctx.LoggerFromContext(ctx)
