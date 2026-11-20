@@ -14,6 +14,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -204,11 +205,18 @@ func (c *Client) GetTransferInfo(ctx context.Context, transferID string) (transf
 }
 
 // GrabFile implements DownloadClient.GrabFile for Put.io.
+func (c *Client) GrabFile(ctx context.Context, file *transfer.File) (io.ReadCloser, error) {
+	return c.GrabFileRange(ctx, file, 0)
+}
+
+// GrabFileRange implements DownloadClient.GrabFileRange for Put.io. Every call
+// asks Put.io for a fresh download URL, because an expiring signed URL is one of
+// the ways a long download gets cut off in the first place.
 //
 // The response status is checked before the body is handed back. Without that,
 // an error page becomes the file's content: the copy succeeds, the transfer is
 // reported as downloaded, and what lands on disk is HTML named like a video.
-func (c *Client) GrabFile(ctx context.Context, file *transfer.File) (io.ReadCloser, error) {
+func (c *Client) GrabFileRange(ctx context.Context, file *transfer.File, offset int64) (io.ReadCloser, error) {
 	logger := logctx.LoggerFromContext(ctx)
 
 	url, err := c.putioClient.Files.URL(ctx, file.ID, false)
@@ -221,6 +229,10 @@ func (c *Client) GrabFile(ctx context.Context, file *transfer.File) (io.ReadClos
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build file request: %w", err)
+	}
+
+	if offset > 0 {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
 	}
 
 	resp, err := c.httpClient.Do(req)
@@ -249,7 +261,38 @@ func (c *Client) GrabFile(ctx context.Context, file *transfer.File) (io.ReadClos
 		return nil, fmt.Errorf("failed to get file %d: unexpected status %s", file.ID, resp.Status)
 	}
 
+	if offset > 0 {
+		if err := checkRangeStart(resp, offset); err != nil {
+			resp.Body.Close()
+
+			return nil, fmt.Errorf("resuming file %d: %w", file.ID, err)
+		}
+	}
+
 	return resp.Body, nil
+}
+
+// checkRangeStart confirms a response body starts at offset. A server that
+// ignores Range answers 200 with the whole file, and appending that to the bytes
+// already on disk would produce a file of the right size with the wrong content,
+// which the size check cannot catch.
+func checkRangeStart(resp *http.Response, offset int64) error {
+	if resp.StatusCode != http.StatusPartialContent {
+		return fmt.Errorf("asked for bytes from %d, got status %s: %w", offset, resp.Status, transfer.ErrRangeNotHonoured)
+	}
+
+	// Content-Range: bytes <first>-<last>/<size>
+	contentRange := resp.Header.Get("Content-Range")
+
+	spec, ok := strings.CutPrefix(contentRange, "bytes ")
+	if ok {
+		first, _, found := strings.Cut(spec, "-")
+		if start, err := strconv.ParseInt(first, 10, 64); found && err == nil && start == offset {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("asked for bytes from %d, got Content-Range %q: %w", offset, contentRange, transfer.ErrRangeNotHonoured)
 }
 
 func (c *Client) Authenticate(ctx context.Context) error {

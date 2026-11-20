@@ -223,6 +223,12 @@ func (c *Client) GrabFile(ctx context.Context, file *transfer.File) (io.ReadClos
 	return resp.Body, nil
 }
 
+// GrabFileRange implements DownloadClient.GrabFileRange for Deluge. Its file
+// endpoint is not known to honour Range, so a cut-off download starts over.
+func (c *Client) GrabFileRange(_ context.Context, _ *transfer.File, _ int64) (io.ReadCloser, error) {
+	return nil, transfer.ErrRangeNotHonoured
+}
+
 // Helper function for original logic.
 func (c *Client) getTaggedTorrentsRaw(ctx context.Context, tag string) ([]*Torrent, error) {
 	logger := logctx.LoggerFromContext(ctx).With("tag", tag, "method", "core.get_torrents_status")
