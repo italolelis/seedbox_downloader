@@ -154,3 +154,60 @@ func TestDownload_HonoursContextCancellation(t *testing.T) {
 		t.Fatal("download ignored a cancelled context")
 	}
 }
+
+// Put.io rate-limits a burst of download-URL requests. A 429 used to be read as
+// "file gone", reporting a transfer of 549 files that were all still on Put.io
+// as missing. A short burst must be ridden out.
+func TestDownload_RateLimitIsRetried(t *testing.T) {
+	sb := seedbox.New(t, "itv", seedbox.Transfer{
+		Name: "Busy",
+		Root: seedbox.Entry{Name: "Busy", Children: []seedbox.Entry{
+			{Name: "e01.mkv", Content: "one"},
+			{Name: "e02.mkv", Content: "two"},
+		}},
+	})
+
+	dl, root := newDownloader(t, sb)
+
+	transfers := fetch(t, sb)
+	require.Len(t, transfers, 1)
+
+	sb.RateLimit(2)
+
+	ctx := logctx.WithLogger(context.Background(), testLogger())
+
+	count, err := dl.DownloadTransfer(ctx, transfers[0])
+
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
+	assertFile(t, filepath.Join(root, "Busy", "e01.mkv"), "one")
+	assertFile(t, filepath.Join(root, "Busy", "e02.mkv"), "two")
+}
+
+// A rate limit that outlasts the retries fails the download -- to be retried on a
+// later poll -- but must never report the transfer's files as missing.
+func TestDownload_SustainedRateLimitIsNotMissing(t *testing.T) {
+	sb := seedbox.New(t, "itv", seedbox.Transfer{
+		Name: "Throttled",
+		Root: seedbox.Entry{Name: "Throttled", Children: []seedbox.Entry{
+			{Name: "e01.mkv", Content: "one"},
+			{Name: "e02.mkv", Content: "two"},
+			{Name: "e03.mkv", Content: "three"},
+		}},
+	})
+
+	dl, _ := newDownloader(t, sb)
+
+	transfers := fetch(t, sb)
+	require.Len(t, transfers, 1)
+
+	sb.RateLimit(1000)
+
+	ctx := logctx.WithLogger(context.Background(), testLogger())
+
+	_, err := dl.DownloadTransfer(ctx, transfers[0])
+
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, putio.ErrTransferFilesNotFound)
+	assert.NotErrorIs(t, err, putio.ErrTransferNotFound)
+}

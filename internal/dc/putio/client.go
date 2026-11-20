@@ -50,6 +50,7 @@ const (
 type Client struct {
 	putioClient *putio.Client
 	httpClient  *http.Client
+	retry       retryPolicy
 }
 
 // Option configures a Client.
@@ -78,6 +79,7 @@ func NewClient(token string, opts ...Option) *Client {
 				ResponseHeaderTimeout: responseHeaderTimeout,
 			},
 		},
+		retry: defaultRetryPolicy(),
 	}
 
 	for _, opt := range opts {
@@ -91,7 +93,9 @@ func NewClient(token string, opts ...Option) *Client {
 func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*transfer.Transfer, error) {
 	logger := logctx.LoggerFromContext(ctx).With("tag", tag)
 
-	transfers, err := c.putioClient.Transfers.List(ctx)
+	transfers, err := withAPIRetry(ctx, c, func() ([]putio.Transfer, error) {
+		return c.putioClient.Transfers.List(ctx)
+	})
 	if err != nil {
 		logger.ErrorContext(ctx, "failed to get transfers", "err", err)
 
@@ -109,8 +113,16 @@ func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*transfer
 			continue
 		}
 
-		parent, err := c.putioClient.Files.Get(ctx, t.SaveParentID)
+		parent, err := c.getFile(ctx, t.SaveParentID)
 		if err != nil {
+			if isCancelled(ctx, err) {
+				return nil, fmt.Errorf("failed to get parent folder of transfer %d: %w", t.ID, err)
+			}
+
+			// Without the parent there is no telling whether the transfer is ours,
+			// so it is left out of this listing. Transient failures were already
+			// retried above; one persistently broken transfer must not hide all the
+			// others by failing the whole listing.
 			logger.ErrorContext(ctx, "failed to get parent folder", "transfer_id", t.ID, "save_parent_id", t.SaveParentID, "err", err)
 
 			continue
@@ -145,21 +157,13 @@ func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*transfer
 
 		// Only fetch file details and populate Files for completed transfers (FileID != 0)
 		if t.FileID != 0 {
-			file, err := c.putioClient.Files.Get(ctx, t.FileID)
+			listed, err := c.populateFiles(ctx, t, torrent)
 			if err != nil {
-				logger.WarnContext(ctx, "transfer files missing from Put.io during listing", "transfer_id", t.ID, "file_id", t.FileID, "err", err)
-
-				continue
+				return nil, err
 			}
 
-			// Populate files for completed transfers. On error, continue anyway --
-			// transfer stays visible in Activity tab, download pipeline skips via IsDownloadable().
-			files, err := c.getFilesRecursively(ctx, file.ID, file.Name)
-			if err != nil {
-				logger.ErrorContext(ctx, "failed to get files for completed transfer",
-					"transfer_id", t.ID, "file_id", t.FileID, "err", err)
-			} else {
-				torrent.Files = append(torrent.Files, files...)
+			if !listed {
+				continue
 			}
 		}
 
@@ -169,6 +173,42 @@ func (c *Client) GetTaggedTorrents(ctx context.Context, tag string) ([]*transfer
 	logger.DebugContext(ctx, "found torrents to download", "torrent_count", len(torrents))
 
 	return torrents, nil
+}
+
+// populateFiles fills in a completed transfer's files and reports whether the
+// transfer belongs in the listing at all. Only Put.io saying its files do not
+// exist drops it. Any other failure -- a rate limit or outage that outlasted the
+// retries -- keeps it listed without files: dropping it would tell the *arr apps
+// the torrent vanished, while an empty file list is skipped by the download
+// pipeline (IsDownloadable) until a later poll can read them. A cancelled context
+// is returned, since the listing as a whole is being abandoned.
+func (c *Client) populateFiles(ctx context.Context, t putio.Transfer, torrent *transfer.Transfer) (bool, error) {
+	logger := logctx.LoggerFromContext(ctx).With("transfer_id", t.ID, "file_id", t.FileID)
+
+	file, err := c.getFile(ctx, t.FileID)
+	if err == nil {
+		var files []*transfer.File
+
+		files, err = c.getFilesRecursively(ctx, file.ID, file.Name)
+		if err == nil {
+			torrent.Files = append(torrent.Files, files...)
+
+			return true, nil
+		}
+	}
+
+	switch {
+	case isCancelled(ctx, err):
+		return false, fmt.Errorf("failed to get files of transfer %d: %w", t.ID, err)
+	case isGone(err):
+		logger.WarnContext(ctx, "transfer files missing from Put.io during listing", "err", err)
+
+		return false, nil
+	default:
+		logger.ErrorContext(ctx, "failed to get files for completed transfer", "err", err)
+
+		return true, nil
+	}
 }
 
 // GetTransferInfo retrieves the seeding state of a transfer by its string ID.
@@ -211,14 +251,14 @@ func (c *Client) GetTransferInfo(ctx context.Context, transferID string) (transf
 func (c *Client) GrabFile(ctx context.Context, file *transfer.File) (io.ReadCloser, error) {
 	logger := logctx.LoggerFromContext(ctx)
 
-	url, err := c.putioClient.Files.URL(ctx, file.ID, false)
+	fileURL, err := withAPIRetry(ctx, c, func() (string, error) {
+		return c.putioClient.Files.URL(ctx, file.ID, false)
+	})
 	if err != nil {
-		logger.ErrorContext(ctx, "failed to get file download url", "file_id", file.ID, "err", err)
-
-		return nil, fmt.Errorf("file %d no longer available on Put.io: %w", file.ID, ErrTransferFilesNotFound)
+		return nil, c.classifyURLError(ctx, file, err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build file request: %w", err)
 	}
@@ -250,6 +290,28 @@ func (c *Client) GrabFile(ctx context.Context, file *transfer.File) (io.ReadClos
 	}
 
 	return resp.Body, nil
+}
+
+// classifyURLError decides what a failure to get a file's download URL means.
+// Only Put.io saying the file does not exist makes it missing. Every failure
+// used to be reported that way, so a burst of 429s -- and the context
+// cancellations it caused in the sibling downloads -- reported a transfer whose
+// files were all still on Put.io as deleted.
+func (c *Client) classifyURLError(ctx context.Context, file *transfer.File, err error) error {
+	logger := logctx.LoggerFromContext(ctx)
+
+	switch {
+	case isCancelled(ctx, err):
+		return fmt.Errorf("getting download url for file %d: %w", file.ID, err)
+	case isGone(err):
+		logger.WarnContext(ctx, "file no longer exists on Put.io", "file_id", file.ID, "file_path", file.Path, "err", err)
+
+		return fmt.Errorf("file %d no longer available on Put.io: %w", file.ID, ErrTransferFilesNotFound)
+	default:
+		logger.ErrorContext(ctx, "failed to get file download url", "file_id", file.ID, "err", err)
+
+		return fmt.Errorf("failed to get download url for file %d: %w", file.ID, err)
+	}
 }
 
 func (c *Client) Authenticate(ctx context.Context) error {
@@ -494,7 +556,7 @@ func (c *Client) categoryOf(ctx context.Context, parent putio.File, label string
 
 	grandparent, ok := cache[parent.ParentID]
 	if !ok {
-		fetched, err := c.putioClient.Files.Get(ctx, parent.ParentID)
+		fetched, err := c.getFile(ctx, parent.ParentID)
 		if err != nil {
 			return "", false
 		}
@@ -550,7 +612,7 @@ func (c *Client) getFilesRecursively(ctx context.Context, parentID int64, basePa
 
 	var result []*transfer.File
 
-	file, err := c.putioClient.Files.Get(ctx, parentID)
+	file, err := c.getFile(ctx, parentID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get file: %w", err)
 	}
@@ -570,7 +632,11 @@ func (c *Client) getFilesRecursively(ctx context.Context, parentID int64, basePa
 		return result, nil
 	}
 
-	files, _, err := c.putioClient.Files.List(ctx, parentID)
+	files, err := withAPIRetry(ctx, c, func() ([]putio.File, error) {
+		children, _, err := c.putioClient.Files.List(ctx, parentID)
+
+		return children, err
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list files: %w", err)
 	}
@@ -586,9 +652,12 @@ func (c *Client) getFilesRecursively(ctx context.Context, parentID int64, basePa
 		case "folder":
 			nestedFiles, err := c.getFilesRecursively(ctx, f.ID, filepath.Join(basePath, f.Name))
 			if err != nil {
+				// Returned, not skipped: a partial file list would be downloaded and
+				// reported complete with a folder silently missing. Without the full
+				// list the transfer stays undownloadable until a later poll reads it.
 				logger.ErrorContext(ctx, "failed to get nested files", "err", err)
 
-				continue
+				return nil, fmt.Errorf("failed to get files under %q: %w", f.Name, err)
 			}
 
 			result = append(result, nestedFiles...)
@@ -596,4 +665,11 @@ func (c *Client) getFilesRecursively(ctx context.Context, parentID int64, basePa
 	}
 
 	return result, nil
+}
+
+// getFile fetches one file's metadata, retrying rate limits and outages.
+func (c *Client) getFile(ctx context.Context, id int64) (putio.File, error) {
+	return withAPIRetry(ctx, c, func() (putio.File, error) {
+		return c.putioClient.Files.Get(ctx, id)
+	})
 }

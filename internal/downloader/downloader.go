@@ -524,6 +524,15 @@ func (d *Downloader) classifyFileError(
 		return fmt.Errorf("file %s missing from Put.io: %w", file.Path, putio.ErrTransferFilesNotFound)
 	}
 
+	// One file failing cancels the group, and every other in-flight file then
+	// fails with the cancellation. Logging each of those as an error buried the
+	// one failure that mattered under hundreds of lines about nothing.
+	if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+		logger.DebugContext(ctx, "file download cancelled", "download_id", t.ID, "file_path", file.Path)
+
+		return err
+	}
+
 	logger.ErrorContext(ctx, "failed to download file",
 		"download_id", t.ID, "file_path", file.Path, "err", err)
 

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/italolelis/seedbox_downloader/internal/transfer"
 	"github.com/stretchr/testify/assert"
@@ -140,7 +141,7 @@ func TestAddTransferByBytes_FileTooLarge(t *testing.T) {
 func newTestClient(serverURL string) *Client {
 	u, _ := url.Parse(serverURL)
 
-	return NewClient("test-token", WithBaseURL(u))
+	return NewClient("test-token", WithBaseURL(u), WithRetry(3, time.Millisecond))
 }
 
 func TestGetTaggedTorrents_SaveParentIDMatching(t *testing.T) {
