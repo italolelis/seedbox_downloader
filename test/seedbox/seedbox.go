@@ -99,6 +99,10 @@ type Seedbox struct {
 	// failFileGets makes metadata lookups fail while true.
 	failFileGets bool
 
+	// rateLimited is how many more file API calls (metadata and download URL)
+	// are answered 429 before the fake serves them normally again.
+	rateLimited int
+
 	// fetches counts how many times each file's bytes were requested.
 	fetches map[int64]int
 }
@@ -193,7 +197,8 @@ func (s *Seedbox) Client() *putio.Client {
 		s.t.Fatalf("parsing fake seedbox URL: %v", err)
 	}
 
-	return putio.NewClient("test-token", putio.WithBaseURL(u))
+	// Production's retry waits are seconds long; a test only needs the retries.
+	return putio.NewClient("test-token", putio.WithBaseURL(u), putio.WithRetry(3, time.Millisecond))
 }
 
 // Label is the label the fake's transfers are filed under.
@@ -238,6 +243,16 @@ func (s *Seedbox) FailFileGets(fail bool) {
 	defer s.mu.Unlock()
 
 	s.failFileGets = fail
+}
+
+// RateLimit makes the next n file API calls -- metadata lookups and download
+// URLs alike -- answer 429 Too Many Requests, as Put.io does when a transfer's
+// files are requested faster than it allows.
+func (s *Seedbox) RateLimit(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.rateLimited = n
 }
 
 // Fetches reports how many times the bytes of the file with the given name were
@@ -505,6 +520,15 @@ func (s *Seedbox) handleFiles(w http.ResponseWriter, r *http.Request) {
 
 	if _, ok := s.nodes[id]; !ok {
 		http.Error(w, "not found", http.StatusNotFound)
+
+		return
+	}
+
+	if s.rateLimited > 0 {
+		s.rateLimited--
+
+		w.Header().Set("Retry-After", "0")
+		http.Error(w, "too many requests", http.StatusTooManyRequests)
 
 		return
 	}
