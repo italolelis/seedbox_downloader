@@ -42,6 +42,21 @@ func (r *InstrumentedDownloadRepository) ClaimTransfer(transferID string) (bool,
 	return result, nil
 }
 
+// TransferStatuses reads the recorded status of transfers with telemetry.
+func (r *InstrumentedDownloadRepository) TransferStatuses(transferIDs []string) (map[string]string, error) {
+	var statuses map[string]string
+
+	err := r.telemetry.InstrumentDBOperation(context.Background(), "transfer_statuses", func(ctx context.Context) error {
+		var err error
+
+		statuses, err = r.repo.TransferStatuses(transferIDs)
+
+		return err
+	})
+
+	return statuses, err
+}
+
 // UpdateTransferStatus updates transfer status with telemetry.
 func (r *InstrumentedDownloadRepository) UpdateTransferStatus(transferID, status string) error {
 	return r.telemetry.InstrumentDBOperation(context.Background(), "update_transfer_status", func(ctx context.Context) error {

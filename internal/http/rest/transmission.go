@@ -17,6 +17,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/italolelis/seedbox_downloader/internal/logctx"
+	"github.com/italolelis/seedbox_downloader/internal/storage"
 	"github.com/italolelis/seedbox_downloader/internal/telemetry"
 	"github.com/italolelis/seedbox_downloader/internal/transfer"
 	"github.com/zeebo/bencode"
@@ -36,6 +37,14 @@ type DownloadClient interface {
 	AddTransferByBytes(ctx context.Context, content []byte, filename, label, category string) (*transfer.Transfer, error)
 	GetTaggedTorrents(ctx context.Context, label string) ([]*transfer.Transfer, error)
 	RemoveTransfers(ctx context.Context, ids []string, deleteData bool) error
+}
+
+// TransferLedger is the downloader's own record of where each transfer is in its
+// lifecycle (see storage.IsLocal). The handler reads it because the seedbox can
+// only say a transfer is complete on the seedbox; whether its content is on local
+// disk yet -- which is all an *arr app cares about -- only the ledger knows.
+type TransferLedger interface {
+	TransferStatuses(transferIDs []string) (map[string]string, error)
 }
 
 type TransmissionTorrentStatus int
@@ -125,7 +134,12 @@ type TransmissionHandler struct {
 	username string
 	password string
 	dc       DownloadClient
-	label    string
+	// ledger decides when a transfer is reported complete. Nil means nothing is
+	// ever known to be local, so nothing the seedbox has finished is reported
+	// complete: the safe failure, since reporting a partial file complete gets it
+	// imported into the library.
+	ledger TransferLedger
+	label  string
 	// localRoot is the directory on local disk that transfers are written into.
 	// It is what gets advertised to the *arr apps, because it is the only path
 	// that actually exists from their point of view. A seedbox-side path must
@@ -136,12 +150,13 @@ type TransmissionHandler struct {
 
 // NewTransmissionHandler creates a new content handler.
 func NewTransmissionHandler(
-	username, password string, dc DownloadClient, label string, localRoot string, t *telemetry.Telemetry,
+	username, password string, dc DownloadClient, ledger TransferLedger, label string, localRoot string, t *telemetry.Telemetry,
 ) *TransmissionHandler {
 	return &TransmissionHandler{
 		username:  username,
 		password:  password,
 		dc:        dc,
+		ledger:    ledger,
 		label:     label,
 		localRoot: localRoot,
 		telemetry: t,
@@ -512,6 +527,13 @@ func (h *TransmissionHandler) handleTorrentGet(ctx context.Context) (*Transmissi
 	torrentsCount := len(transfers)
 	logger.DebugContext(ctx, "fetched torrents from download client", "count", torrentsCount)
 
+	ledgerStatuses, err := h.ledgerStatuses(transfers)
+	if err != nil {
+		// Failing the call is deliberate: the alternative is guessing, and guessing
+		// "complete" is exactly how a partial file gets imported.
+		return nil, err
+	}
+
 	logger.DebugContext(ctx, "converting torrents to transmission format")
 
 	transmissionTorrents := make([]TransmissionTorrent, torrentsCount)
@@ -525,36 +547,7 @@ func (h *TransmissionHandler) handleTorrentGet(ctx context.Context) (*Transmissi
 			continue
 		}
 
-		// Map status string to TransmissionTorrentStatus
-		var status TransmissionTorrentStatus
-
-		var errorString *string
-
-		switch strings.ToLower(transfer.Status) {
-		case "downloading":
-			status = StatusDownload // 4
-		case "in_queue", "waiting":
-			status = StatusDownloadWait // 3
-		case "finishing", "checking":
-			status = StatusCheck // 2
-		case "completed", "finished":
-			status = StatusSeed // 6
-		case "seeding":
-			status = StatusSeed // 6
-		case "seedingwait":
-			status = StatusSeedWait // 5
-		case "error":
-			status = StatusStopped // 0
-
-			if transfer.ErrorMessage != "" {
-				errorString = &transfer.ErrorMessage
-			}
-		default:
-			logger.WarnContext(ctx, "unknown put.io transfer status, defaulting to stopped",
-				"status", transfer.Status, "transfer_id", transfer.ID)
-
-			status = StatusStopped // 0
-		}
+		status, errorString := seedboxStatus(ctx, logger, transfer)
 
 		// The advertised path must be the path that was written. The *arr apps join
 		// these two and look for the result on disk, with no branching on whether
@@ -602,6 +595,8 @@ func (h *TransmissionHandler) handleTorrentGet(ctx context.Context) (*Transmissi
 			SeedIdleLimit:      100,
 			SeedIdleMode:       1,
 		}
+
+		h.holdUntilLocal(ctx, logger, &transmissionTorrents[i], transfer, ledgerStatuses[transfer.ID])
 	}
 
 	logger.DebugContext(ctx, "converted torrents to transmission format", "count", len(transmissionTorrents))
@@ -617,6 +612,139 @@ func (h *TransmissionHandler) handleTorrentGet(ctx context.Context) (*Transmissi
 		Result:    "success",
 		Arguments: jsonTorrents,
 	}, nil
+}
+
+// seedboxStatus maps the seedbox's own transfer status onto Transmission's, with
+// the seedbox's error message when it reports one. It describes the transfer on
+// the seedbox only; holdUntilLocal overrides it for content not yet on local disk.
+func seedboxStatus(
+	ctx context.Context, logger *slog.Logger, tr *transfer.Transfer,
+) (TransmissionTorrentStatus, *string) {
+	switch strings.ToLower(tr.Status) {
+	case "downloading":
+		return StatusDownload, nil // 4
+	case "in_queue", "waiting":
+		return StatusDownloadWait, nil // 3
+	case "finishing", "checking":
+		return StatusCheck, nil // 2
+	case "completed", "finished", "seeding":
+		return StatusSeed, nil // 6
+	case "seedingwait":
+		return StatusSeedWait, nil // 5
+	case "error":
+		if tr.ErrorMessage != "" {
+			return StatusStopped, &tr.ErrorMessage // 0
+		}
+
+		return StatusStopped, nil // 0
+	default:
+		logger.WarnContext(ctx, "unknown put.io transfer status, defaulting to stopped",
+			"status", tr.Status, "transfer_id", tr.ID)
+
+		return StatusStopped, nil // 0
+	}
+}
+
+// ledgerStatuses looks up every listed transfer in the ledger in one query. A
+// transfer the ledger has no row for is absent from the result.
+func (h *TransmissionHandler) ledgerStatuses(transfers []*transfer.Transfer) (map[string]string, error) {
+	if h.ledger == nil {
+		return map[string]string{}, nil
+	}
+
+	ids := make([]string, len(transfers))
+	for i, t := range transfers {
+		ids[i] = t.ID
+	}
+
+	statuses, err := h.ledger.TransferStatuses(ids)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read local download state: %w", err)
+	}
+
+	return statuses, nil
+}
+
+// holdUntilLocal keeps a transfer the seedbox has finished reported as still
+// downloading until the downloader has finished writing it to local disk.
+//
+// Sonarr and Radarr import a Transmission torrent as soon as it reports nothing
+// left to download (or isFinished) in a seeding/stopped state, and they import
+// whatever is at the advertised path at that moment. Reporting the seedbox's
+// state alone therefore handed them the local file while it was still being
+// written -- or after its download had failed: Radarr imported 41.6 GB of a 50 GB
+// file two seconds after the local copy died with an unexpected EOF.
+//
+// Only the ledger says a transfer is on local disk (storage.IsLocal). A transfer
+// the ledger has no row for is treated as not local. That is correct, not merely
+// cautious: the pipeline lists transfers with the same label as this handler and
+// claims every one the seedbox has finished that has files, recording it in the
+// ledger, so an unrecorded transfer is one it has not got to yet (or one recorded
+// in a ledger that was since lost, which it downloads again). Transfers it skips
+// for having no files are held too, but with an errorString saying why, so the
+// *arr app shows a warning rather than a download that silently never ends.
+// Everything the seedbox has not finished keeps its seedbox-derived state.
+func (h *TransmissionHandler) holdUntilLocal(
+	ctx context.Context, logger *slog.Logger, t *TransmissionTorrent, tr *transfer.Transfer, ledgerStatus string,
+) {
+	if !tr.IsAvailable() || storage.IsLocal(ledgerStatus) {
+		return
+	}
+
+	// Never zero while held: zero left is itself how the *arr apps detect completion.
+	left := max(tr.Size-h.localBytes(tr), 1)
+
+	t.Status = StatusDownload
+	t.IsFinished = false
+	t.LeftUntilDone = left
+	t.ErrorString = localHoldReason(tr, ledgerStatus)
+
+	logger.DebugContext(ctx, "seedbox transfer complete but not yet on local disk, reporting it as downloading",
+		"transfer_id", tr.ID, "ledger_status", ledgerStatus, "left_until_done", left)
+}
+
+// localHoldReason explains a hold that will not resolve by just waiting for the
+// download in progress, or nil when that is all it takes. Sonarr and Radarr show
+// a non-empty errorString as a warning on the queue item and do not import it.
+func localHoldReason(tr *transfer.Transfer, ledgerStatus string) *string {
+	var reason string
+
+	switch {
+	case ledgerStatus == storage.StatusMissing:
+		reason = "transfer went missing from the seedbox before its local download finished"
+	case ledgerStatus == storage.StatusFailed:
+		reason = "local download failed; it is retried on the next poll"
+	case !tr.IsDownloadable():
+		reason = "the seedbox lists no files for this transfer, so there is nothing to download locally"
+	default:
+		return nil
+	}
+
+	return &reason
+}
+
+// localBytes is how much of a transfer's content is on local disk, for the
+// progress shown while it is held. Best effort: files are written in place, so
+// their size on disk is what has been written so far, and anything that cannot be
+// stat'ed counts as nothing. It is only ever used for display -- completion is
+// decided by the ledger, never by sizes on disk.
+func (h *TransmissionHandler) localBytes(tr *transfer.Transfer) int64 {
+	if h.localRoot == "" {
+		return 0
+	}
+
+	var total int64
+
+	for _, f := range tr.Files {
+		info, err := os.Stat(filepath.Join(h.localRoot, tr.LocalSubdir(), f.Path))
+		if err != nil || info.IsDir() {
+			continue
+		}
+
+		total += min(info.Size(), f.Size)
+	}
+
+	return total
 }
 
 // formatTransmissionError converts internal errors to Transmission-compatible error messages.

@@ -22,7 +22,7 @@ import (
 func advertised(t *testing.T, sb *seedbox.Seedbox, localRoot string) []rest.TransmissionTorrent {
 	t.Helper()
 
-	handler := rest.NewTransmissionHandler("u", "p", sb.Client(), sb.Label(), localRoot, nil)
+	handler := rest.NewTransmissionHandler("u", "p", sb.Client(), allLocal{}, sb.Label(), localRoot, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/transmission/rpc",
 		strings.NewReader(`{"method": "torrent-get", "arguments": {}}`))

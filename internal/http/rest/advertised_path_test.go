@@ -25,7 +25,7 @@ func torrentGet(t *testing.T, localRoot string, transfers ...*transfer.Transfer)
 		},
 	}
 
-	handler := NewTransmissionHandler("testuser", "testpass", mockClient, "itv", localRoot, nil)
+	handler := NewTransmissionHandler("testuser", "testpass", mockClient, allLocal{}, "itv", localRoot, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/transmission/rpc",
 		strings.NewReader(`{"method": "torrent-get", "arguments": {}}`))
@@ -155,7 +155,7 @@ func TestHandleTorrentGet_InProgressTransferFallsBackToTheTransferName(t *testin
 func TestSessionGet_ReportsTheLocalRoot(t *testing.T) {
 	const localRoot = "/data/Downloads/itv"
 
-	handler := NewTransmissionHandler("testuser", "testpass", &mockPutioClient{}, "itv", localRoot, nil)
+	handler := NewTransmissionHandler("testuser", "testpass", &mockPutioClient{}, allLocal{}, "itv", localRoot, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/transmission/rpc",
 		strings.NewReader(`{"method": "session-get", "arguments": {}}`))
@@ -219,7 +219,7 @@ func TestHandleTorrentGet_UncategorisedTransfersKeepTheTargetLabel(t *testing.T)
 
 func TestTorrentAdd_PassesTheRequestedCategoryThrough(t *testing.T) {
 	mockClient := &mockPutioClient{}
-	handler := NewTransmissionHandler("u", "p", mockClient, "itv", "/data/Downloads/itv", nil)
+	handler := NewTransmissionHandler("u", "p", mockClient, allLocal{}, "itv", "/data/Downloads/itv", nil)
 
 	body := `{"method":"torrent-add","arguments":{"filename":"magnet:?xt=urn:btih:abc","labels":["tv"]}}`
 	req := httptest.NewRequest(http.MethodPost, "/transmission/rpc", strings.NewReader(body))
@@ -235,7 +235,7 @@ func TestTorrentAdd_PassesTheRequestedCategoryThrough(t *testing.T) {
 
 func TestTorrentAdd_NoCategoryFallsBackToTheTargetLabel(t *testing.T) {
 	mockClient := &mockPutioClient{}
-	handler := NewTransmissionHandler("u", "p", mockClient, "itv", "/data/Downloads/itv", nil)
+	handler := NewTransmissionHandler("u", "p", mockClient, allLocal{}, "itv", "/data/Downloads/itv", nil)
 
 	body := `{"method":"torrent-add","arguments":{"filename":"magnet:?xt=urn:btih:abc"}}`
 	req := httptest.NewRequest(http.MethodPost, "/transmission/rpc", strings.NewReader(body))
@@ -254,7 +254,7 @@ func TestTorrentAdd_NoCategoryFallsBackToTheTargetLabel(t *testing.T) {
 // category rather than when the first download finishes.
 func TestTorrentAdd_CreatesTheCategoryDirectory(t *testing.T) {
 	root := t.TempDir()
-	handler := NewTransmissionHandler("u", "p", &mockPutioClient{}, "itv", root, nil)
+	handler := NewTransmissionHandler("u", "p", &mockPutioClient{}, allLocal{}, "itv", root, nil)
 
 	body := `{"method":"torrent-add","arguments":{"filename":"magnet:?xt=urn:btih:abc","labels":["tv"]}}`
 	req := httptest.NewRequest(http.MethodPost, "/transmission/rpc", strings.NewReader(body))
@@ -272,7 +272,7 @@ func TestTorrentAdd_CreatesTheCategoryDirectory(t *testing.T) {
 
 func TestTorrentAdd_NoCategoryCreatesNothing(t *testing.T) {
 	root := t.TempDir()
-	handler := NewTransmissionHandler("u", "p", &mockPutioClient{}, "itv", root, nil)
+	handler := NewTransmissionHandler("u", "p", &mockPutioClient{}, allLocal{}, "itv", root, nil)
 
 	body := `{"method":"torrent-add","arguments":{"filename":"magnet:?xt=urn:btih:abc"}}`
 	req := httptest.NewRequest(http.MethodPost, "/transmission/rpc", strings.NewReader(body))

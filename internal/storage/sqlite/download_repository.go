@@ -3,6 +3,7 @@ package sqlite
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/italolelis/seedbox_downloader/internal/storage"
@@ -53,6 +54,48 @@ func (r *DownloadRepository) GetDownloads() ([]storage.DownloadRecord, error) {
 	}
 
 	return downloads, nil
+}
+
+// TransferStatuses returns the recorded status of each of transferIDs that the
+// ledger has a row for. A transfer it has never seen is simply absent from the
+// result, which callers have to treat as "not downloaded yet".
+//
+// It reads without claiming anything, so any process sharing the ledger may call
+// it, holder or not.
+func (r *DownloadRepository) TransferStatuses(transferIDs []string) (map[string]string, error) {
+	statuses := make(map[string]string, len(transferIDs))
+	if len(transferIDs) == 0 {
+		return statuses, nil
+	}
+
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(transferIDs)), ",")
+
+	args := make([]any, len(transferIDs))
+	for i, id := range transferIDs {
+		args[i] = id
+	}
+
+	//nolint:gosec // only placeholders are interpolated; the ids are bound
+	rows, err := r.db.Query(`SELECT transfer_id, status FROM downloads WHERE transfer_id IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read transfer statuses: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id, status string
+		if err := rows.Scan(&id, &status); err != nil {
+			return nil, fmt.Errorf("failed to read transfer statuses: %w", err)
+		}
+
+		statuses[id] = status
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read transfer statuses: %w", err)
+	}
+
+	return statuses, nil
 }
 
 // ClaimTransfer atomically sets status to 'downloading' and takes a lease on the

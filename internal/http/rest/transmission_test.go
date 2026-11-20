@@ -348,7 +348,7 @@ func TestHandleTorrentAdd_MetaInfo_Success(t *testing.T) {
 		},
 	}
 
-	handler := NewTransmissionHandler("testuser", "testpass", mockClient, "test-label", "/downloads", nil)
+	handler := NewTransmissionHandler("testuser", "testpass", mockClient, allLocal{}, "test-label", "/downloads", nil)
 
 	reqBody := fmt.Sprintf(`{
 		"method": "torrent-add",
@@ -385,7 +385,7 @@ func TestHandleTorrentAdd_MagnetLink_BackwardCompatibility(t *testing.T) {
 		},
 	}
 
-	handler := NewTransmissionHandler("testuser", "testpass", mockClient, "test-label", "/downloads", nil)
+	handler := NewTransmissionHandler("testuser", "testpass", mockClient, allLocal{}, "test-label", "/downloads", nil)
 
 	reqBody := `{
 		"method": "torrent-add",
@@ -420,7 +420,7 @@ func TestHandleTorrentAdd_MetaInfo_PrioritizedOverFileName(t *testing.T) {
 
 	mockClient := &mockPutioClient{}
 
-	handler := NewTransmissionHandler("testuser", "testpass", mockClient, "test-label", "/downloads", nil)
+	handler := NewTransmissionHandler("testuser", "testpass", mockClient, allLocal{}, "test-label", "/downloads", nil)
 
 	// Request with BOTH metainfo and filename
 	reqBody := fmt.Sprintf(`{
@@ -446,7 +446,7 @@ func TestHandleTorrentAdd_MetaInfo_PrioritizedOverFileName(t *testing.T) {
 
 func TestHandleTorrentAdd_InvalidBase64_ReturnsTransmissionError(t *testing.T) {
 	mockClient := &mockPutioClient{}
-	handler := NewTransmissionHandler("testuser", "testpass", mockClient, "test-label", "/downloads", nil)
+	handler := NewTransmissionHandler("testuser", "testpass", mockClient, allLocal{}, "test-label", "/downloads", nil)
 
 	// Invalid base64 - contains characters not in base64 alphabet
 	reqBody := `{
@@ -473,7 +473,7 @@ func TestHandleTorrentAdd_InvalidBase64_ReturnsTransmissionError(t *testing.T) {
 
 func TestHandleTorrentAdd_InvalidBencode_ReturnsTransmissionError(t *testing.T) {
 	mockClient := &mockPutioClient{}
-	handler := NewTransmissionHandler("testuser", "testpass", mockClient, "test-label", "/downloads", nil)
+	handler := NewTransmissionHandler("testuser", "testpass", mockClient, allLocal{}, "test-label", "/downloads", nil)
 
 	// Valid base64 but invalid bencode content
 	invalidBencode := base64.StdEncoding.EncodeToString([]byte("not valid bencode"))
@@ -501,7 +501,7 @@ func TestHandleTorrentAdd_InvalidBencode_ReturnsTransmissionError(t *testing.T) 
 
 func TestHandleTorrentAdd_AuthenticationRequired(t *testing.T) {
 	mockClient := &mockPutioClient{}
-	handler := NewTransmissionHandler("testuser", "testpass", mockClient, "test-label", "/downloads", nil)
+	handler := NewTransmissionHandler("testuser", "testpass", mockClient, allLocal{}, "test-label", "/downloads", nil)
 
 	reqBody := `{"method": "torrent-add", "arguments": {"filename": "magnet:?xt=urn:btih:TEST"}}`
 
@@ -517,7 +517,7 @@ func TestHandleTorrentAdd_AuthenticationRequired(t *testing.T) {
 
 func TestHandleTorrentAdd_WrongCredentials(t *testing.T) {
 	mockClient := &mockPutioClient{}
-	handler := NewTransmissionHandler("testuser", "testpass", mockClient, "test-label", "/downloads", nil)
+	handler := NewTransmissionHandler("testuser", "testpass", mockClient, allLocal{}, "test-label", "/downloads", nil)
 
 	reqBody := `{"method": "torrent-add", "arguments": {"filename": "magnet:?xt=urn:btih:TEST"}}`
 
@@ -550,7 +550,7 @@ func TestHandleTorrentAdd_RealTorrentFile(t *testing.T) {
 		},
 	}
 
-	handler := NewTransmissionHandler("testuser", "testpass", mockClient, "test-label", "/downloads", nil)
+	handler := NewTransmissionHandler("testuser", "testpass", mockClient, allLocal{}, "test-label", "/downloads", nil)
 
 	reqBody := fmt.Sprintf(`{
 		"method": "torrent-add",
@@ -608,7 +608,7 @@ func TestHandleTorrentGet_StatusMapping(t *testing.T) {
 				},
 			}
 
-			handler := NewTransmissionHandler("testuser", "testpass", mockClient, "test-label", "/downloads", nil)
+			handler := NewTransmissionHandler("testuser", "testpass", mockClient, allLocal{}, "test-label", "/downloads", nil)
 
 			reqBody := `{"method": "torrent-get", "arguments": {"fields": ["status"]}}`
 			req := httptest.NewRequest(http.MethodPost, "/transmission/rpc", strings.NewReader(reqBody))
@@ -679,7 +679,7 @@ func TestHandleTorrentGet_ErrorStringPopulated(t *testing.T) {
 				},
 			}
 
-			handler := NewTransmissionHandler("testuser", "testpass", mockClient, "test-label", "/downloads", nil)
+			handler := NewTransmissionHandler("testuser", "testpass", mockClient, allLocal{}, "test-label", "/downloads", nil)
 
 			reqBody := `{"method": "torrent-get", "arguments": {}}`
 			req := httptest.NewRequest(http.MethodPost, "/transmission/rpc", strings.NewReader(reqBody))
@@ -727,7 +727,7 @@ func TestHandleTorrentGet_PeerAndSpeedFields(t *testing.T) {
 		},
 	}
 
-	handler := NewTransmissionHandler("testuser", "testpass", mockClient, "test-label", "/downloads", nil)
+	handler := NewTransmissionHandler("testuser", "testpass", mockClient, allLocal{}, "test-label", "/downloads", nil)
 
 	reqBody := `{"method": "torrent-get", "arguments": {}}`
 	req := httptest.NewRequest(http.MethodPost, "/transmission/rpc", strings.NewReader(reqBody))
@@ -768,7 +768,7 @@ func TestHandleTorrentGet_LabelsPopulated(t *testing.T) {
 		},
 	}
 
-	handler := NewTransmissionHandler("testuser", "testpass", mockClient, "mytag", "/downloads", nil)
+	handler := NewTransmissionHandler("testuser", "testpass", mockClient, allLocal{}, "mytag", "/downloads", nil)
 
 	reqBody := `{"method": "torrent-get", "arguments": {}}`
 	req := httptest.NewRequest(http.MethodPost, "/transmission/rpc", strings.NewReader(reqBody))

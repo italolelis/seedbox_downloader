@@ -386,3 +386,25 @@ func TestReleaseClaim_HandsOneTransferBack(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"100"}, watchIDs(adopted), "only the released transfer is handed back")
 }
+
+// The RPC handler reads statuses for whatever the seedbox lists, much of which
+// the ledger may never have seen; those are simply left out.
+func TestTransferStatuses_ReturnsRecordedStatusesOnly(t *testing.T) {
+	repo := newTestRepo(t)
+
+	_, err := repo.ClaimTransfer("1")
+	require.NoError(t, err)
+
+	_, err = repo.ClaimTransfer("2")
+	require.NoError(t, err)
+	require.NoError(t, repo.UpdateTransferStatus("2", storage.StatusDownloaded))
+
+	statuses, err := repo.TransferStatuses([]string{"1", "2", "3"})
+	require.NoError(t, err)
+
+	assert.Equal(t, map[string]string{"1": "downloading", "2": storage.StatusDownloaded}, statuses)
+
+	empty, err := repo.TransferStatuses(nil)
+	require.NoError(t, err)
+	assert.Empty(t, empty)
+}
