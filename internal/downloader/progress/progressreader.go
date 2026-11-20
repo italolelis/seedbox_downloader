@@ -13,10 +13,18 @@ type Reader struct {
 }
 
 func NewReader(r io.Reader, total int64, interval int64, cb func(written int64, total int64)) *Reader {
+	return NewReaderFrom(r, 0, total, interval, cb)
+}
+
+// NewReaderFrom is NewReader for a body that continues a file from offset, so
+// progress reports the file's true position rather than restarting at zero
+// each time a download is resumed.
+func NewReaderFrom(r io.Reader, offset, total int64, interval int64, cb func(written int64, total int64)) *Reader {
 	return &Reader{
 		Reader:         r,
 		Total:          total,
 		OnProgress:     cb,
+		totalRead:      offset,
 		reportInterval: interval,
 	}
 }

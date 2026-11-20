@@ -50,6 +50,9 @@ type Downloader struct {
 	maxParallel int
 	telemetry   *telemetry.Telemetry
 
+	// resumeBackOff paces attempts to resume an interrupted download.
+	resumeBackOff func() backoff.BackOff
+
 	// Event channels. These are deliberately never closed: several goroutines
 	// send on them, so no single goroutine can correctly own closing them.
 	// Context cancellation stops the producers and the channels are collected.
@@ -69,20 +72,28 @@ func NewDownloader(
 	tc transfer.TransferClient,
 	arrServices []*arr.Client,
 	tel *telemetry.Telemetry,
+	opts ...Option,
 ) *Downloader {
-	return &Downloader{
+	d := &Downloader{
 		downloadDir:                downloadDir,
 		telemetry:                  tel,
 		dc:                         dc,
 		maxParallel:                maxParallel,
 		tc:                         tc,
 		arrServices:                arrServices,
+		resumeBackOff:              defaultResumeBackOff,
 		OnTransferDownloadError:    make(chan *transfer.Transfer),
 		OnTransferDownloadFinished: make(chan *transfer.Transfer),
 		OnTransferImported:         make(chan *transfer.Transfer),
 		OnTransferMissing:          make(chan MissingTransferEvent),
 		OnTransferCleanedUp:        make(chan *transfer.Transfer),
 	}
+
+	for _, opt := range opts {
+		opt(d)
+	}
+
+	return d
 }
 
 // WatchDownloads watches for transfers and downloads them.
@@ -212,7 +223,11 @@ func (d *Downloader) DownloadFile(ctx context.Context, transferID string, file *
 	// forever -- taking the errgroup, the whole transfer, and every subsequent
 	// transfer down with it. The error group already carries this up to the
 	// transfer level, which is the only level anything acts on.
-	written, err := d.writeFile(ctx, out, fileReader, file.Path, targetPath, file.Size)
+	written, err := d.writeFile(ctx, out, fileReader, file.Path, targetPath, 0, file.Size)
+	if err != nil && resumable(ctx, err, written, file.Size) {
+		written, err = d.resumeFile(ctx, logger, out, file, targetPath, written, err)
+	}
+
 	if err != nil {
 		out.Close()
 
@@ -561,9 +576,12 @@ func (d *Downloader) ensureTargetDir(ctx context.Context, targetPath string, log
 	return nil
 }
 
-// writeFile copies reader into out, reporting how many bytes were written so the
-// caller can check that against the size the seedbox promised.
-func (d *Downloader) writeFile(ctx context.Context, out *os.File, reader io.Reader, url, targetPath string, totalBytes int64) (int64, error) {
+// writeFile copies reader into out, reporting how many bytes this call wrote so
+// the caller can check the total against the size the seedbox promised. offset
+// is where in the file reader's bytes begin, for progress reporting.
+func (d *Downloader) writeFile(
+	ctx context.Context, out *os.File, reader io.Reader, url, targetPath string, offset, totalBytes int64,
+) (int64, error) {
 	logger := logctx.LoggerFromContext(ctx)
 
 	logger.DebugContext(ctx, "downloading file", "file_path", targetPath, "file_size", humanize.Bytes(uint64(totalBytes)))
@@ -580,7 +598,7 @@ func (d *Downloader) writeFile(ctx context.Context, out *os.File, reader io.Read
 			logger.DebugContext(ctx, "download progress", "url", url, "downloaded", humanize.Bytes(uint64(written)))
 		}
 	}
-	pr := progress.NewReader(reader, totalBytes, progressInterval, progressCb)
+	pr := progress.NewReaderFrom(sourceReader{r: reader}, offset, totalBytes, progressInterval, progressCb)
 
 	written, err := io.Copy(newSyncWriter(out, out.Sync, syncEvery), pr)
 	if err != nil {

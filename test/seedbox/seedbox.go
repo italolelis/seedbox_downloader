@@ -52,8 +52,19 @@ type Entry struct {
 	// AbortAfter, when positive, declares the full length and then hangs up after
 	// that many bytes, so the read itself fails mid-stream. This is a different
 	// failure from TruncateTo: here the copy errors, which is what exercises the
-	// download-failure path rather than the silent-corruption path.
+	// download-failure path rather than the silent-corruption path. It applies to
+	// every request, ranged or not, so the file can never be completed.
 	AbortAfter int
+
+	// CutAt lists offsets at which a connection is cut, each one once, in order:
+	// a fetch reaching the next unused offset hangs up there the way AbortAfter
+	// does, and later fetches go past it. This is a long download cut off by the
+	// server, which a resumed download gets past.
+	CutAt []int
+
+	// IgnoreRange serves the whole file with 200 whatever Range was asked for,
+	// as a server that does not support resuming does.
+	IgnoreRange bool
 }
 
 func (e Entry) isDir() bool { return e.Children != nil }
@@ -101,6 +112,12 @@ type Seedbox struct {
 
 	// fetches counts how many times each file's bytes were requested.
 	fetches map[int64]int
+
+	// rangeStarts records, per file, the start offset of each ranged request.
+	rangeStarts map[int64][]int64
+
+	// cutsUsed counts, per file, how many of its CutAt offsets have been used.
+	cutsUsed map[int64]int
 }
 
 type node struct {
@@ -134,7 +151,10 @@ func New(t *testing.T, label string, transfers ...Transfer) *Seedbox {
 		nodes:    map[int64]*node{},
 		children: map[int64][]int64{},
 		fetches:  map[int64]int{},
-		nextID:   100,
+
+		rangeStarts: map[int64][]int64{},
+		cutsUsed:    map[int64]int{},
+		nextID:      100,
 	}
 
 	// The label folder itself, which the client resolves to decide whether a
@@ -255,6 +275,23 @@ func (s *Seedbox) Fetches(name string) int {
 	}
 
 	return total
+}
+
+// RangeStarts reports the start offset of every ranged request for the bytes
+// of the file with the given name, in the order they arrived.
+func (s *Seedbox) RangeStarts(name string) []int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var starts []int64
+
+	for id, n := range s.nodes {
+		if n.entry.Name == name {
+			starts = append(starts, s.rangeStarts[id]...)
+		}
+	}
+
+	return starts
 }
 
 // HasTransfer reports whether the named transfer is still on the account, i.e.
@@ -538,6 +575,19 @@ func (s *Seedbox) handleDownload(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	n, ok := s.nodes[id]
 	s.fetches[id]++
+
+	start, ranged := 0, false
+	if ok && !n.entry.IgnoreRange {
+		start, ranged = parseRangeStart(r.Header.Get("Range"))
+		if ranged {
+			s.rangeStarts[id] = append(s.rangeStarts[id], int64(start))
+		}
+	}
+
+	cut := -1
+	if ok {
+		cut = s.cutFor(id, n.entry, start)
+	}
 	s.mu.Unlock()
 
 	if !ok {
@@ -556,13 +606,33 @@ func (s *Seedbox) handleDownload(w http.ResponseWriter, r *http.Request) {
 
 	body := n.entry.Content
 
-	if n.entry.AbortAfter > 0 && n.entry.AbortAfter < len(body) {
+	if start > len(body) {
+		http.Error(w, "range not satisfiable", http.StatusRequestedRangeNotSatisfiable)
+
+		return
+	}
+
+	if ranged {
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, len(body)-1, len(body)))
+	}
+
+	if cut >= 0 {
 		// Promising more than we deliver makes the client's read fail with an
 		// unexpected EOF, which is a genuine mid-stream transfer failure.
-		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
-		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)-start))
+		w.WriteHeader(statusFor(ranged))
 
-		if _, err := w.Write([]byte(body[:n.entry.AbortAfter])); err != nil {
+		if _, err := w.Write([]byte(body[start:max(cut, start)])); err != nil {
+			return
+		}
+
+		return
+	}
+
+	if ranged {
+		w.WriteHeader(http.StatusPartialContent)
+
+		if _, err := w.Write([]byte(body[start:])); err != nil {
 			return
 		}
 
@@ -583,6 +653,55 @@ func (s *Seedbox) handleDownload(w http.ResponseWriter, r *http.Request) {
 	if _, err := w.Write([]byte(body)); err != nil {
 		return
 	}
+}
+
+// cutFor returns where a fetch of the file from start is hung up, or -1 when it
+// is served whole. Callers hold mu.
+func (s *Seedbox) cutFor(id int64, e Entry, start int) int {
+	if e.AbortAfter > 0 && e.AbortAfter < len(e.Content) {
+		return e.AbortAfter
+	}
+
+	for s.cutsUsed[id] < len(e.CutAt) {
+		next := e.CutAt[s.cutsUsed[id]]
+		s.cutsUsed[id]++
+
+		// A fetch starting at or past a cut has already got beyond it.
+		if next > start && next < len(e.Content) {
+			return next
+		}
+	}
+
+	return -1
+}
+
+// parseRangeStart reads the start of an open-ended "bytes=N-" range, the only
+// form the downloader sends.
+func parseRangeStart(header string) (int, bool) {
+	spec, ok := strings.CutPrefix(header, "bytes=")
+	if !ok {
+		return 0, false
+	}
+
+	first, _, found := strings.Cut(spec, "-")
+	if !found {
+		return 0, false
+	}
+
+	start, err := strconv.Atoi(first)
+	if err != nil {
+		return 0, false
+	}
+
+	return start, true
+}
+
+func statusFor(ranged bool) int {
+	if ranged {
+		return http.StatusPartialContent
+	}
+
+	return http.StatusOK
 }
 
 func (s *Seedbox) fileJSON(id int64) map[string]any {

@@ -97,6 +97,25 @@ func (c *InstrumentedDownloadClient) GrabFile(ctx context.Context, file *File) (
 	return result, nil
 }
 
+// GrabFileRange grabs a file from an offset with telemetry.
+func (c *InstrumentedDownloadClient) GrabFileRange(ctx context.Context, file *File, offset int64) (io.ReadCloser, error) {
+	var result io.ReadCloser
+
+	var err error
+
+	instrumentedErr := c.telemetry.InstrumentClientOperation(ctx, c.clientType, "grab_file_range", func(ctx context.Context) error {
+		result, err = c.client.GrabFileRange(ctx, file, offset)
+
+		return err
+	})
+
+	if instrumentedErr != nil {
+		return nil, instrumentedErr
+	}
+
+	return result, nil
+}
+
 // InstrumentedTransferClient wraps TransferClient with telemetry.
 type InstrumentedTransferClient struct {
 	client     TransferClient

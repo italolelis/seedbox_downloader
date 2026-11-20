@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -19,7 +20,17 @@ type DownloadClient interface {
 	Authenticate(ctx context.Context) error
 	GetTaggedTorrents(ctx context.Context, label string) ([]*Transfer, error)
 	GrabFile(ctx context.Context, file *File) (io.ReadCloser, error)
+	// GrabFileRange returns the file's bytes from offset onwards, so a download
+	// cut off part-way can continue instead of starting over. It fails with
+	// ErrRangeNotHonoured when the bytes it would return do not start at offset:
+	// appending them would corrupt the file, so the caller starts over instead.
+	GrabFileRange(ctx context.Context, file *File, offset int64) (io.ReadCloser, error)
 }
+
+// ErrRangeNotHonoured reports that a download cannot be continued from an
+// offset: the client cannot ask for a byte range, or the server answered with
+// something other than the range asked for (typically the whole file).
+var ErrRangeNotHonoured = errors.New("download client did not honour the byte range")
 
 type TransferClient interface {
 	// AddTransfer files a transfer under label/category on the seedbox. An empty

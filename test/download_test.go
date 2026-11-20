@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/cenkalti/backoff/v5"
 	"github.com/italolelis/seedbox_downloader/internal/downloader"
 	"github.com/italolelis/seedbox_downloader/internal/logctx"
 	"github.com/italolelis/seedbox_downloader/internal/transfer"
@@ -17,15 +18,18 @@ import (
 )
 
 // newDownloader wires the real downloader against a real seedbox client, writing
-// into a temp directory. Nothing on the download path is mocked.
+// into a temp directory. Nothing on the download path is mocked except the wait
+// between resume attempts, which would otherwise outlast the tests' timeouts.
 func newDownloader(t *testing.T, sb *seedbox.Seedbox) (*downloader.Downloader, string) {
 	t.Helper()
 
 	root := t.TempDir()
 	client := sb.Client()
 
-	return downloader.NewDownloader(root, 5, client, client, nil, nil), root
+	return downloader.NewDownloader(root, 5, client, client, nil, nil, noResumeWait), root
 }
+
+var noResumeWait = downloader.WithResumeBackOff(func() backoff.BackOff { return &backoff.ZeroBackOff{} })
 
 // fetch resolves the seedbox's transfers the way production does, rather than
 // hand-building a Transfer -- so the file paths under test are the ones the
