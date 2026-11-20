@@ -582,7 +582,7 @@ func (d *Downloader) writeFile(ctx context.Context, out *os.File, reader io.Read
 	}
 	pr := progress.NewReader(reader, totalBytes, progressInterval, progressCb)
 
-	written, err := io.Copy(out, pr)
+	written, err := io.Copy(newSyncWriter(out, out.Sync, syncEvery), pr)
 	if err != nil {
 		return written, fmt.Errorf("failed to copy file: %w", err)
 	}
